@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- M3 的输出链路测试：渲染 → 位图 → PDF/PNG/TIFF → 送打印机。
+       这些都依赖 WPF（net8.0-windows + UseWPF），放在 Core.Tests 里会污染它的纯逻辑身份。
+       断言口径：凡涉及尺寸的地方一律手算毫米→像素来核对，不用被测代码自己算。 -->
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>LabelGou.App.Tests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\LabelGou.App\LabelGou.App.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -71,24 +71,6 @@ public sealed class SheetPreviewControl : FrameworkElement
         FocusableProperty.OverrideMetadata(typeof(SheetPreviewControl), new FrameworkPropertyMetadata(false));
     }
 
-    private static readonly Pen PaperEdgePen = Frozen(new Pen(new SolidColorBrush(Color.FromRgb(150, 150, 150)), 1));
-
-    private static readonly Pen MarginPen = Frozen(new Pen(new SolidColorBrush(Color.FromRgb(200, 200, 200)), 0.6)
-        { DashStyle = DashStyles.Dash });
-
-    private static readonly Pen CropPen = Frozen(new Pen(new SolidColorBrush(Color.FromRgb(90, 90, 90)), 0.8));
-
-    private static readonly Pen RegistrationPen = Frozen(new Pen(new SolidColorBrush(Color.FromRgb(0, 120, 200)), 1));
-
-    private static readonly Pen OutlinePen = Frozen(new Pen(new SolidColorBrush(Color.FromRgb(170, 170, 170)), 0.6)
-        { DashStyle = DashStyles.Dot });
-
-    private static Pen Frozen(Pen pen)
-    {
-        pen.Freeze();
-        return pen;
-    }
-
     protected override Size MeasureOverride(Size availableSize)
     {
         var plan = Plan;
@@ -108,55 +90,8 @@ public sealed class SheetPreviewControl : FrameworkElement
         if (plan is null || size.Width <= 1 || size.Height <= 1) return;
 
         var scale = size.Width / Math.Max(0.001, Mm.ToDiu(plan.PageWidthMm));
-        var paperW = Mm.ToDiu(plan.PageWidthMm) * scale;
-        var paperH = Mm.ToDiu(plan.PageHeightMm) * scale;
-        var pixelsPerDip = VisualTreeHelper.GetDpi(this).PixelsPerDip;
-
-        // 纸张
-        dc.DrawRectangle(Brushes.White, PaperEdgePen, new Rect(0, 0, paperW, paperH));
-
-        // 页边示意（只影响视觉，不参与落位计算）
-        var marginRect = new Rect(
-            Mm.ToDiu(plan.Spec.MarginLeftMm) * scale,
-            Mm.ToDiu(plan.Spec.MarginTopMm) * scale,
-            Math.Max(0, Mm.ToDiu(plan.Spec.UsableWidthMm) * scale),
-            Math.Max(0, Mm.ToDiu(plan.Spec.UsableHeightMm) * scale));
-        dc.DrawRectangle(null, MarginPen, marginRect);
-
-        // 辅助线先画，让标签内容压在上面（印刷上角线本来就只露在标签外）
-        foreach (var mark in ImpositionEngine.BuildMarks(plan.Spec, plan, Math.Max(1, PageIndex)))
-        {
-            var pen = mark.Kind switch
-            {
-                SheetMarkKind.RegistrationMark => RegistrationPen,
-                SheetMarkKind.LabelOutline => OutlinePen,
-                _ => CropPen,
-            };
-            dc.DrawLine(pen,
-                new Point(Mm.ToDiu(mark.X1) * scale, Mm.ToDiu(mark.Y1) * scale),
-                new Point(Mm.ToDiu(mark.X2) * scale, Mm.ToDiu(mark.Y2) * scale));
-        }
-
-        var provider = LayoutProvider;
-        if (provider is null) return;
-
-        foreach (var placement in plan.PlacementsOnPage(Math.Max(1, PageIndex)))
-        {
-            var layout = provider(placement.LabelIndex);
-            if (layout is null) continue;
-
-            var x = Mm.ToDiu(placement.X) * scale;
-            var y = Mm.ToDiu(placement.Y) * scale;
-
-            if (placement.Rotated)
-            {
-                LabelRenderer.DrawRotated(dc, layout, scale, x, y, ShowGuides, pixelsPerDip);
-            }
-            else
-            {
-                LabelRenderer.Draw(dc, layout, scale, x, y, ShowGuides, pixelsPerDip);
-            }
-        }
+        SheetRenderer.DrawPage(dc, plan, PageIndex, scale, LayoutProvider, ShowGuides,
+            PageRenderPurpose.Screen, VisualTreeHelper.GetDpi(this).PixelsPerDip);
     }
 
     /// <summary>纸张内容变了（换页/换纸规/重算）时由外部调用，强制重画。</summary>
@@ -164,5 +99,5 @@ public sealed class SheetPreviewControl : FrameworkElement
 
     /// <summary>整版自适应缩放。</summary>
     public static double FitZoom(SheetPlan plan, double availableWidth, double availableHeight, double maxZoom = 4)
-        => LabelRenderer.FitZoom(plan.PageWidthMm, plan.PageHeightMm, availableWidth, availableHeight, maxZoom);
+        => SheetRenderer.FitZoom(plan, availableWidth, availableHeight, maxZoom);
 }

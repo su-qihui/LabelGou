@@ -1,0 +1,494 @@
+using System.Collections.ObjectModel;
+using System.Diagnostics;
+using System.Globalization;
+using System.IO;
+using LabelGou.App.Export;
+using LabelGou.App.Mvvm;
+using LabelGou.App.Printing;
+using LabelGou.App.Services;
+using LabelGou.Core.Export;
+using LabelGou.Core.Impos;
+
+namespace LabelGou.App.ViewModels;
+
+/// <summary>
+/// 「⑥ 输出与打印」面板的状态与动作。单独成一个 VM 是为了让 <see cref="MainViewModel"/> 不再长胖
+/// （M2 的教训：它已经 600+ 行）。它只在 UI 线程上组装请求，真正的渲染/送打全部交给 STA 后台线程。
+/// </summary>
+public sealed class ExportViewModel : ObservableObject
+{
+    private readonly MainViewModel _owner;
+    private CancellationTokenSource? _cts;
+
+    public ExportViewModel(MainViewModel owner)
+    {
+        _owner = owner;
+        _owner.Sheet.PlanChanged += RefreshFromSource;
+        foreach (var dpi in new[] { 150, 200, 300, 600 })
+        {
+            DpiOptions.Add(new ChoiceOption<int>(dpi, dpi == 300 ? $"{dpi} DPI（常规，推荐）" : $"{dpi} DPI"));
+        }
+        SelectedDpi = DpiOptions.FirstOrDefault(o => o.Value == 300) ?? DpiOptions[0];
+
+        foreach (var format in new[] { PdfImageKind.Jpeg, PdfImageKind.Rgb24 })
+        {
+            PdfFormatOptions.Add(new ChoiceOption<PdfImageKind>(format,
+                format == PdfImageKind.Jpeg ? "JPEG 压缩（文件小，常规够用）" : "无损（字口最硬，文件大）"));
+        }
+        SelectedPdfFormat = PdfFormatOptions[0];
+
+        _outputDirectory = DefaultOutputDirectory();
+
+        RefreshPrintersCommand = new RelayCommand(RefreshPrinters);
+        PrintCommand = new RelayCommand(RunPrint, () => CanStartJob);
+        ExportPdfCommand = new RelayCommand(RunExportPdf, () => CanStartJob);
+        ExportPngCommand = new RelayCommand(RunExportPng, () => CanStartJob);
+        ExportTiffCommand = new RelayCommand(RunExportTiff, () => CanStartJob);
+        ChooseFolderCommand = new RelayCommand(ChooseFolder);
+        CancelCommand = new RelayCommand(Cancel, () => IsBusy);
+    }
+
+    /// <summary>窗口加载完后调一次：枚举打印机要问后台服务，放加载阶段做会拖慢首屏。</summary>
+    public void WarmUpPrinters() => RefreshPrinters();
+
+    // ---------- 绑定项 ----------
+
+    public ObservableCollection<PrinterInfo> Printers { get; } = new();
+
+    public ObservableCollection<ChoiceOption<int>> DpiOptions { get; } = new();
+
+    public ObservableCollection<ChoiceOption<PdfImageKind>> PdfFormatOptions { get; } = new();
+
+    public RelayCommand RefreshPrintersCommand { get; }
+    public RelayCommand PrintCommand { get; }
+    public RelayCommand ExportPdfCommand { get; }
+    public RelayCommand ExportPngCommand { get; }
+    public RelayCommand ExportTiffCommand { get; }
+    public RelayCommand ChooseFolderCommand { get; }
+    public RelayCommand CancelCommand { get; }
+
+    public PrinterInfo? SelectedPrinter
+    {
+        get => _selectedPrinter;
+        set
+        {
+            if (!Set(ref _selectedPrinter, value)) return;
+            Raise(nameof(SelectedPrinterHint));
+            ProbeFit();
+        }
+    }
+    private PrinterInfo? _selectedPrinter;
+
+    public ChoiceOption<int> SelectedDpi
+    {
+        get => _selectedDpi;
+        set
+        {
+            if (!Set(ref _selectedDpi, value)) return;
+            RefreshEstimate();
+        }
+    }
+    private ChoiceOption<int> _selectedDpi = null!;
+
+    public ChoiceOption<PdfImageKind> SelectedPdfFormat
+    {
+        get => _selectedPdfFormat;
+        set
+        {
+            if (!Set(ref _selectedPdfFormat, value)) return;
+            RefreshEstimate();
+        }
+    }
+    private ChoiceOption<PdfImageKind> _selectedPdfFormat = null!;
+
+    /// <summary>页范围文本，空 = 全部。真源在 Core 的 PageRange，这里只存用户敲的字。</summary>
+    public string PageRangeText
+    {
+        get => _pageRangeText;
+        set
+        {
+            if (!Set(ref _pageRangeText, value)) return;
+            RefreshEstimate();
+        }
+    }
+    private string _pageRangeText = string.Empty;
+
+    public int Copies
+    {
+        get => _copies;
+        set => Set(ref _copies, Math.Max(1, Math.Min(value, 99)));
+    }
+    private int _copies = 1;
+
+    public bool IncludeTrimMarks
+    {
+        get => _includeTrimMarks;
+        set => Set(ref _includeTrimMarks, value);
+    }
+    private bool _includeTrimMarks = true;
+
+    public bool ScaleToFitPrintableArea
+    {
+        get => _scaleToFit;
+        set
+        {
+            if (!Set(ref _scaleToFit, value)) return;
+            ProbeFit();
+        }
+    }
+    private bool _scaleToFit;
+
+    public bool ConfirmBeforePrint
+    {
+        get => _confirmBeforePrint;
+        set => Set(ref _confirmBeforePrint, value);
+    }
+    private bool _confirmBeforePrint;
+
+    public string OutputDirectory
+    {
+        get => _outputDirectory;
+        set => Set(ref _outputDirectory, value);
+    }
+    private string _outputDirectory;
+
+    public bool IsBusy
+    {
+        get => _isBusy;
+        private set
+        {
+            if (!Set(ref _isBusy, value)) return;
+            Raise(nameof(CanStartJob));
+        }
+    }
+    private bool _isBusy;
+
+    public bool CanStartJob => !IsBusy && _owner.Sheet.HasPlan;
+
+    public string StatusText
+    {
+        get => _statusText;
+        private set => Set(ref _statusText, value);
+    }
+    private string _statusText = "准备好后即可打印或导出。";
+
+    public string SelectionText
+    {
+        get => _selectionText;
+        private set => Set(ref _selectionText, value);
+    }
+    private string _selectionText = string.Empty;
+
+    public string FitText
+    {
+        get => _fitText;
+        private set => Set(ref _fitText, value);
+    }
+    private string _fitText = "换打印机后会重新检查整版能否原大打进可打印区。";
+
+    public string SelectedPrinterHint => SelectedPrinter is null
+        ? "未选打印机"
+        : $"{SelectedPrinter.Name}（队列中 {SelectedPrinter.PendingJobs} 个任务）";
+
+    // ---------- 与主 VM 的接缝 ----------
+
+    /// <summary>拼版结果或数据变了之后由主 VM 调用：重算选择与体积估算。</summary>
+    public void RefreshFromSource()
+    {
+        RefreshEstimate();
+        Raise(nameof(CanStartJob));
+    }
+
+    private void RefreshEstimate()
+    {
+        var plan = _owner.Sheet.Plan;
+        if (plan is null || plan.PageCount == 0)
+        {
+            SelectionText = "尚无整版方案，先完成拼版。";
+            return;
+        }
+
+        if (!PageRange.TryParse(PageRangeText, plan.PageCount, out var range, out var error))
+        {
+            SelectionText = error!;
+            return;
+        }
+
+        var request = BuildRequest(range!, out _);
+        var estimate = request is null ? string.Empty : " · 预计 " + SheetExportService.EstimatePdfSize(request);
+        SelectionText = string.Format(CultureInfo.InvariantCulture,
+            "共 {0} 页，本次选 {1} 页 · {2}DPI · 页面 {3}×{4}mm{5}",
+            plan.PageCount, range!.Count, SelectedDpi.Value,
+            plan.PageWidthMm.ToString("0.#", CultureInfo.InvariantCulture),
+            plan.PageHeightMm.ToString("0.#", CultureInfo.InvariantCulture),
+            request is null ? string.Empty : estimate);
+    }
+
+    private void ProbeFit()
+    {
+        var plan = _owner.Sheet.Plan;
+        var source = _owner.CreatePageSource();
+        if (plan is null || plan.PageCount == 0 || source is null) return;
+
+        // 屏幕上的体检不能阻塞输入，直接问一次驱动（读属性很快，不送任务）
+        try
+        {
+            var request = new PrintRequest
+            {
+                Plan = plan,
+                Source = source,
+                PageIndexes = new[] { 0 },
+                PrinterName = SelectedPrinter?.Name,
+            };
+            var advice = PrintService.ProbeFit(request, out var probeError);
+            FitText = probeError ?? advice.Describe($"整版 {plan.PageWidthMm:0.#}×{plan.PageHeightMm:0.#}mm");
+            AppLog.Info($"打印落位体检（{SelectedPrinter?.Name ?? "默认打印机"}）：{FitText}");
+        }
+        catch (Exception ex)
+        {
+            FitText = "这台打印机暂时问不到：" + ex.Message;
+        }
+    }
+
+    // ---------- 动作 ----------
+
+    private void RefreshPrinters()
+    {
+        var previous = SelectedPrinter?.Name;
+        var list = PrintService.ListPrinters(out var error);
+        Printers.Clear();
+        foreach (var printer in list) Printers.Add(printer);
+        SelectedPrinter = Printers.FirstOrDefault(p => p.Name == previous)
+                          ?? Printers.FirstOrDefault(p => p.IsDefault)
+                          ?? Printers.FirstOrDefault();
+        StatusText = error ?? (list.Count == 0
+            ? "没找到任何打印机。先在 Windows 设置里添加打印机，再点右侧的刷新。"
+            : $"读到 {list.Count} 台打印机。");
+        AppLog.Info($"打印机列表刷新：{list.Count} 台，选中「{SelectedPrinter?.Name ?? "无"}」" +
+                    (error is null ? string.Empty : $"，原因：{error}"));
+        ProbeFit();
+    }
+
+    private void ChooseFolder()
+    {
+        // 不拉 Windows Forms（那是另一个依赖包），用 WPF 自带的对话框足以选目录。
+        var dialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "选择输出目录（随便选一个文件所在处即可，我们只用它的目录）",
+            CheckFileExists = false,
+            FileName = "选择此目录",
+            Filter = "占位|*.placeholder",
+        };
+        if (Directory.Exists(OutputDirectory)) dialog.InitialDirectory = OutputDirectory;
+        if (dialog.ShowDialog() == true)
+        {
+            OutputDirectory = Path.GetDirectoryName(dialog.FileName) ?? OutputDirectory;
+            StatusText = "输出目录已设为 " + OutputDirectory;
+        }
+    }
+
+    private SheetExportRequest? BuildRequest(PageRange range, out string? error)
+    {
+        error = null;
+        var plan = _owner.Sheet.Plan;
+        var source = _owner.CreatePageSource();
+        if (plan is null || plan.PageCount == 0 || source is null)
+        {
+            error = "还没有可输出的整版：请先导入数据并应用映射。";
+            return null;
+        }
+        if (!PassesReviewGate(source))
+        {
+            error = "已按复核闸门停下：带「需人工核对」标记的标签未得到确认，不进入打印与导出。";
+            return null;
+        }
+
+        return new SheetExportRequest
+        {
+            Plan = plan,
+            Source = source,
+            PageIndexes = range.SelectedIndexes(),
+            BaseName = SuggestBaseName(plan),
+            Dpi = SelectedDpi.Value,
+            IncludeTrimMarks = IncludeTrimMarks,
+            RasterKind = SelectedPdfFormat.Value,
+        };
+    }
+
+    private string SuggestBaseName(SheetPlan plan)
+    {
+        var profile = _owner.ProfileName;
+        var stamp = DateTime.Now.ToString("yyyyMMdd-HHmm", CultureInfo.InvariantCulture);
+        var head = string.IsNullOrWhiteSpace(profile) ? "唛头整版" : profile;
+        return SheetExportService.SafeFileName($"{head}-{plan.LabelCount}枚-{stamp}");
+    }
+
+    private void RunExportPdf()
+    {
+        if (!TryResolveRange(out var range, out var error)) { StatusText = error!; return; }
+        var request = BuildRequest(range!, out error);
+        if (request is null) { StatusText = error!; return; }
+
+        var target = AskSaveFile(request.BaseName + ".pdf", "PDF 文件|*.pdf");
+        if (target is null) { StatusText = "已取消导出（未选保存位置）。"; return; }
+
+        RunJob($"PDF 导出→{Path.GetFileName(target)}", (progress, token) =>
+            SheetExportService.ExportPdf(request, target, progress, token));
+    }
+
+    private void RunExportPng()
+    {
+        if (!TryResolveRange(out var range, out var error)) { StatusText = error!; return; }
+        var request = BuildRequest(range!, out error);
+        if (request is null) { StatusText = error!; return; }
+
+        var folder = Path.Combine(OutputDirectory, SheetExportService.SafeFileName(request.BaseName));
+        RunJob($"PNG 导出→{folder}", (progress, token) =>
+            SheetExportService.ExportPngPages(request, folder, progress, token));
+    }
+
+    private void RunExportTiff()
+    {
+        if (!TryResolveRange(out var range, out var error)) { StatusText = error!; return; }
+        var request = BuildRequest(range!, out error);
+        if (request is null) { StatusText = error!; return; }
+
+        var target = AskSaveFile(request.BaseName + ".tif", "TIFF 图像|*.tif;*.tiff");
+        if (target is null) { StatusText = "已取消导出（未选保存位置）。"; return; }
+
+        RunJob($"TIFF 导出→{Path.GetFileName(target)}", (progress, token) =>
+            SheetExportService.ExportTiff(request, target, progress, token));
+    }
+
+    private void RunPrint()
+    {
+        if (!TryResolveRange(out var range, out var error)) { StatusText = error!; return; }
+        var plan = _owner.Sheet.Plan;
+        var source = _owner.CreatePageSource();
+        if (plan is null || source is null)
+        {
+            StatusText = "还没有可打印的整版：请先导入数据并应用映射。";
+            return;
+        }
+        if (!PassesReviewGate(source))
+        {
+            StatusText = "打印已按复核闸门停下（未确认的字段不能上机）。";
+            return;
+        }
+
+        var request = new PrintRequest
+        {
+            Plan = plan,
+            Source = source,
+            PageIndexes = range!.SelectedIndexes(),
+            PrinterName = SelectedPrinter?.Name,
+            Copies = Copies,
+            IncludeTrimMarks = IncludeTrimMarks,
+            ScaleToFitPrintableArea = ScaleToFitPrintableArea,
+            ConfirmBeforePrint = ConfirmBeforePrint,
+        };
+
+        if (SelectedPrinter is { LikelyPromptsForFile: true } && !ConfirmBeforePrint)
+        {
+            StatusText = $"「{SelectedPrinter.Name}」是虚拟打印机，很可能弹出保存框挡住批量任务。" +
+                         "换成实体打印机，或勾选「打印前打开驱动窗口」手动确认。";
+            return;
+        }
+
+        RunJob("打印", (progress, token) => PrintService.Print(request, progress, token));
+    }
+
+    /// <summary>
+    /// §七-11 的硬规矩：带 `NeedsReview` 的字段不得默认上机。数一下有几张，有就请用户点头。
+    /// 询问器由 MainWindow 挂上（没挂时视为不阻塞，单测环境就靠这一点）。
+    /// </summary>
+    private bool PassesReviewGate(PageContentSource source)
+    {
+        var flagged = source.UnconfirmedLabelCount;
+        if (flagged <= 0) return true;
+        var text = $"这批共 {source.LabelCount} 张标签里，有 {flagged} 张含「需人工核对」的字段（红色标记）。\n\n" +
+                   "唛头数字印错就是真实货损。确认这些字段已经人工核对过了吗？";
+        var accepted = _owner.ConfirmGate?.Invoke(text) ?? true;
+        if (!accepted) AppLog.Info($"复核闸门拦下任务：{flagged}/{source.LabelCount} 张待核对");
+        return accepted;
+    }
+
+    private bool TryResolveRange(out PageRange? range, out string? error)
+    {
+        var plan = _owner.Sheet.Plan;
+        range = null;
+        if (plan is null || plan.PageCount == 0)
+        {
+            error = "尚无整版方案，无法确定页范围。";
+            return false;
+        }
+        return PageRange.TryParse(PageRangeText, plan.PageCount, out range, out error);
+    }
+
+    private void RunJob(string jobName, Func<IProgress<string>, CancellationToken, object> job)
+    {
+        _cts = new CancellationTokenSource();
+        IsBusy = true;
+        StatusText = jobName + " 开始…";
+        var started = Stopwatch.StartNew();
+        var task = StaWorker.RunAsync(job, text => StatusText = $"{jobName}：{text}", _cts.Token);
+        task.ContinueWith(t =>
+        {
+            IsBusy = false;
+            _cts?.Dispose();
+            _cts = null;
+            if (t.IsCanceled) { StatusText = jobName + " 已取消。"; return; }
+            if (t.Exception is { } aggregate)
+            {
+                var ex = aggregate.GetBaseException();
+                StatusText = jobName + " 失败：" + ex.Message;
+                AppLog.Error($"{jobName} 任务异常", ex);
+                return;
+            }
+            Report(t.Result, started.Elapsed);
+        }, System.Threading.Tasks.TaskScheduler.FromCurrentSynchronizationContext());
+    }
+
+    private void Report(object outcome, TimeSpan elapsed)
+    {
+        var text = outcome switch
+        {
+            ExportOutcome export => export.Success
+                ? $"完成：{export.Summary}（耗时 {elapsed.TotalSeconds:0.#} 秒）"
+                : "失败：" + export.Error,
+            PrintOutcome print => print.Success
+                ? $"完成：{print.Summary}（耗时 {elapsed.TotalSeconds:0.#} 秒）"
+                : "失败：" + print.Error,
+            _ => $"任务结束（耗时 {elapsed.TotalSeconds:0.#} 秒）",
+        };
+        StatusText = text;
+        if (outcome is PrintOutcome { Fit: not null } p) FitText = p.Fit.Describe("整版");
+        ProbeFit();
+    }
+
+    private string? AskSaveFile(string suggestedName, string filter)
+    {
+        var dialog = new Microsoft.Win32.SaveFileDialog
+        {
+            Title = "保存导出文件",
+            Filter = filter,
+            FileName = suggestedName,
+            AddExtension = true,
+        };
+        if (Directory.Exists(OutputDirectory)) dialog.InitialDirectory = OutputDirectory;
+        return dialog.ShowDialog() == true ? dialog.FileName : null;
+    }
+
+    private void Cancel()
+    {
+        try { _cts?.Cancel(); }
+        catch (ObjectDisposedException) { /* 任务刚好结束，忽略 */ }
+    }
+
+    private static string DefaultOutputDirectory()
+    {
+        var documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+        if (string.IsNullOrEmpty(documents)) documents = AppDomain.CurrentDomain.BaseDirectory;
+        return Path.Combine(documents, "LabelGou输出");
+    }
+}

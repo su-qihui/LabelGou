@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.Data;
 using System.IO;
 using System.Windows;
+using LabelGou.App.Export;
 using LabelGou.App.Mvvm;
 using LabelGou.Core.Data;
 using LabelGou.Core.Layout;
@@ -162,6 +163,9 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         SheetZoomInCommand = new RelayCommand(() => Sheet.SheetZoom = Math.Min(8, Sheet.SheetZoom * 1.25));
         SheetZoomOutCommand = new RelayCommand(() => Sheet.SheetZoom = Math.Max(0.1, Sheet.SheetZoom / 1.25));
 
+        // M3：输出与打印（靠上面的拼版结果吃饭，所以必须建在 Sheet 之后）
+        Export = new ExportViewModel(this);
+
         foreach (var template in _templateStore.ListAll()) TemplateOptions.Add(new TemplateOption(template));
         SelectedTemplate = TemplateOptions.FirstOrDefault(t => t.Id == BuiltInTemplates.IdStandard) ?? TemplateOptions.FirstOrDefault();
         RefreshProfiles();
@@ -170,6 +174,28 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
 
     /// <summary>M2：整版拼版 + 件号自动编号。</summary>
     public ImpositionViewModel Sheet { get; }
+
+    /// <summary>M3：打印与导出（PDF / PNG / TIFF）。</summary>
+    public ExportViewModel Export { get; }
+
+    /// <summary>
+    /// M3：需要用户点头的闸门（比如“有 N 张标签带未核对标记，还要印吗”）。
+    /// 由 MainWindow 挂上 MessageBox 询问；未挂时视为不阻塞（单测环境里就是这个情况）。
+    /// </summary>
+    public Func<string, bool>? ConfirmGate { get; set; }
+
+    /// <summary>
+    /// M3：给导出/打印用的只读快照。必须在 UI 线程上调用（它读的都是 UI 线程持有的字段），
+    /// 拿到之后的后台线程只读这个对象，不再回头碰 VM。
+    /// 没数据时用样例记录顶上，让“先打一张看看对齐”这个常见动作能成。
+    /// </summary>
+    public PageContentSource? CreatePageSource()
+    {
+        var template = SelectedTemplate?.Template;
+        if (template is null) return null;
+        var records = _records.Count > 0 ? _records : new[] { SampleRecords.StandardSample() };
+        return new PageContentSource(template, records, _sourcePath ?? string.Empty);
+    }
 
     /// <summary>拼版 VM 算完编号后回贴：记录集换成「一箱一张」的标签集。</summary>
     private void OnNumberedLabelsChanged(IReadOnlyList<MarkRecord> labels)

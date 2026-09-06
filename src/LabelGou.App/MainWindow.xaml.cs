@@ -4,7 +4,7 @@ using LabelGou.App.ViewModels;
 
 namespace LabelGou.App;
 
-/// <summary>主窗口：左侧五步流程（导入→映射→模板→拼版编号→核对），右侧按毫米真实尺寸预览单标签与整版。</summary>
+/// <summary>主窗口：左侧六步流程（导入→映射→模板→拼版编号→核对→输出打印），右侧按毫米真实尺寸预览单标签与整版。</summary>
 public partial class MainWindow : Window
 {
     private readonly MainViewModel _viewModel = new();
@@ -15,6 +15,10 @@ public partial class MainWindow : Window
         DataContext = _viewModel;
         _viewModel.ErrorRaised += OnErrorRaised;
 
+        // M3：打印/导出前的复核闸门（§七-11）——问人的事留给窗口，VM 不直接弹框
+        _viewModel.ConfirmGate = text => MessageBox.Show(this, text, "LabelGou 打印前复核",
+            MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes;
+
         // 整版控件靠回调取标签版面（Func 没法在 XAML 里绑），按页临时算，不预先展开几百页
         SheetView.LayoutProvider = index => _viewModel.Sheet.LayoutFor(index);
 
@@ -22,6 +26,9 @@ public partial class MainWindow : Window
         {
             FitNow();
             SheetFitNow();
+            // 枚举打印机要问后台服务，放到首屏画完之后再说，不拖慢启动
+            Dispatcher.BeginInvoke(new Action(_viewModel.Export.WarmUpPrinters),
+                System.Windows.Threading.DispatcherPriority.Background);
             Services.AppLog.Info($"主窗口已显示：{_viewModel.CurrentRecords.Count} 张标签 / {_viewModel.RawRecords.Count} 条记录，整版方案={(_viewModel.Sheet.Plan is null ? "无" : _viewModel.Sheet.Plan.Describe())}");
         };
         Services.AppLog.Info("主窗口初始化完成");
@@ -73,11 +80,11 @@ public partial class MainWindow : Window
     private void SheetFitNow() => _viewModel.FitSheetTo(SheetHost.ActualWidth, SheetHost.ActualHeight);
 
     private const string AboutText =
-        "LabelGou · 唛头标签助手 v0.2.0（M2）\n\n" +
+        "LabelGou · 唛头标签助手 v0.3.0（M3）\n\n" +
         "面向打印店 / 印刷厂的唛头标签自动化工具。\n" +
-        "当前进度 M2：Excel/CSV 导入 → 字段映射 → 套模板 → 件号规则编号 → 整版拼版 → 单标签/整版预览。\n\n" +
-        "后续里程碑：M3 直连打印/PDF/整版图片、M4 拖拽自定义模板、\n" +
-        "M5 CorelDRAW 衔接、M6 AI Agent 文档识别、M7 AI 智能排版、M8 打磨发布。\n\n" +
+        "当前进度 M3：Excel/CSV 导入 → 字段映射 → 套模板 → 件号规则编号 → 整版拼版 → 预览 → 直连打印 / PDF / PNG / TIFF。\n\n" +
+        "后续里程碑：M4 拖拽自定义模板、M5 CorelDRAW 衔接、\n" +
+        "M6 AI Agent 文档识别、M7 AI 智能排版、M8 打磨发布。\n\n" +
         "开发计划与进度详见 labelgou-word 目录下的文档。授权：MIT。";
 
     protected override void OnPreviewKeyDown(KeyEventArgs e)
@@ -85,6 +92,13 @@ public partial class MainWindow : Window
         if (e.Key == Key.O && Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
         {
             if (_viewModel.OpenFileCommand.CanExecute(null)) _viewModel.OpenFileCommand.Execute(null);
+            e.Handled = true;
+            return;
+        }
+
+        if (e.Key == Key.P && Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
+        {
+            if (_viewModel.Export.PrintCommand.CanExecute(null)) _viewModel.Export.PrintCommand.Execute(null);
             e.Handled = true;
             return;
         }

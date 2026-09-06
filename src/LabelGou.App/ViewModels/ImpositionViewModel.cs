@@ -382,9 +382,13 @@ public sealed class ImpositionViewModel : ObservableObject
                 Raise(nameof(PageCount));
                 Raise(nameof(PlanText));
                 Raise(nameof(HasPlan));
+                PlanChanged?.Invoke();
             }
         }
     }
+
+    /// <summary>整版方案换了（重算/换纸规/编号变化）。M3 的输出面板订阅它刷新页数与体积估算。</summary>
+    public event Action? PlanChanged;
 
     public bool HasPlan => Plan is not null;
 

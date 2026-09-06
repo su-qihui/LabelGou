@@ -45,7 +45,7 @@ call "%DOTNET_EXE%" run --project src\LabelGou.App\LabelGou.App.csproj -c Debug
 goto end
 
 :cmd_test
-call "%DOTNET_EXE%" test tests\LabelGou.Core.Tests\LabelGou.Core.Tests.csproj -c Debug -v minimal
+call "%DOTNET_EXE%" test LabelGou.sln -c Debug -v minimal
 goto end
 
 :cmd_release
