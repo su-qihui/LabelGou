@@ -273,7 +273,7 @@ public class ExportTests
         Assert.Contains(issues, i => i.Contains("页图为空"));
         Assert.Contains(issues, i => i.Contains("像素字节数"));
         Assert.Equal(3, issues.Count(i => i.StartsWith("第 1 页", StringComparison.Ordinal)));
-        Assert.Single(issues.Where(i => i.StartsWith("第 2 页", StringComparison.Ordinal)));
+        Assert.Single(issues, i => i.StartsWith("第 2 页", StringComparison.Ordinal));
 
         Assert.False(PdfImageDocument.TryWrite(Array.Empty<PdfPageImage>(), null, out var empty, out var error));
         Assert.Empty(empty);
