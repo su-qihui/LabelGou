@@ -1,0 +1,261 @@
+<Window x:Class="LabelGou.App.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:render="clr-namespace:LabelGou.App.Rendering"
+        Title="LabelGou · 唛头标签助手  v0.1.0（M1：导入 / 映射 / 模板 / 预览）"
+        Width="1320" Height="860"
+        MinWidth="1080" MinHeight="700"
+        FontFamily="Microsoft YaHei" FontSize="12.5"
+        Background="#F4F6F8"
+        WindowStartupLocation="CenterScreen">
+
+    <DockPanel>
+
+        <Menu DockPanel.Dock="Top">
+            <MenuItem Header="文件(_F)">
+                <MenuItem Header="打开数据文件…(_O)" Command="{Binding OpenFileCommand}" InputGestureText="Ctrl+O" />
+                <Separator />
+                <MenuItem Header="退出(_X)" Click="OnExitClick" />
+            </MenuItem>
+            <MenuItem Header="视图(_V)">
+                <MenuItem Header="放大" Command="{Binding ZoomInCommand}" />
+                <MenuItem Header="缩小" Command="{Binding ZoomOutCommand}" />
+            </MenuItem>
+            <MenuItem Header="帮助(_H)">
+                <MenuItem Header="查看诊断日志…" Click="OnOpenLogClick" />
+                <MenuItem Header="关于 LabelGou" Click="OnAboutClick" />
+            </MenuItem>
+        </Menu>
+
+        <StatusBar DockPanel.Dock="Bottom">
+            <StatusBarItem>
+                <TextBlock Text="{Binding StatusMessage}" TextTrimming="CharacterEllipsis" />
+            </StatusBarItem>
+        </StatusBar>
+
+        <Grid Margin="10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="470" />
+                <ColumnDefinition Width="10" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <!-- ==================== 左侧：四步流程 ==================== -->
+            <ScrollViewer Grid.Column="0" VerticalScrollBarVisibility="Auto" Padding="0,0,6,0">
+                <StackPanel>
+
+                    <GroupBox>
+                        <GroupBox.Header>
+                            <TextBlock Text="① 打开工厂发来的数据（Excel / CSV）" Style="{StaticResource StepTitle}" />
+                        </GroupBox.Header>
+                        <StackPanel>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBox Grid.Column="0" Text="{Binding SourcePath, Mode=OneWay}" IsReadOnly="True"
+                                         ToolTip="{Binding SourcePath}" VerticalAlignment="Center" />
+                                <Button Grid.Column="1" Content="打开…" Command="{Binding OpenFileCommand}" Margin="6,0,0,0" />
+                            </Grid>
+
+                            <Grid Margin="0,6,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="工作表：" VerticalAlignment="Center" />
+                                <ComboBox Grid.Column="1" ItemsSource="{Binding Sheets}" SelectedItem="{Binding SelectedSheet}" />
+                            </Grid>
+
+                            <TextBlock Text="{Binding HeaderInfoText}" Style="{StaticResource Hint}" Margin="0,6,0,4" />
+
+                            <Border BorderBrush="#D8DDE3" BorderThickness="1" Height="170" Background="White">
+                                <DataGrid ItemsSource="{Binding PreviewTable}"
+                                          AutoGenerateColumns="True"
+                                          IsReadOnly="True"
+                                          CanUserAddRows="False"
+                                          CanUserDeleteRows="False"
+                                          HeadersVisibility="Column"
+                                          GridLinesVisibility="All"
+                                          SelectionUnit="Cell"
+                                          FontSize="11.5"
+                                          RowHeaderWidth="0" />
+                            </Border>
+                        </StackPanel>
+                    </GroupBox>
+
+                    <GroupBox>
+                        <GroupBox.Header>
+                            <TextBlock Text="② 把表格列连到唛头字段" Style="{StaticResource StepTitle}" />
+                        </GroupBox.Header>
+                        <StackPanel>
+                            <WrapPanel>
+                                <Button Content="自动推荐" Command="{Binding AutoSuggestCommand}" />
+                                <Button Content="应用映射" Command="{Binding ApplyMappingCommand}" FontWeight="Bold" />
+                                <Button Content="保存方案" Command="{Binding SaveProfileCommand}" />
+                                <Button Content="删除方案" Command="{Binding DeleteProfileCommand}" />
+                            </WrapPanel>
+
+                            <Grid Margin="0,6,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="方案名称：" VerticalAlignment="Center" />
+                                <TextBox Grid.Column="1" Text="{Binding ProfileName, UpdateSourceTrigger=PropertyChanged}" />
+                            </Grid>
+
+                            <Grid Margin="0,6,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="已存方案：" VerticalAlignment="Center" />
+                                <ComboBox Grid.Column="1" ItemsSource="{Binding SavedProfiles}"
+                                          SelectedItem="{Binding SelectedSavedProfile}"
+                                          DisplayMemberPath="DisplayName" />
+                            </Grid>
+
+                            <CheckBox Content="没有件号数据时，按行序自动补件号与总件数"
+                                      IsChecked="{Binding AutoNumberCartons}" Margin="0,8,0,4" />
+
+                            <Border BorderBrush="#D8DDE3" BorderThickness="1" Background="White" MaxHeight="330">
+                                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                    <ItemsControl ItemsSource="{Binding FieldRows}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Grid Margin="4,2" >
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="128" />
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="112" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                                        <Rectangle Width="6" Height="6" Margin="0,0,4,0"
+                                                                   VerticalAlignment="Center">
+                                                            <Rectangle.Style>
+                                                                <Style TargetType="Rectangle">
+                                                                    <Setter Property="Fill" Value="#C0C6CC" />
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding Mapped}" Value="True">
+                                                                            <Setter Property="Fill" Value="#2E7D32" />
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </Rectangle.Style>
+                                                        </Rectangle>
+                                                        <TextBlock Text="{Binding DisplayName}" ToolTip="{Binding FieldKey}" />
+                                                    </StackPanel>
+                                                    <ComboBox Grid.Column="1" Margin="4,0"
+                                                              ItemsSource="{Binding Columns}"
+                                                              SelectedValue="{Binding ColumnIndex}"
+                                                              SelectedValuePath="Index" />
+                                                    <TextBlock Grid.Column="2" Text="{Binding SampleValue}"
+                                                               Style="{StaticResource Hint}"
+                                                               TextTrimming="CharacterEllipsis"
+                                                               VerticalAlignment="Center"
+                                                               ToolTip="该列第一条数据的值，用来确认连对了没有" />
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </ScrollViewer>
+                            </Border>
+                        </StackPanel>
+                    </GroupBox>
+
+                    <GroupBox>
+                        <GroupBox.Header>
+                            <TextBlock Text="③ 选唛头模板（A 类内置）" Style="{StaticResource StepTitle}" />
+                        </GroupBox.Header>
+                        <StackPanel>
+                            <ComboBox ItemsSource="{Binding TemplateOptions}"
+                                      SelectedItem="{Binding SelectedTemplate}"
+                                      DisplayMemberPath="DisplayName" />
+                            <TextBlock Text="{Binding TemplateInfoText}" Style="{StaticResource Hint}" Margin="0,6,0,0" />
+                        </StackPanel>
+                    </GroupBox>
+
+                    <GroupBox>
+                        <GroupBox.Header>
+                            <TextBlock Text="④ 数据核对与告警" Style="{StaticResource StepTitle}" />
+                        </GroupBox.Header>
+                        <StackPanel>
+                            <Border BorderBrush="#D8DDE3" BorderThickness="1" Background="White" Height="120">
+                                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                    <ItemsControl ItemsSource="{Binding IssueLines}" Margin="4,2">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <TextBlock Text="{Binding}" FontSize="11.5" Foreground="#B25A00"
+                                                           TextWrapping="Wrap" Margin="0,1" />
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </ScrollViewer>
+                            </Border>
+                            <TextBlock Text="没有告警表示这批数据的数字类字段都通过了量纲校验。"
+                                       Style="{StaticResource Hint}" Margin="0,4,0,0" />
+                        </StackPanel>
+                    </GroupBox>
+
+                </StackPanel>
+            </ScrollViewer>
+
+            <!-- ==================== 右侧：所见即所得预览 ==================== -->
+            <GroupBox Grid.Column="2">
+                <GroupBox.Header>
+                    <TextBlock Text="标签预览（按真实毫米尺寸绘制）" Style="{StaticResource StepTitle}" />
+                </GroupBox.Header>
+
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <WrapPanel Grid.Row="0" Margin="0,0,0,8" VerticalAlignment="Center">
+                        <Button Content="⏮ 首件" Command="{Binding FirstRecordCommand}" />
+                        <Button Content="◀ 上一件" Command="{Binding PrevRecordCommand}" />
+                        <TextBlock Text="{Binding RecordInfoText}" MinWidth="110" VerticalAlignment="Center"
+                                   Margin="2,0,10,0" FontWeight="Bold" />
+                        <Button Content="下一件 ▶" Command="{Binding NextRecordCommand}" />
+                        <Button Content="末件 ⏭" Command="{Binding LastRecordCommand}" />
+                        <Button Content="示意预览" Command="{Binding SamplePreviewCommand}" ToolTip="用内置样例数据看版式效果" />
+                        <Separator Width="14" Background="Transparent" />
+                        <Button Content="－" Command="{Binding ZoomOutCommand}" MinWidth="34" />
+                        <Button Content="＋" Command="{Binding ZoomInCommand}" MinWidth="34" />
+                        <Button Content="适应窗口" Click="OnFitClick" Margin="6,0,10,0" />
+                        <CheckBox x:Name="AutoFitBox" Content="自动适应" IsChecked="True" VerticalAlignment="Center"
+                                  Margin="0,0,10,0" />
+                        <CheckBox x:Name="GuideBox" Content="显示要素边框" IsChecked="{Binding ShowGuides}"
+                                  VerticalAlignment="Center" />
+                    </WrapPanel>
+
+                    <Border Grid.Row="1" x:Name="PreviewHost" Background="#E7EAEE"
+                            BorderBrush="#CDD3DA" BorderThickness="1"
+                            SizeChanged="OnPreviewHostSizeChanged">
+                        <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
+                                      Background="Transparent" Padding="12">
+                            <ContentControl HorizontalAlignment="Center" VerticalAlignment="Center">
+                                <render:LabelPreviewControl Layout="{Binding CurrentLayout}"
+                                                            Zoom="{Binding Zoom}"
+                                                            ShowGuides="{Binding ShowGuides}"
+                                                            HorizontalAlignment="Center"
+                                                            VerticalAlignment="Center" />
+                            </ContentControl>
+                        </ScrollViewer>
+                    </Border>
+
+                    <StackPanel Grid.Row="2" Margin="0,8,0,0">
+                        <TextBlock Text="{Binding TokenNoteText}" Style="{StaticResource Hint}"
+                                   Foreground="#B25A00" TextWrapping="Wrap" />
+                        <TextBlock Style="{StaticResource Hint}"
+                                   Text="说明：预览即按毫米真实尺寸绘制；打印/PDF/整版图片导出（M3）复用同一份版面数据，所以这里看到的就是印出来的。" />
+                    </StackPanel>
+                </Grid>
+            </GroupBox>
+        </Grid>
+    </DockPanel>
+</Window>

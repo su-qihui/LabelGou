@@ -1,0 +1,17 @@
+<Project>
+
+  <!-- 全工程公共编译设置 -->
+  <PropertyGroup>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Deterministic>true</Deterministic>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CA1416</NoWarn>
+    <VersionPrefix>0.1.0</VersionPrefix>
+    <Product>LabelGou · 唛头标签助手</Product>
+    <Company>LabelGou</Company>
+    <Copyright>Copyright © 2026 LabelGou. Licensed under MIT.</Copyright>
+  </PropertyGroup>
+
+</Project>

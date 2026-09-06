@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- LabelGou.Core 单元测试：解析/映射/模板校验/排版落位这些纯逻辑
+       是 M1 唯一可自动化验证的部分（GUI 无法在此环境跑），故覆盖重点放这里。 -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\LabelGou.Core\LabelGou.Core.csproj" />
+  </ItemGroup>
+
+</Project>

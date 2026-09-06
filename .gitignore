@@ -1,0 +1,23 @@
+# .NET 构建产物
+bin/
+obj/
+artifacts/
+*.user
+*.suo
+.vs/
+.idea/
+[Tt]est[Rr]esults/
+BenchmarkDotNet.Artifacts/
+
+# 打包产物（发布件另存到 labelgou-video / 导出目录，不进仓库）
+*.nupkg
+*.snupkg
+publish/
+
+# 本地配置与运行时数据
+local.properties
+appsettings.*.local.json
+
+# OS
+Thumbs.db
+.DS_Store
