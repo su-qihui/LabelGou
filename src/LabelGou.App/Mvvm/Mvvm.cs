@@ -1,8 +1,23 @@
 using System.ComponentModel;
+using System.Globalization;
 using System.Runtime.CompilerServices;
+using System.Windows;
 using System.Windows.Input;
 
 namespace LabelGou.App.Mvvm;
+
+/// <summary>
+/// 反向 Bool→Visibility：WPF 自带的 <see cref="BooleanToVisibilityConverter"/> 不支持取反（参数被忽略），
+/// 而编辑器里“没选中时给提示、选中时给面板”这类成对显示用得很多。
+/// </summary>
+public sealed class InverseBooleanToVisibilityConverter : System.Windows.Data.IValueConverter
+{
+    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+        => value is true ? Visibility.Collapsed : Visibility.Visible;
+
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+        => throw new NotSupportedException();
+}
 
 /// <summary>最小 MVVM 基类（不引第三方 MVVM 库，保持依赖最少）。</summary>
 public abstract class ObservableObject : INotifyPropertyChanged

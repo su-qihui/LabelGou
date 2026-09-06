@@ -19,6 +19,9 @@ public static class AppLog
 
     public static void Info(string message) => Write("INFO ", message, null);
 
+    /// <summary>不算故障但应当留痕的情况（比如用户操作被校验拦下）。</summary>
+    public static void Warning(string message) => Write("WARN ", message, null);
+
     public static void Error(string message, Exception? exception = null) => Write("ERROR", message, exception);
 
     private static void Write(string level, string message, Exception? exception)

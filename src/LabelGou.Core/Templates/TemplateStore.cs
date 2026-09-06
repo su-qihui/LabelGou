@@ -78,20 +78,45 @@ public sealed class TemplateStore
         return (true, fileName, issues);
     }
 
+    /// <summary>
+    /// 找出某个用户模板当前存在磁盘上的文件（重命名后会留下旧文件，编辑器保存时需要拿它删陈旧副本）。
+    /// 内置模板不在磁盘上，永远返回 null。
+    /// </summary>
+    public string? FindFileFor(string id)
+    {
+        if (string.IsNullOrWhiteSpace(id)) return null;
+        if (!System.IO.Directory.Exists(_directory)) return null;
+        return System.IO.Directory.EnumerateFiles(_directory, "*.json")
+            .FirstOrDefault(f =>
+            {
+                var t = TryRead(f);
+                return t is not null && string.Equals(t.Id, id, StringComparison.Ordinal);
+            });
+    }
+
     public bool Delete(string id)
     {
         if (BuiltInTemplates.GetById(id) is not null) return false;   // 内置不可删
-        var file = System.IO.Directory.Exists(_directory)
-            ? System.IO.Directory.EnumerateFiles(_directory, "*.json")
-                .FirstOrDefault(f =>
-                {
-                    var t = TryRead(f);
-                    return t is not null && string.Equals(t.Id, id, StringComparison.Ordinal);
-                })
-            : null;
+        var file = FindFileFor(id);
         if (file is null) return false;
         File.Delete(file);
         return true;
+    }
+
+    /// <summary>
+    /// 导出为独立 JSON 文本（拷到另一台机器导入用）。<strong>序列化口径与库内一致</strong>：
+    /// <c>JsonOptions</c> 是程序集内部的，不能把“自己再 new 一个 JsonSerializerOptions”的诱惑留给 UI。
+    /// </summary>
+    public static string ToJson(LabelTemplate template)
+    {
+        if (template is null) throw new ArgumentNullException(nameof(template));
+        return JsonSerializer.Serialize(template, ProfileStore.JsonOptions);
+    }
+
+    public void ExportFile(LabelTemplate template, string path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) throw new ArgumentException("导出路径不能为空。", nameof(path));
+        File.WriteAllText(path, ToJson(template));
     }
 
     /// <summary>读取单个模板文件（导入/迁移用），同样带校验。</summary>

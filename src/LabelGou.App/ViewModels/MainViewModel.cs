@@ -197,6 +197,25 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         return new PageContentSource(template, records, _sourcePath ?? string.Empty);
     }
 
+    /// <summary>M4：模板库。编辑器与菜单共用这一个实例，不开第二份。</summary>
+    public TemplateStore Templates => _templateStore;
+
+    /// <summary>
+    /// M4：编辑器保存或删除之后重建模板下拉。给了 <paramref name="preferId"/> 就选中它，
+    /// 选不到就保住当前这份（用户模板改了名再存也还能接着用），都没有退回标准内置。
+    /// <para>这里每次都 new 新的 <see cref="TemplateOption"/>，故意让 <see cref="SelectedTemplate"/>
+    /// 的 setter 认为“换了”，预览与拼版才会跟着重画。</para>
+    /// </summary>
+    public void ReloadTemplates(string? preferId = null)
+    {
+        var keepId = preferId ?? SelectedTemplate?.Id ?? BuiltInTemplates.IdStandard;
+        TemplateOptions.Clear();
+        foreach (var template in _templateStore.ListAll()) TemplateOptions.Add(new TemplateOption(template));
+        SelectedTemplate = TemplateOptions.FirstOrDefault(t => t.Id == keepId)
+            ?? TemplateOptions.FirstOrDefault(t => t.Id == BuiltInTemplates.IdStandard)
+            ?? TemplateOptions.FirstOrDefault();
+    }
+
     /// <summary>拼版 VM 算完编号后回贴：记录集换成「一箱一张」的标签集。</summary>
     private void OnNumberedLabelsChanged(IReadOnlyList<MarkRecord> labels)
     {
