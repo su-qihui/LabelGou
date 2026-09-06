@@ -83,6 +83,7 @@ public static class MappingSuggester
         var rebound = MappingProfile.CreateFor(headers, best.Name);
         rebound.Note = best.Note;
         rebound.AutoNumberCartons = best.AutoNumberCartons;
+        rebound.Numbering = best.Numbering;
         rebound.HeaderSignature = signature;
 
         foreach (var mapping in best.Mappings)

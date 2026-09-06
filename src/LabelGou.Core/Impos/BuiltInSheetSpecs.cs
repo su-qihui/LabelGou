@@ -1,0 +1,102 @@
+namespace LabelGou.Core.Impos;
+
+/// <summary>
+/// 内置纸规种子：只覆盖打印店最常见的那几张底纸，其余让用户复制后自己改。
+/// <para>
+/// 刻意不抄 gLabels 的上千条纸规库（本项目只在自家店用，几百条反而没人看得懂）。
+/// 真实刀模规格拿到后直接在这里补，或让用户在界面里另存（见 <see cref="SheetSpecStore"/>）。
+/// </para>
+/// <para>
+/// <strong>每个方法都返回新实例</strong>：纸规会被界面拿去改数值，共用同一份对象会把内置定义改掉。
+/// </para>
+/// </summary>
+public static class BuiltInSheetSpecs
+{
+    public const string IdA4 = "sheet.a4";
+
+    public const string IdA4Landscape = "sheet.a4.landscape";
+
+    public const string IdA3 = "sheet.a3";
+
+    public const string IdA4Dense = "sheet.a4.dense";
+
+    public const string IdA4Small = "sheet.a4.small-60x40";
+
+    public const string IdCustom = "sheet.custom";
+
+    /// <summary>全部内置纸规（每次调用都是新实例）。</summary>
+    public static IReadOnlyList<SheetSpec> All() => new List<SheetSpec>
+    {
+        A4(), A4Landscape(), A3(), A4Dense(), A4Small60x40(), Custom(),
+    };
+
+    /// <summary>按 id 取一份新副本；未知 id 返回 null。</summary>
+    public static SheetSpec? GetById(string? id) => id switch
+    {
+        IdA4 => A4(),
+        IdA4Landscape => A4Landscape(),
+        IdA3 => A3(),
+        IdA4Dense => A4Dense(),
+        IdA4Small => A4Small60x40(),
+        IdCustom => Custom(),
+        _ => null,
+    };
+
+    /// <summary>A4 底纸：唛头最常用，标签尺寸跟随模板，自动密排。</summary>
+    public static SheetSpec A4() => New(IdA4, "A4 底纸",
+        "210×297，四边 8 mm，自动密排，允许旋转省料。标签尺寸跟随所选模板。", 210, 297, 8, 2);
+
+    /// <summary>A4 横向：宽幅唛头（120×90 双语版之类）常能多放一枚。</summary>
+    public static SheetSpec A4Landscape()
+    {
+        var spec = New(IdA4Landscape, "A4 横向",
+            "同样的 A4 纸横过来用，宽幅唛头（如 120×90 双语版）常能多放一枚。", 210, 297, 8, 2);
+        spec.Landscape = true;
+        return spec;
+    }
+
+    /// <summary>A3 底纸：整批大箱唛省纸首选。</summary>
+    public static SheetSpec A3() => New(IdA3, "A3 底纸",
+        "297×420，整批大箱唛省纸首选。", 297, 420, 10, 3);
+
+    /// <summary>A4 密排：边距与间距都压到最小，枚数最大化。</summary>
+    public static SheetSpec A4Dense() => New(IdA4Dense, "A4 密排省料",
+        "边距 5 mm、间距 1 mm，枚数最大化；裁切留白较少，适合只裁一刀的情况。", 210, 297, 5, 1);
+
+    /// <summary>A4 上 60×40 小标，固定 3 列 × 6 行 = 18 枚（与已购刀模纸对齐用）。</summary>
+    public static SheetSpec A4Small60x40()
+    {
+        var spec = New(IdA4Small, "A4 小标 60×40（3 列 × 6 行）",
+            "固定网格：小唛头/侧唛贴纸，一页 18 枚。行列写死便于与已购刀模纸对齐。", 210, 297, 8, 3);
+        spec.LabelWidthMm = 60;
+        spec.LabelHeightMm = 40;
+        spec.Columns = 3;
+        spec.Rows = 6;
+        spec.AllowRotate = false;
+        return spec;
+    }
+
+    /// <summary>自定义起点：复制后按店里刀模实测数值改。</summary>
+    public static SheetSpec Custom() => New(IdCustom, "自定义（另存后改）",
+        "空白起点：把纸张、页边、间距、行列改成你店里刀模的实际数值。", 210, 297, 10, 2);
+
+    private static SheetSpec New(string id, string name, string note,
+        double paperW, double paperH, double margin, double gutter) => new()
+    {
+        Id = id,
+        Name = name,
+        Note = note,
+        BuiltIn = true,
+        PaperWidthMm = paperW,
+        PaperHeightMm = paperH,
+        MarginLeftMm = margin,
+        MarginTopMm = margin,
+        MarginRightMm = margin,
+        MarginBottomMm = margin,
+        GutterXMm = gutter,
+        GutterYMm = gutter,
+        AllowRotate = true,
+        CropMarks = CropMarkMode.SheetCorners,
+        RegistrationMarks = true,
+    };
+}

@@ -116,7 +116,10 @@ public sealed class LabelTemplate
     /// <summary>0 表示不画外框；否则为外框线宽（毫米）。</summary>
     public double BorderMm { get; set; } = 0.5;
 
-    /// <summary>裁切线长度（毫米），0 表示不画。M2 拼版整版时消费。</summary>
+    /// <summary>
+    /// 保留字段（旧 schema 兼容用）：<strong>整版裁切线由纸张/刀模决定，不由内容模板决定</strong>，
+    /// 拼版时实际生效的是 <c>SheetSpec.CropMarks</c>，本字段不参与落位。
+    /// </summary>
     public double CropMarkMm { get; set; }
 
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;

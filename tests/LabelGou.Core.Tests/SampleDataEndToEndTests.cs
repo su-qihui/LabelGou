@@ -1,7 +1,9 @@
 using LabelGou.Core.Data;
+using LabelGou.Core.Impos;
 using LabelGou.Core.Layout;
 using LabelGou.Core.Mapping;
 using LabelGou.Core.Marks;
+using LabelGou.Core.Numbering;
 using LabelGou.Core.Templates;
 using Xunit;
 
@@ -108,5 +110,78 @@ public class SampleDataEndToEndTests
             Assert.DoesNotContain(layout.Items.OfType<TextItem>(), t => t.Content.Trim().EndsWith(":"));
             Assert.DoesNotContain(layout.Items.OfType<TextItem>(), t => t.Content.Contains("  "));
         }
+    }
+
+    [Fact]
+    public void 样例装箱单跑通编号到整版链路()
+    {
+        var data = TableImporter.Import(LocateSample("样例-唛头装箱单.csv"));
+        var mapped = RecordMapper.Map(data, MappingSuggester.Suggest(data.Headers, "样例方案"));
+        var template = BuiltInTemplates.Standard100x80();
+
+        // —— 沿用模式：一行一张，件号完全按数据走（M1 行为不得回退）
+        var keep = NumberingEngine.Apply(mapped.Records, new NumberingRule { Mode = NumberingMode.KeepData });
+        Assert.Equal(9, keep.LabelCount);
+        Assert.Equal("120", keep.Labels[0].GetText(MarkFieldKey.CartonTotal));
+
+        // —— 按合同号分组重排：四份合同各自从 1 起号、各自算总件数
+        var grouped = NumberingEngine.Apply(mapped.Records, new NumberingRule
+        {
+            Mode = NumberingMode.ForceSequence,
+            Scope = NumberingScope.PerGroup,
+            GroupByField = MarkFieldKey.ContractNo,
+        });
+        Assert.Equal(4, grouped.GroupCount);
+        Assert.Equal(new[] { "1", "2", "3", "1", "2", "1", "2", "1", "2" },
+            grouped.Labels.Select(l => l.GetText(MarkFieldKey.CartonNo)));
+        Assert.Equal(new[] { "3", "3", "3", "2", "2", "2", "2", "2", "2" },
+            grouped.Labels.Select(l => l.GetText(MarkFieldKey.CartonTotal)));
+
+        // —— 按箱数展开：样例里每行都写着整单总箱数，展开后是 1050 箱
+        var expanded = NumberingEngine.Apply(mapped.Records, new NumberingRule { Mode = NumberingMode.ExpandByCartonTotal });
+        Assert.Equal(1050, expanded.CartonCount);
+        Assert.Equal(1050, expanded.LabelCount);
+
+        // —— 拼版：A4 旋转省料后每页 4 枚 → 263 页，末页 2 枚
+        var plan = ImpositionEngine.Build(BuiltInSheetSpecs.A4(), template.WidthMm, template.HeightMm, expanded.LabelCount);
+        Assert.Equal(4, plan.PerPage);
+        Assert.Equal(263, plan.PageCount);
+        Assert.Equal(2, plan.LabelsLastPage);
+        Assert.True(plan.UtilizationPercent > 39, plan.Describe());
+
+        // —— 跨层一致性：整版上任意一枚与单标签预览用的是同一份版面
+        var fifth = plan.PlacementsOnPage(2)[1];
+        var layout = LayoutEngine.Build(template, expanded.Labels[fifth.LabelIndex - 1],
+            new LayoutContext(fifth.LabelIndex, expanded.LabelCount, Path.GetFileName(data.SourceFile)));
+        var texts = layout.Items.OfType<TextItem>().Select(t => t.Content).ToList();
+        Assert.Contains(texts, t => t == $"C/NOS. {fifth.LabelIndex} / 1050");
+        Assert.DoesNotContain(texts, t => t.Contains("{{"));
+        Assert.False(layout.HasUnconfirmed);
+    }
+
+    [Fact]
+    public void 映射方案能把编号规则一起存下来()
+    {
+        var data = TableImporter.Import(LocateSample("样例-唛头装箱单.csv"));
+        var profile = MappingSuggester.Suggest(data.Headers, "带编号规则");
+        profile.Numbering = new NumberingRule
+        {
+            Mode = NumberingMode.ExpandByCartonTotal,
+            PadDigits = 4,
+            Scope = NumberingScope.PerGroup,
+            GroupByField = MarkFieldKey.ContractNo,
+        };
+
+        var store = new ProfileStore(Path.Combine(Path.GetTempPath(), "labelgou-m2-" + Guid.NewGuid().ToString("N")[..8]));
+        var reloaded = store.Load(store.Save(profile))!;
+
+        Assert.NotNull(reloaded.Numbering);
+        Assert.Equal(NumberingMode.ExpandByCartonTotal, reloaded.Numbering!.Mode);
+        Assert.Equal(4, reloaded.Numbering.PadDigits);
+        Assert.Equal(MarkFieldKey.ContractNo, reloaded.Numbering.GroupByField);
+
+        // 没存过编号规则的旧方案照样能读回来（字段缺失不报错）
+        reloaded.Numbering = null;
+        Assert.Null(store.Load(store.Save(reloaded))!.Numbering);
     }
 }

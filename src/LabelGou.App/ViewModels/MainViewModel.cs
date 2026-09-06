@@ -112,19 +112,20 @@ public sealed class FieldRowVm : ObservableObject
 }
 
 /// <summary>
-/// 主窗口视图模型：M1 的四步链路——导入、映射、选模板、预览。
+/// 主窗口视图模型：M1 的四步链路——导入、映射、选模板、预览；M2 的整版拼版与件号编号在 <see cref="Sheet"/> 里。
 /// <para>
 /// 刻意把"能不能用"的逻辑都留在 <c>LabelGou.Core</c>，这里只做状态编排；
-/// 这样 M2 拼版、M3 打印直接复用 Core，不必从界面里挖逻辑。
+/// 这样 M3 打印直接复用 Core，不必从界面里挖逻辑。
 /// </para>
 /// </summary>
-public sealed class MainViewModel : ObservableObject
+public sealed class MainViewModel : ObservableObject, ILabelSource
 {
     private readonly ProfileStore _profileStore = new();
     private readonly TemplateStore _templateStore = new();
 
     private TabularData? _data;
     private MappingProfile? _working;
+    private IReadOnlyList<MarkRecord> _rawRecords = Array.Empty<MarkRecord>();
     private IReadOnlyList<MarkRecord> _records = Array.Empty<MarkRecord>();
     private IReadOnlyList<MappingIssue> _mappingIssues = Array.Empty<MappingIssue>();
 
@@ -154,11 +155,34 @@ public sealed class MainViewModel : ObservableObject
         ZoomInCommand = new RelayCommand(() => Zoom = Math.Min(8, Zoom * 1.25));
         ZoomOutCommand = new RelayCommand(() => Zoom = Math.Max(0.2, Zoom / 1.25));
 
+        // M2：拼版与编号的界面状态独立成一个 VM，它通过 ILabelSource 反过来取记录与模板
+        // （先建好再选模板，因为 SelectedTemplate 的 setter 会通知它重算）
+        Sheet = new ImpositionViewModel(this);
+        Sheet.NumberingApplied += OnNumberedLabelsChanged;
+        SheetZoomInCommand = new RelayCommand(() => Sheet.SheetZoom = Math.Min(8, Sheet.SheetZoom * 1.25));
+        SheetZoomOutCommand = new RelayCommand(() => Sheet.SheetZoom = Math.Max(0.1, Sheet.SheetZoom / 1.25));
+
         foreach (var template in _templateStore.ListAll()) TemplateOptions.Add(new TemplateOption(template));
         SelectedTemplate = TemplateOptions.FirstOrDefault(t => t.Id == BuiltInTemplates.IdStandard) ?? TemplateOptions.FirstOrDefault();
         RefreshProfiles();
+        Sheet.RefreshFromSource();
+    }
+
+    /// <summary>M2：整版拼版 + 件号自动编号。</summary>
+    public ImpositionViewModel Sheet { get; }
+
+    /// <summary>拼版 VM 算完编号后回贴：记录集换成「一箱一张」的标签集。</summary>
+    private void OnNumberedLabelsChanged(IReadOnlyList<MarkRecord> labels)
+    {
+        _records = labels;
+        CurrentIndex = labels.Count > 0 ? 1 : 0;
+        Raise(nameof(RecordTotal));
         RebuildLayout();
     }
+
+    IReadOnlyList<MarkRecord> ILabelSource.RawRecords => _rawRecords;
+
+    LabelLayout? ILabelSource.BuildLayoutAt(int labelIndex) => BuildLayoutFor(labelIndex);
 
     // ---------- 命令 ----------
 
@@ -175,6 +199,10 @@ public sealed class MainViewModel : ObservableObject
     public RelayCommand SamplePreviewCommand { get; }
     public RelayCommand ZoomInCommand { get; }
     public RelayCommand ZoomOutCommand { get; }
+
+    /// <summary>整版预览的缩放（与单标签缩放互不影响）。</summary>
+    public RelayCommand SheetZoomInCommand { get; }
+    public RelayCommand SheetZoomOutCommand { get; }
 
     /// <summary>界面用它弹错误框（保持 VM 不直接依赖 MessageBox）。</summary>
     public event Action<string>? ErrorRaised;
@@ -274,9 +302,13 @@ public sealed class MainViewModel : ObservableObject
             {
                 TemplateInfoText = DescribeTemplate(value?.Template);
                 RebuildLayout();
+                Sheet.RebuildPlan();
             }
         }
     }
+
+    /// <summary><see cref="ILabelSource"/>：拼版 VM 用它拿当前模板。</summary>
+    LabelTemplate? ILabelSource.Template => SelectedTemplate?.Template;
 
     public string TemplateInfoText
     {
@@ -363,6 +395,14 @@ public sealed class MainViewModel : ObservableObject
         var layout = CurrentLayout;
         if (layout is null || availableWidth < 20 || availableHeight < 20) return;
         Zoom = Rendering.LabelPreviewControl.FitZoom(layout, availableWidth - 24, availableHeight - 24);
+    }
+
+    /// <summary>整版预览适应窗口（没方案时什么也不做）。</summary>
+    public void FitSheetTo(double availableWidth, double availableHeight)
+    {
+        var plan = Sheet.Plan;
+        if (plan is null || availableWidth < 20 || availableHeight < 20) return;
+        Sheet.SheetZoom = Rendering.SheetPreviewControl.FitZoom(plan, availableWidth - 28, availableHeight - 28, maxZoom: 3);
     }
 
     // ---------- 流程实现 ----------
@@ -488,6 +528,7 @@ public sealed class MainViewModel : ObservableObject
         var profile = MappingProfile.CreateFor(data.Headers,
             string.IsNullOrWhiteSpace(ProfileName) ? "未命名方案" : ProfileName.Trim());
         profile.AutoNumberCartons = AutoNumberCartons;
+        profile.Numbering = Sheet.BuildRule();
         profile.Note = _working?.Note ?? string.Empty;
 
         foreach (var row in FieldRows)
@@ -518,7 +559,7 @@ public sealed class MainViewModel : ObservableObject
 
         _working = profile;
         var result = RecordMapper.Map(data, profile);
-        _records = result.Records;
+        _rawRecords = result.Records;
         _mappingIssues = result.Issues;
 
         IssueLines.Clear();
@@ -528,15 +569,16 @@ public sealed class MainViewModel : ObservableObject
             IssueLines.Add($"第 {issue.RowNumber} 条 · {fieldName}：{issue.Message}");
         }
 
-        AiGateBlocked = _records.Any(r => r.PendingReview().Any());
-        CurrentIndex = _records.Count > 0 ? 1 : 0;
+        AiGateBlocked = _rawRecords.Any(r => r.PendingReview().Any());
         Raise(nameof(RecordTotal));
         Raise(nameof(HasData));
 
         var boundCount = profile.BoundCount;
         var suffix = result.Issues.Count == 0 ? "无告警" : $"{result.Issues.Count} 条告警，建议核对";
-        StatusMessage = $"已连接 {boundCount} 个字段，共 {_records.Count} 条唛头记录 · {suffix}";
-        RebuildLayout();
+        StatusMessage = $"已连接 {boundCount} 个字段，共 {_rawRecords.Count} 条唛头记录 · {suffix}";
+
+        // 件号交给 M2 编号引擎统一处理（它会回贴标签集并触发重算）
+        Sheet.RefreshFromSource();
     }
 
     private void ApplySavedProfile(MappingProfile saved)
@@ -552,6 +594,7 @@ public sealed class MainViewModel : ObservableObject
         var rebound = MappingProfile.CreateFor(data.Headers, saved.Name);
         rebound.Note = saved.Note;
         rebound.AutoNumberCartons = saved.AutoNumberCartons;
+        rebound.Numbering = saved.Numbering;
         var hits = 0;
         foreach (var mapping in saved.Mappings)
         {
@@ -569,6 +612,7 @@ public sealed class MainViewModel : ObservableObject
         _working = rebound;
         ProfileName = saved.Name;
         AutoNumberCartons = rebound.AutoNumberCartons;
+        Sheet.ApplySavedRule(saved.Numbering);
         RebuildFieldRows();
         ApplyMapping();
         StatusMessage = $"已套用方案「{saved.Name}」，成功连上 {hits} 个字段（其余需手工确认）。";
@@ -638,28 +682,17 @@ public sealed class MainViewModel : ObservableObject
             return;
         }
 
-        var template = option.Template;
-        MarkRecord record;
-        int index;
-        int total;
-
-        if (_currentIndex >= 1 && _currentIndex <= _records.Count)
+        var layout = BuildLayoutFor(_currentIndex);
+        if (layout is null)
         {
-            record = _records[_currentIndex - 1];
-            index = _currentIndex;
-            total = Math.Max(1, _records.Count);
-            RecordInfoText = $"第 {index} / {total} 条";
-        }
-        else
-        {
-            record = SampleRecords.StandardSample();
-            index = 1;
-            total = Math.Max(1, _records.Count);
-            RecordInfoText = "示意预览（未导入数据）";
+            CurrentLayout = null;
+            return;
         }
 
-        var context = new LayoutContext(index, total, Path.GetFileName(_sourcePath));
-        var layout = LayoutEngine.Build(template, record, context);
+        RecordInfoText = _currentIndex >= 1 && _currentIndex <= _records.Count
+            ? $"第 {_currentIndex} / {_records.Count} 张标签 · 来自数据第 {_records[_currentIndex - 1].SourceRowIndex} 行"
+            : "示意预览（未导入数据）";
+
         CurrentLayout = layout;
 
         TokenNoteText = layout.UnresolvedTokens.Count == 0
@@ -670,8 +703,39 @@ public sealed class MainViewModel : ObservableObject
         AiGateBlocked = layout.HasUnconfirmed;
     }
 
-    /// <summary>调试/自动化用：当前记录集合（不暴露可变引用）。</summary>
+    /// <summary>
+    /// 按序号算一张标签。序号越界（或为 0）时退回内置样例，用于示意预览。
+    /// 单标签预览与整版预览共用它，两边看到的才是同一张标签。
+    /// </summary>
+    private LabelLayout? BuildLayoutFor(int index)
+    {
+        var template = SelectedTemplate?.Template;
+        if (template is null) return null;
+
+        MarkRecord record;
+        int effectiveIndex;
+        int total;
+        if (index >= 1 && index <= _records.Count)
+        {
+            record = _records[index - 1];
+            effectiveIndex = index;
+            total = Math.Max(1, _records.Count);
+        }
+        else
+        {
+            record = SampleRecords.StandardSample();
+            effectiveIndex = 1;
+            total = Math.Max(1, _records.Count);
+        }
+
+        return LayoutEngine.Build(template, record, new LayoutContext(effectiveIndex, total, Path.GetFileName(_sourcePath)));
+    }
+
+    /// <summary>调试/自动化用：当前标签记录集（已按编号规则展开）。</summary>
     public IReadOnlyList<MarkRecord> CurrentRecords => _records;
+
+    /// <summary>调试/自动化用：未展开的原始记录集（Excel 一行一条）。</summary>
+    public IReadOnlyList<MarkRecord> RawRecords => _rawRecords;
 
     /// <summary>调试/自动化用：当前告警。</summary>
     public IReadOnlyList<MappingIssue> CurrentIssues => _mappingIssues;

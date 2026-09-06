@@ -1,5 +1,6 @@
 using LabelGou.Core.Data;
 using LabelGou.Core.Marks;
+using LabelGou.Core.Numbering;
 
 namespace LabelGou.Core.Mapping;
 
@@ -44,6 +45,15 @@ public sealed class MappingProfile
 
     /// <summary>是否对没有件号数据的行自动按序号补齐（来源标记为 <see cref="ValueOrigin.Rule"/>）。</summary>
     public bool AutoNumberCartons { get; set; } = true;
+
+    /// <summary>
+    /// 该客户惯用的<strong>件号编号规则</strong>（M2）。
+    /// <para>
+    /// 存在方案里而不是单独建库：打印店的复用单位是“同一客户的同一张表”，
+    /// 件号习惯（起始号、补零、按合同号分组）本来就是跟客户走的。旧 JSON 没这个字段时按默认规则跑。
+    /// </para>
+    /// </summary>
+    public NumberingRule? Numbering { get; set; }
 
     public DateTime UpdatedAt { get; set; } = DateTime.Now;
 

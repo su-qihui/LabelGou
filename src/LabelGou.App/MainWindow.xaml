@@ -2,7 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:render="clr-namespace:LabelGou.App.Rendering"
-        Title="LabelGou · 唛头标签助手  v0.1.0（M1：导入 / 映射 / 模板 / 预览）"
+        Title="LabelGou · 唛头标签助手  v0.2.0（M2：导入 / 映射 / 模板 / 拼版编号 / 整版预览）"
         Width="1320" Height="860"
         MinWidth="1080" MinHeight="700"
         FontFamily="Microsoft YaHei" FontSize="12.5"
@@ -179,7 +179,173 @@
 
                     <GroupBox>
                         <GroupBox.Header>
-                            <TextBlock Text="④ 数据核对与告警" Style="{StaticResource StepTitle}" />
+                            <TextBlock Text="④ 整版拼版与件号编号（M2）" Style="{StaticResource StepTitle}" />
+                        </GroupBox.Header>
+                        <StackPanel>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="纸规：" VerticalAlignment="Center" />
+                                <ComboBox Grid.Column="1" ItemsSource="{Binding Sheet.SheetOptions}"
+                                          SelectedItem="{Binding Sheet.SelectedSheetOption}"
+                                          DisplayMemberPath="DisplayName" />
+                            </Grid>
+
+                            <UniformGrid Columns="4" Margin="0,6,0,0">
+                                <TextBlock Text="纸宽" Style="{StaticResource Hint}" />
+                                <TextBox Text="{Binding Sheet.Working.PaperWidthMm, UpdateSourceTrigger=PropertyChanged}" />
+                                <TextBlock Text="纸高" Style="{StaticResource Hint}" VerticalAlignment="Center" />
+                                <TextBox Text="{Binding Sheet.Working.PaperHeightMm, UpdateSourceTrigger=PropertyChanged}" />
+                            </UniformGrid>
+
+                            <UniformGrid Columns="4" Margin="0,4,0,0">
+                                <TextBlock Text="左边" Style="{StaticResource Hint}" />
+                                <TextBox Text="{Binding Sheet.Working.MarginLeftMm, UpdateSourceTrigger=PropertyChanged}" />
+                                <TextBlock Text="上边" Style="{StaticResource Hint}" VerticalAlignment="Center" />
+                                <TextBox Text="{Binding Sheet.Working.MarginTopMm, UpdateSourceTrigger=PropertyChanged}" />
+                            </UniformGrid>
+
+                            <UniformGrid Columns="4" Margin="0,4,0,0">
+                                <TextBlock Text="右边" Style="{StaticResource Hint}" />
+                                <TextBox Text="{Binding Sheet.Working.MarginRightMm, UpdateSourceTrigger=PropertyChanged}" />
+                                <TextBlock Text="下边" Style="{StaticResource Hint}" VerticalAlignment="Center" />
+                                <TextBox Text="{Binding Sheet.Working.MarginBottomMm, UpdateSourceTrigger=PropertyChanged}" />
+                            </UniformGrid>
+
+                            <UniformGrid Columns="4" Margin="0,4,0,0">
+                                <TextBlock Text="列间距" Style="{StaticResource Hint}" />
+                                <TextBox Text="{Binding Sheet.Working.GutterXMm, UpdateSourceTrigger=PropertyChanged}" />
+                                <TextBlock Text="行间距" Style="{StaticResource Hint}" VerticalAlignment="Center" />
+                                <TextBox Text="{Binding Sheet.Working.GutterYMm, UpdateSourceTrigger=PropertyChanged}" />
+                            </UniformGrid>
+
+                            <UniformGrid Columns="4" Margin="0,4,0,0">
+                                <TextBlock Text="列数" Style="{StaticResource Hint}" />
+                                <TextBox Text="{Binding Sheet.Working.Columns, UpdateSourceTrigger=PropertyChanged}"
+                                         ToolTip="填 0 表示按可用宽度自动密排" />
+                                <TextBlock Text="行数" Style="{StaticResource Hint}" VerticalAlignment="Center" />
+                                <TextBox Text="{Binding Sheet.Working.Rows, UpdateSourceTrigger=PropertyChanged}"
+                                         ToolTip="填 0 表示按可用高度自动密排" />
+                            </UniformGrid>
+
+                            <WrapPanel Margin="0,6,0,0">
+                                <CheckBox Content="允许旋转省料" IsChecked="{Binding Sheet.Working.AllowRotate}" VerticalAlignment="Center" />
+                                <CheckBox Content="套准十字" IsChecked="{Binding Sheet.Working.RegistrationMarks}" Margin="12,0,0,0" VerticalAlignment="Center" />
+                                <CheckBox Content="横向用纸" IsChecked="{Binding Sheet.Working.Landscape}" Margin="12,0,0,0" VerticalAlignment="Center" />
+                            </WrapPanel>
+
+                            <Grid Margin="0,6,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="裁切线：" VerticalAlignment="Center" />
+                                <ComboBox Grid.Column="1" ItemsSource="{Binding Sheet.CropMarkOptions}"
+                                          SelectedItem="{Binding Sheet.SelectedCropMark}"
+                                          DisplayMemberPath="Label" />
+                                <Button Grid.Column="2" Content="另存为我的纸规…" Command="{Binding Sheet.SaveSheetAsCommand}" Margin="6,0,0,0" />
+                            </Grid>
+
+                            <WrapPanel Margin="0,8,0,0">
+                                <Button Content="改完了，重算整版" Command="{Binding Sheet.ApplySheetCommand}" FontWeight="Bold" />
+                                <Button Content="恢复该纸规原值" Command="{Binding Sheet.ResetSheetCommand}" Margin="6,0,0,0" />
+                            </WrapPanel>
+
+                            <TextBlock Text="数值改动后要点「重算整版」才生效（避免边打字边重算）；下拉与纸规选择是立即生效。"
+                                       Style="{StaticResource Hint}" TextWrapping="Wrap" Margin="0,4,0,0" />
+
+                            <Border BorderBrush="#D8DDE3" BorderThickness="1" Background="White" MaxHeight="110" Margin="0,6,0,0">
+                                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                    <ItemsControl ItemsSource="{Binding Sheet.SheetIssues}" Margin="4,2">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <TextBlock Text="{Binding}" FontSize="11.5" TextWrapping="Wrap" Margin="0,1" />
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </ScrollViewer>
+                            </Border>
+
+                            <Separator Margin="0,10" />
+
+                            <TextBlock Text="件号 No.x / y 规则" FontWeight="Bold" Margin="0,0,0,4" />
+
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="怎么编：" VerticalAlignment="Center" />
+                                <ComboBox Grid.Column="1" ItemsSource="{Binding Sheet.ModeOptions}"
+                                          SelectedItem="{Binding Sheet.SelectedMode}"
+                                          DisplayMemberPath="Label" />
+                            </Grid>
+
+                            <Grid Margin="0,4,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="口径：" VerticalAlignment="Center" />
+                                <ComboBox Grid.Column="1" ItemsSource="{Binding Sheet.ScopeOptions}"
+                                          SelectedItem="{Binding Sheet.SelectedScope}"
+                                          DisplayMemberPath="Label" />
+                            </Grid>
+
+                            <Grid Margin="0,4,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="分组：" VerticalAlignment="Center" />
+                                <ComboBox Grid.Column="1" ItemsSource="{Binding Sheet.GroupOptions}"
+                                          SelectedItem="{Binding Sheet.SelectedGroup}"
+                                          DisplayMemberPath="Label" />
+                            </Grid>
+
+                            <UniformGrid Columns="4" Margin="0,4,0,0">
+                                <TextBlock Text="起始号" Style="{StaticResource Hint}" />
+                                <TextBox Text="{Binding Sheet.Start, UpdateSourceTrigger=PropertyChanged}" />
+                                <TextBlock Text="步长" Style="{StaticResource Hint}" VerticalAlignment="Center" />
+                                <TextBox Text="{Binding Sheet.Step, UpdateSourceTrigger=PropertyChanged}" />
+                            </UniformGrid>
+
+                            <UniformGrid Columns="4" Margin="0,4,0,0">
+                                <TextBlock Text="补零位数" Style="{StaticResource Hint}" />
+                                <TextBox Text="{Binding Sheet.PadDigits, UpdateSourceTrigger=PropertyChanged}"
+                                         ToolTip="填 3 则 7 号印成 007；填 0 不补零" />
+                                <TextBlock Text="每张份数" Style="{StaticResource Hint}" VerticalAlignment="Center" />
+                                <TextBox Text="{Binding Sheet.Copies, UpdateSourceTrigger=PropertyChanged}"
+                                         ToolTip="一箱左右各贴一张就填 2（件号仍只占一个号，总件数不变）" />
+                            </UniformGrid>
+
+                            <UniformGrid Columns="4" Margin="0,4,0,0">
+                                <TextBlock Text="前缀" Style="{StaticResource Hint}" />
+                                <TextBox Text="{Binding Sheet.Prefix, UpdateSourceTrigger=PropertyChanged}" />
+                                <TextBlock Text="后缀" Style="{StaticResource Hint}" VerticalAlignment="Center" />
+                                <TextBox Text="{Binding Sheet.Suffix, UpdateSourceTrigger=PropertyChanged}" />
+                            </UniformGrid>
+
+                            <Border BorderBrush="#D8DDE3" BorderThickness="1" Background="White" MaxHeight="110" Margin="0,6,0,0">
+                                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                    <ItemsControl ItemsSource="{Binding Sheet.NumberingIssues}" Margin="4,2">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <TextBlock Text="{Binding}" FontSize="11.5" TextWrapping="Wrap" Margin="0,1" />
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </ScrollViewer>
+                            </Border>
+                        </StackPanel>
+                    </GroupBox>
+
+                    <GroupBox>
+                        <GroupBox.Header>
+                            <TextBlock Text="⑤ 数据核对与告警" Style="{StaticResource StepTitle}" />
                         </GroupBox.Header>
                         <StackPanel>
                             <Border BorderBrush="#D8DDE3" BorderThickness="1" Background="White" Height="120">
@@ -202,59 +368,112 @@
                 </StackPanel>
             </ScrollViewer>
 
-            <!-- ==================== 右侧：所见即所得预览 ==================== -->
+            <!-- ==================== 右侧：所见即所得预览（单标签 / 整版） ==================== -->
             <GroupBox Grid.Column="2">
                 <GroupBox.Header>
-                    <TextBlock Text="标签预览（按真实毫米尺寸绘制）" Style="{StaticResource StepTitle}" />
+                    <TextBlock Text="预览（按真实毫米尺寸绘制）" Style="{StaticResource StepTitle}" />
                 </GroupBox.Header>
 
-                <Grid>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="*" />
-                        <RowDefinition Height="Auto" />
-                    </Grid.RowDefinitions>
+                <TabControl>
+                    <TabItem Header="单标签">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
 
-                    <WrapPanel Grid.Row="0" Margin="0,0,0,8" VerticalAlignment="Center">
-                        <Button Content="⏮ 首件" Command="{Binding FirstRecordCommand}" />
-                        <Button Content="◀ 上一件" Command="{Binding PrevRecordCommand}" />
-                        <TextBlock Text="{Binding RecordInfoText}" MinWidth="110" VerticalAlignment="Center"
-                                   Margin="2,0,10,0" FontWeight="Bold" />
-                        <Button Content="下一件 ▶" Command="{Binding NextRecordCommand}" />
-                        <Button Content="末件 ⏭" Command="{Binding LastRecordCommand}" />
-                        <Button Content="示意预览" Command="{Binding SamplePreviewCommand}" ToolTip="用内置样例数据看版式效果" />
-                        <Separator Width="14" Background="Transparent" />
-                        <Button Content="－" Command="{Binding ZoomOutCommand}" MinWidth="34" />
-                        <Button Content="＋" Command="{Binding ZoomInCommand}" MinWidth="34" />
-                        <Button Content="适应窗口" Click="OnFitClick" Margin="6,0,10,0" />
-                        <CheckBox x:Name="AutoFitBox" Content="自动适应" IsChecked="True" VerticalAlignment="Center"
-                                  Margin="0,0,10,0" />
-                        <CheckBox x:Name="GuideBox" Content="显示要素边框" IsChecked="{Binding ShowGuides}"
-                                  VerticalAlignment="Center" />
-                    </WrapPanel>
+                            <WrapPanel Grid.Row="0" Margin="0,0,0,8" VerticalAlignment="Center">
+                                <Button Content="⏮ 首件" Command="{Binding FirstRecordCommand}" />
+                                <Button Content="◀ 上一件" Command="{Binding PrevRecordCommand}" />
+                                <TextBlock Text="{Binding RecordInfoText}" MinWidth="190" VerticalAlignment="Center"
+                                           Margin="2,0,10,0" FontWeight="Bold" />
+                                <Button Content="下一件 ▶" Command="{Binding NextRecordCommand}" />
+                                <Button Content="末件 ⏭" Command="{Binding LastRecordCommand}" />
+                                <Button Content="示意预览" Command="{Binding SamplePreviewCommand}" ToolTip="用内置样例数据看版式效果" />
+                                <Separator Width="14" Background="Transparent" />
+                                <Button Content="－" Command="{Binding ZoomOutCommand}" MinWidth="34" />
+                                <Button Content="＋" Command="{Binding ZoomInCommand}" MinWidth="34" />
+                                <Button Content="适应窗口" Click="OnFitClick" Margin="6,0,10,0" />
+                                <CheckBox x:Name="AutoFitBox" Content="自动适应" IsChecked="True" VerticalAlignment="Center"
+                                          Margin="0,0,10,0" />
+                                <CheckBox x:Name="GuideBox" Content="显示要素边框" IsChecked="{Binding ShowGuides}"
+                                          VerticalAlignment="Center" />
+                            </WrapPanel>
 
-                    <Border Grid.Row="1" x:Name="PreviewHost" Background="#E7EAEE"
-                            BorderBrush="#CDD3DA" BorderThickness="1"
-                            SizeChanged="OnPreviewHostSizeChanged">
-                        <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
-                                      Background="Transparent" Padding="12">
-                            <ContentControl HorizontalAlignment="Center" VerticalAlignment="Center">
-                                <render:LabelPreviewControl Layout="{Binding CurrentLayout}"
-                                                            Zoom="{Binding Zoom}"
-                                                            ShowGuides="{Binding ShowGuides}"
-                                                            HorizontalAlignment="Center"
-                                                            VerticalAlignment="Center" />
-                            </ContentControl>
-                        </ScrollViewer>
-                    </Border>
+                            <Border Grid.Row="1" x:Name="PreviewHost" Background="#E7EAEE"
+                                    BorderBrush="#CDD3DA" BorderThickness="1"
+                                    SizeChanged="OnPreviewHostSizeChanged">
+                                <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
+                                              Background="Transparent" Padding="12">
+                                    <ContentControl HorizontalAlignment="Center" VerticalAlignment="Center">
+                                        <render:LabelPreviewControl Layout="{Binding CurrentLayout}"
+                                                                    Zoom="{Binding Zoom}"
+                                                                    ShowGuides="{Binding ShowGuides}"
+                                                                    HorizontalAlignment="Center"
+                                                                    VerticalAlignment="Center" />
+                                    </ContentControl>
+                                </ScrollViewer>
+                            </Border>
 
-                    <StackPanel Grid.Row="2" Margin="0,8,0,0">
-                        <TextBlock Text="{Binding TokenNoteText}" Style="{StaticResource Hint}"
-                                   Foreground="#B25A00" TextWrapping="Wrap" />
-                        <TextBlock Style="{StaticResource Hint}"
-                                   Text="说明：预览即按毫米真实尺寸绘制；打印/PDF/整版图片导出（M3）复用同一份版面数据，所以这里看到的就是印出来的。" />
-                    </StackPanel>
-                </Grid>
+                            <StackPanel Grid.Row="2" Margin="0,8,0,0">
+                                <TextBlock Text="{Binding TokenNoteText}" Style="{StaticResource Hint}"
+                                           Foreground="#B25A00" TextWrapping="Wrap" />
+                                <TextBlock Style="{StaticResource Hint}" TextWrapping="Wrap"
+                                           Text="说明：此处已是编号后的单张标签（一行多箱时会展开成多张）；预览按毫米真实尺寸绘制，打印/PDF（M3）复用同一份版面数据。" />
+                            </StackPanel>
+                        </Grid>
+                    </TabItem>
+
+                    <TabItem Header="整版拼版">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+
+                            <WrapPanel Grid.Row="0" Margin="0,0,0,8" VerticalAlignment="Center">
+                                <Button Content="⏮ 首页" Command="{Binding Sheet.FirstPageCommand}" />
+                                <Button Content="◀ 上一页" Command="{Binding Sheet.PrevPageCommand}" />
+                                <TextBlock Text="{Binding Sheet.PageText}" MinWidth="190" VerticalAlignment="Center"
+                                           Margin="2,0,10,0" FontWeight="Bold" />
+                                <Button Content="下一页 ▶" Command="{Binding Sheet.NextPageCommand}" />
+                                <Button Content="末页 ⏭" Command="{Binding Sheet.LastPageCommand}" />
+                                <Separator Width="14" Background="Transparent" />
+                                <Button Content="－" Command="{Binding SheetZoomOutCommand}" MinWidth="34" />
+                                <Button Content="＋" Command="{Binding SheetZoomInCommand}" MinWidth="34" />
+                                <Button Content="适应窗口" Click="OnSheetFitClick" Margin="6,0,10,0" />
+                                <CheckBox Content="自动适应" x:Name="SheetAutoFitBox" IsChecked="True"
+                                          VerticalAlignment="Center" Margin="0,0,10,0" />
+                                <CheckBox Content="显示要素边框" IsChecked="{Binding ShowGuides}" VerticalAlignment="Center" />
+                            </WrapPanel>
+
+                            <Border Grid.Row="1" x:Name="SheetHost" Background="#E7EAEE"
+                                    BorderBrush="#CDD3DA" BorderThickness="1"
+                                    SizeChanged="OnSheetHostSizeChanged">
+                                <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
+                                              Background="Transparent" Padding="12">
+                                    <ContentControl HorizontalAlignment="Center" VerticalAlignment="Center">
+                                        <render:SheetPreviewControl x:Name="SheetView"
+                                                                    Plan="{Binding Sheet.Plan}"
+                                                                    PageIndex="{Binding Sheet.PageIndex}"
+                                                                    Zoom="{Binding Sheet.SheetZoom}"
+                                                                    ShowGuides="{Binding ShowGuides}"
+                                                                    HorizontalAlignment="Center"
+                                                                    VerticalAlignment="Center" />
+                                    </ContentControl>
+                                </ScrollViewer>
+                            </Border>
+
+                            <StackPanel Grid.Row="2" Margin="0,8,0,0">
+                                <TextBlock Text="{Binding Sheet.PlanText}" FontWeight="Bold" TextWrapping="Wrap" />
+                                <TextBlock Style="{StaticResource Hint}" TextWrapping="Wrap"
+                                           Text="灰色虚线框 = 页边可用区；细灰线 = 裁切角线；蓝色十字 = 套准标记。拼版几何全部由 Core 的 ImpositionEngine 算出，导出与打印（M3）共用同一份结果。" />
+                            </StackPanel>
+                        </Grid>
+                    </TabItem>
+                </TabControl>
             </GroupBox>
         </Grid>
     </DockPanel>

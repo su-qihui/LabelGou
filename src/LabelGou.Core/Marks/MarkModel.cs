@@ -333,6 +333,18 @@ public sealed class MarkRecord
     }
 
     public static MarkRecordBuilder Builder() => new();
+
+    /// <summary>
+    /// 以本记录为底开一个构建器（M2 编号引擎要「改几个字段、其余原样带走」）。
+    /// 值对象直接复用引用，因此 <see cref="MarkValue.NeedsReview"/> 等元信息不会在复制中丢失。
+    /// </summary>
+    public MarkRecordBuilder ToBuilder()
+    {
+        var builder = new MarkRecordBuilder().SetRow(SourceRowIndex, SourceRef);
+        foreach (var kv in _values) builder.Set(kv.Key, kv.Value);
+        foreach (var kv in _custom) builder.SetCustom(kv.Key, kv.Value);
+        return builder;
+    }
 }
 
 /// <summary>构造 <see cref="MarkRecord"/> 的可变构建器。</summary>
@@ -368,6 +380,14 @@ public sealed class MarkRecordBuilder
     {
         if (string.IsNullOrWhiteSpace(text)) _custom.Remove(key);
         else _custom[key] = new MarkValue(text, origin);
+        return this;
+    }
+
+    /// <summary>直接放入带元信息的值（复制记录时不丢告警/来源回溯）。</summary>
+    public MarkRecordBuilder SetCustom(string key, MarkValue value)
+    {
+        if (value.IsEmpty && !value.IsAiSourced) _custom.Remove(key);
+        else _custom[key] = value;
         return this;
     }
 
