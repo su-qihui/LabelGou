@@ -1,0 +1,7 @@
+# 默认规则一概不设：仓库里现成文件都是 LF，靠 git 的默认行为即可。
+# 下面这些是必须"原样字节"进出的产物，别让 autocrlf 改行尾。
+
+# CorelDRAW 的 VBA 编辑器按本机 ANSI 代码页(GBK)读 .bas，且要 CRLF；
+# 被 git 规范化成 LF 之后，某些版本的编辑器会把整个模块显示成一行。
+*.bas  -text
+*.vb   -text

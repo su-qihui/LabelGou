@@ -35,8 +35,13 @@ public static class SheetRenderer
     private static readonly Color PaperEdgeColor = Color.FromRgb(150, 150, 150);
     private static readonly Color MarginColor = Color.FromRgb(200, 200, 200);
 
-    /// <summary>屏幕上再细的线也至少留 0.6 DIU，否则高 dpi 与低 dpi 看着不一样。</summary>
-    private const double ScreenMinThicknessDiu = 0.6;
+    /// <summary>页用途 → 线宽口径项（只有屏幕需要保底，其余一律真实毫米）。</summary>
+    public static RenderTarget TargetFor(PageRenderPurpose purpose) => purpose switch
+    {
+        PageRenderPurpose.Screen => RenderTarget.Screen,
+        PageRenderPurpose.Printer => RenderTarget.Printer,
+        _ => RenderTarget.Bitmap,
+    };
 
     public static void DrawPage(
         DrawingContext dc,
@@ -79,12 +84,13 @@ public static class SheetRenderer
         }
 
         // 辅助线先画，让标签内容压在上面（印刷上角线本来就只露在标签外）
+        var target = TargetFor(purpose);
         if (includeTrimMarks)
         {
             foreach (var mark in ImpositionEngine.BuildMarks(plan.Spec, plan, page))
             {
                 if (purpose != PageRenderPurpose.Screen && mark.Kind == SheetMarkKind.LabelOutline) continue;
-                dc.DrawLine(PenFor(mark, scale, purpose),
+                dc.DrawLine(PenFor(mark, scale, target),
                     new Point(Mm.ToDiu(mark.X1) * scale, Mm.ToDiu(mark.Y1) * scale),
                     new Point(Mm.ToDiu(mark.X2) * scale, Mm.ToDiu(mark.Y2) * scale));
             }
@@ -105,24 +111,21 @@ public static class SheetRenderer
             var y = Mm.ToDiu(placement.Y) * scale;
 
             if (placement.Rotated)
-                LabelRenderer.DrawRotated(dc, layout, scale, x, y, showElementGuides, pixelsPerDip);
+                LabelRenderer.DrawRotated(dc, layout, scale, x, y, showElementGuides, pixelsPerDip, target: target);
             else
-                LabelRenderer.Draw(dc, layout, scale, x, y, showElementGuides, pixelsPerDip);
+                LabelRenderer.Draw(dc, layout, scale, x, y, showElementGuides, pixelsPerDip, target: target);
         }
 
         if (purpose == PageRenderPurpose.Printer) dc.Pop();
     }
 
     /// <summary>
-    /// 线宽口径：Core 给的 <see cref="SheetMarkLine.ThicknessMm"/> 是真实印刷线宽（默认 0.3mm 左右），
-    /// 导出/打印必须按它换算，屏幕预览则保底可见。
+    /// 角线画笔：线宽走 <see cref="RenderRules"/> 的唯一口径，颜色按标记类型分。
+    /// <para>Core 给的 <see cref="SheetMarkLine.ThicknessMm"/> 是真实印刷线宽（默认 0.3mm 左右），
+    /// 导出/打印按它换算，屏幕预览保底可见。</para>
     /// </summary>
-    private static Pen PenFor(SheetMarkLine mark, double scale, PageRenderPurpose purpose)
+    private static Pen PenFor(SheetMarkLine mark, double scale, RenderTarget target)
     {
-        var thickness = Mm.ToDiu(mark.ThicknessMm) * scale;
-        if (purpose == PageRenderPurpose.Screen) thickness = Math.Max(ScreenMinThicknessDiu, thickness);
-        thickness = Math.Max(0.2, thickness);
-
         var brush = new SolidColorBrush(mark.Kind switch
         {
             SheetMarkKind.RegistrationMark => RegistrationColor,
@@ -130,10 +133,8 @@ public static class SheetRenderer
             _ => CropColor,
         });
         brush.Freeze();
-        var pen = new Pen(brush, thickness);
-        if (mark.Kind == SheetMarkKind.LabelOutline) pen.DashStyle = DashStyles.Dot;
-        pen.Freeze();
-        return pen;
+        return RenderRules.PenFor(brush, mark.ThicknessMm, scale, target,
+            mark.Kind == SheetMarkKind.LabelOutline ? DashStyles.Dot : null);
     }
 
     private static Pen Frozen(Pen pen)

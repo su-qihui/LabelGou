@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.IO;
 using System.Reflection;
+using System.Text;
 using System.Windows.Media.Imaging;
 using LabelGou.App.Rendering;
 using LabelGou.Core.Export;
@@ -54,13 +55,17 @@ public sealed record ExportOutcome(
 }
 
 /// <summary>
-/// 三种出片出口：PDF（打印交付）、逐页 PNG（发图方便）、多帧 TIFF（印厂收图）。
-/// 三者共用 <see cref="PageRasterizer"/> 与 <see cref="SheetRenderer"/>，与预览同一套画法。
+/// 四种出片出口：PDF（打印交付）、逐页 PNG（发图方便）、多帧 TIFF（印厂收图）、SVG（衔接 CorelDRAW 既有出片流程）。
+/// 前三条共用 <see cref="PageRasterizer"/> 与 <see cref="SheetRenderer"/>，与预览同一套栅格画法；
+/// SVG 不吃栅格，但吃同一批数据（落位、角线、版面要素）与同一个 <see cref="Rendering.TextFit"/>。
 /// </summary>
 public static class SheetExportService
 {
     /// <summary>TIFF 是一次性在内存里攒帧的，页数必须设限，否则大任务直接 OOM。</summary>
     public const int MaxTiffFrames = 40;
+
+    /// <summary>SVG 一次最多写多少个文件（一枚一图时 50 枚版打 20 页就上千个，防手滑）。</summary>
+    public const int MaxSvgFiles = 600;
 
     public static string ProducerName => "LabelGou " + (Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "dev");
 
@@ -203,6 +208,78 @@ public static class SheetExportService
         {
             foreach (var frame in frames) (frame as IDisposable)?.Dispose();
             return ExportOutcome.Fail($"导出 TIFF 失败：{ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// 矢量出口：整版写成可被 CorelDRAW/Illustrator 直开的 SVG（M5）。
+    /// <para>与位图出口的区别：不吃 DPI，所以纸规再大也不会把内存吃光；代价是件里没有栅格，
+    /// 内嵌图靠 base64。</para>
+    /// </summary>
+    public static ExportOutcome ExportSvg(SheetExportRequest request, string directory, SvgExportOptions options,
+        IProgress<string>? progress, CancellationToken token)
+    {
+        var invalid = Validate(request);
+        if (invalid is not null) return invalid;
+
+        // 口径提醒（关转曲、图片改引用）不是错，但必须进摘要，不能默默降质
+        var reminders = new List<string>();
+        options.CollectIssues(reminders);
+
+        var totalFiles = options.Mode == SvgExportMode.PerLabel
+            ? request.Plan.LabelCount
+            : request.PageIndexes.Count;
+        if (totalFiles > MaxSvgFiles)
+        {
+            return ExportOutcome.Fail($"这一次会写出约 {totalFiles} 个 SVG，超过 {MaxSvgFiles} 个上限；请改成整页一图或分批导出。");
+        }
+
+        var notes = new List<string>(reminders);
+        var files = new List<string>();
+        var total = 0L;
+        var elements = 0;
+        try
+        {
+            Directory.CreateDirectory(directory);
+            var done = 0;
+            foreach (var index in request.PageIndexes)
+            {
+                token.ThrowIfCancellationRequested();
+                done++;
+                progress?.Report($"正在写出 SVG 第 {index + 1} 页（{done}/{request.PageIndexes.Count}）…");
+                foreach (var file in SheetSvgWriter.WritePage(request, index, options))
+                {
+                    token.ThrowIfCancellationRequested();
+                    var path = Path.Combine(directory, file.FileName);
+                    var bytes = new UTF8Encoding(false).GetBytes(file.Xml);
+                    File.WriteAllBytes(path, bytes);
+                    files.Add(path);
+                    total += bytes.Length;
+                    elements += file.ElementCount;
+                    foreach (var note in file.Notes)
+                    {
+                        if (!notes.Contains(note, StringComparer.Ordinal)) notes.Add(note);
+                    }
+                }
+            }
+
+            var summary = string.Format(CultureInfo.InvariantCulture,
+                "写出 {0} 个 SVG · {1} · 共 {2} 个矢量元素 · 合计 {3}",
+                files.Count, options.Describe(), elements, FormatSize(total));
+            if (notes.Count > 0)
+            {
+                summary += "｜" + string.Join(" ｜ ", notes.Take(4)) + (notes.Count > 4 ? $" …等 {notes.Count} 条提示" : string.Empty);
+            }
+            return new ExportOutcome(true, null, files, total, summary);
+        }
+        catch (OperationCanceledException)
+        {
+            foreach (var file in files) TryDeletePartial(file);
+            return ExportOutcome.Fail("导出已取消，已写出的 SVG 已删除。");
+        }
+        catch (Exception ex)
+        {
+            return ExportOutcome.Fail($"导出 SVG 失败：{ex.Message}");
         }
     }
 

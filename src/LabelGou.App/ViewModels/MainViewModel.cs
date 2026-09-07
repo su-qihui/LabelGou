@@ -773,7 +773,9 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
             total = Math.Max(1, _records.Count);
         }
 
-        return LayoutEngine.Build(template, record, new LayoutContext(effectiveIndex, total, Path.GetFileName(_sourcePath)));
+        // 预览（单标签与整版）带参考底图，打印/导出走 PageContentSource，那边默认不含
+        return LayoutEngine.Build(template, record,
+            new LayoutContext(effectiveIndex, total, Path.GetFileName(_sourcePath), IncludeReference: true));
     }
 
     /// <summary>调试/自动化用：当前标签记录集（已按编号规则展开）。</summary>

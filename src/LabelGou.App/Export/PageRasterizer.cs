@@ -134,6 +134,9 @@ public sealed class PageContentSource
 
     public string SourceName { get; }
 
+    /// <summary>快照里的模板（SVG 出口要说清“这些字从哪几个字段来”，只能问它）。</summary>
+    public LabelTemplate Template => _template;
+
     public int LabelCount => _records.Count;
 
     private int? _unconfirmedCount;

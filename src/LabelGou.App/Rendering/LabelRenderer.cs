@@ -21,15 +21,12 @@ public static class LabelRenderer
 
     private static readonly Pen EdgePen = Frozen(new Pen(new SolidColorBrush(Color.FromRgb(160, 160, 160)), 1));
 
-    private static readonly Pen InkPen = Frozen(new Pen(Brushes.Black, 1));
+    private static readonly Pen GuidePen = Frozen(new Pen(RenderRules.GuideInk, 0.6));
 
-    private static readonly Pen GuidePen = Frozen(new Pen(new SolidColorBrush(Color.FromRgb(120, 170, 220)), 0.6));
-
-    private static readonly Brush FlagBrush = Frozen(new SolidColorBrush(Color.FromRgb(198, 40, 40)));
-
-    private static readonly Brush FlagBackground = Frozen(new SolidColorBrush(Color.FromArgb(28, 198, 40, 40)));
-
-    private static readonly Brush TextBrush = Brushes.Black;
+    private static readonly Pen ReferencePen = Frozen(new Pen(RenderRules.ReferenceTint, 0.8)
+    {
+        DashStyle = DashStyles.Dash,
+    });
 
     private static T Frozen<T>(T value) where T : Freezable
     {
@@ -48,6 +45,7 @@ public static class LabelRenderer
     /// <param name="showGuides">是否叠加元素边框辅助线。</param>
     /// <param name="pixelsPerDip">当前 DPI 系数，FormattedText 需要。</param>
     /// <param name="drawBackground">是否先铺白底并描边（整版里每张都铺会盖掉拼版辅助线，故可选）。</param>
+    /// <param name="target">落到哪儿去，只决定线宽保底（见 <see cref="RenderRules"/>）。</param>
     public static void Draw(
         DrawingContext dc,
         LabelLayout layout,
@@ -56,7 +54,8 @@ public static class LabelRenderer
         double offsetY,
         bool showGuides,
         double pixelsPerDip,
-        bool drawBackground = true)
+        bool drawBackground = true,
+        RenderTarget target = RenderTarget.Screen)
     {
         var widthDiu = Mm.ToDiu(layout.WidthMm) * scale;
         var heightDiu = Mm.ToDiu(layout.HeightMm) * scale;
@@ -81,16 +80,19 @@ public static class LabelRenderer
                 switch (item)
                 {
                     case RectItem rect:
-                        DrawRect(dc, rect, scale, showGuides);
+                        DrawRect(dc, rect, scale, showGuides, target);
                         break;
                     case LineItem line:
-                        DrawLine(dc, line, scale);
+                        DrawLine(dc, line, scale, target);
                         break;
                     case TextItem text:
-                        DrawText(dc, text, scale, showGuides, pixelsPerDip);
+                        DrawText(dc, text, scale, showGuides, pixelsPerDip, target);
                         break;
                     case ImageItem image:
                         DrawImage(dc, image, scale);
+                        break;
+                    case VectorItem vector:
+                        DrawVector(dc, vector, scale, pixelsPerDip);
                         break;
                 }
             }
@@ -113,7 +115,8 @@ public static class LabelRenderer
         double offsetY,
         bool showGuides,
         double pixelsPerDip,
-        bool drawBackground = true)
+        bool drawBackground = true,
+        RenderTarget target = RenderTarget.Screen)
     {
         var heightDiu = Mm.ToDiu(layout.HeightMm) * scale;
 
@@ -128,7 +131,7 @@ public static class LabelRenderer
         dc.PushTransform(group);
         try
         {
-            Draw(dc, layout, scale, 0, 0, showGuides, pixelsPerDip, drawBackground);
+            Draw(dc, layout, scale, 0, 0, showGuides, pixelsPerDip, drawBackground, target);
         }
         finally
         {
@@ -136,117 +139,113 @@ public static class LabelRenderer
         }
     }
 
-    private static void DrawRect(DrawingContext dc, RectItem rect, double scale, bool showGuides)
+    private static void DrawRect(DrawingContext dc, RectItem rect, double scale, bool showGuides, RenderTarget target)
     {
         var r = new Rect(Mm.ToDiu(rect.X) * scale, Mm.ToDiu(rect.Y) * scale, Mm.ToDiu(rect.Width) * scale, Mm.ToDiu(rect.Height) * scale);
-        var pen = new Pen(InkPen.Brush, Math.Max(0.6, Mm.ToDiu(rect.ThicknessMm) * scale));
-        pen.Freeze();
-        dc.DrawRectangle(null, pen, r);
+        dc.DrawRectangle(null, RenderRules.InkPen(rect.ThicknessMm, scale, target), r);
         if (showGuides) dc.DrawRectangle(null, GuidePen, r);
     }
 
-    private static void DrawLine(DrawingContext dc, LineItem line, double scale)
+    private static void DrawLine(DrawingContext dc, LineItem line, double scale, RenderTarget target)
     {
         var p1 = new Point(Mm.ToDiu(line.X1) * scale, Mm.ToDiu(line.Y1) * scale);
         var p2 = new Point(Mm.ToDiu(line.X2) * scale, Mm.ToDiu(line.Y2) * scale);
-        var pen = new Pen(InkPen.Brush, Math.Max(0.6, Mm.ToDiu(line.ThicknessMm) * scale));
-        pen.Freeze();
-        dc.DrawLine(pen, p1, p2);
+        dc.DrawLine(RenderRules.InkPen(line.ThicknessMm, scale, target), p1, p2);
     }
 
-    private static void DrawText(DrawingContext dc, TextItem text, double scale, bool showGuides, double pixelsPerDip)
+    private static void DrawText(DrawingContext dc, TextItem text, double scale, bool showGuides, double pixelsPerDip, RenderTarget target)
     {
-        var box = new Rect(Mm.ToDiu(text.X) * scale, Mm.ToDiu(text.Y) * scale, Mm.ToDiu(text.Width) * scale, Mm.ToDiu(text.Height) * scale);
+        // 缩字号、垂直居中、换行截断全在 TextFit 里定（定案 D10）：这里只负责把它画上去
+        var fit = TextFit.Solve(text, scale, pixelsPerDip);
+        if (fit is null) return;
 
-        var family = SafeFontFamily(text.FontFamily);
-        var typeface = new Typeface(family, FontStyles.Normal, text.Bold ? FontWeights.Bold : FontWeights.Normal, FontStretches.Normal);
-        var foreground = text.Flagged ? FlagBrush : TextBrush;
+        var box = fit.BoxDiu;
+        if (text.Flagged) dc.DrawRectangle(RenderRules.FlagBackground, null, box);
 
-        if (text.Flagged) dc.DrawRectangle(FlagBackground, null, box);
-
-        // 字号：磅 → DIU（1pt = 96/72 DIU），再乘显示缩放
-        var emSize = Mm.ToDiu(Mm.PointToMm(text.FontSizePt)) * scale;
-        var minEmSize = emSize * 0.62;
-
-        FormattedText? formatted = null;
-        var guard = 0;
-        while (guard++ < 24)
-        {
-            formatted = BuildFormatted(text, typeface, foreground, emSize, box.Width, pixelsPerDip);
-            if (!text.ShrinkToFit || formatted.Height <= box.Height + 0.5 || emSize <= minEmSize) break;
-            emSize *= 0.92;
-        }
-        if (formatted is null) return;
-
-        // 垂直居中；水平由对齐决定（FormattedText 已按对齐排布，这里只需处理宽度未占满的情况）
-        var offsetY = box.Top + Math.Max(0, (box.Height - formatted.Height) / 2);
-        dc.DrawText(formatted, new Point(box.Left, offsetY));
+        dc.DrawText(fit.Formatted, new Point(box.Left, fit.TextTopDiu));
 
         if (showGuides) dc.DrawRectangle(null, GuidePen, box);
     }
 
-    private static FormattedText BuildFormatted(
-        TextItem text, Typeface typeface, Brush foreground, double emSize, double maxWidth, double pixelsPerDip)
-    {
-        // WPF 的 FormattedText 没有 TextWrapping 成员（属性/构造参都没有），
-        // 换行完全由 MaxTextWidth 驱动；行数上限用 MaxLineCount + Trimming。
-        var formatted = new FormattedText(
-            text.Content,
-            CultureInfo.CurrentCulture,
-            FlowDirection.LeftToRight,
-            typeface,
-            emSize,
-            foreground,
-            pixelsPerDip)
-        {
-            MaxTextWidth = Math.Max(1, maxWidth),
-            TextAlignment = text.Align switch
-            {
-                HorizontalAlign.Center => TextAlignment.Center,
-                HorizontalAlign.Right => TextAlignment.Right,
-                _ => TextAlignment.Left,
-            },
-            Trimming = TextTrimming.CharacterEllipsis,
-        };
-
-        if (text.MaxLines > 0) formatted.MaxLineCount = text.MaxLines;
-        return formatted;
-    }
-
     private static void DrawImage(DrawingContext dc, ImageItem image, double scale)
     {
+        var rect = new Rect(
+            Mm.ToDiu(image.X) * scale, Mm.ToDiu(image.Y) * scale,
+            Mm.ToDiu(image.Width) * scale, Mm.ToDiu(image.Height) * scale);
         try
         {
             var bitmap = new BitmapImage(new Uri(image.AbsolutePath, UriKind.Absolute));
-            dc.DrawImage(bitmap, new Rect(
-                Mm.ToDiu(image.X) * scale, Mm.ToDiu(image.Y) * scale,
-                Mm.ToDiu(image.Width) * scale, Mm.ToDiu(image.Height) * scale));
-        }
-        catch (Exception)
-        {
-            // 图片读不出不影响其余版面；缺图在 M7 的印前检查里单独告警
-        }
-    }
-
-    /// <summary>系统里找不到指定字体时退回默认字体（打印店机器字体不可控）。</summary>
-    public static FontFamily SafeFontFamily(string family)
-    {
-        var fallback = new FontFamily(TemplateElement.DefaultFont + ", SimSun, sans-serif");
-        if (string.IsNullOrWhiteSpace(family)) return fallback;
-
-        try
-        {
-            foreach (var existing in Fonts.SystemFontFamilies)
+            if (image.ReferenceOnly)
             {
-                if (string.Equals(existing.Source, family, StringComparison.OrdinalIgnoreCase))
-                    return new FontFamily(family);
+                var group = new DrawingGroup { Opacity = RenderRules.ReferenceOpacity };
+                using (var inner = group.Open()) inner.DrawImage(bitmap, rect);
+                dc.DrawDrawing(group);
+                DrawReferenceBadge(dc, rect);
+            }
+            else
+            {
+                dc.DrawImage(bitmap, rect);
             }
         }
         catch (Exception)
         {
-            // 枚举系统字体失败（字体服务异常）时用默认字体，不阻断预览
+            // 图片读不出不影响其余版面；缺图在 M7 的印前检查里单独告警
+            dc.DrawRectangle(null, ReferencePen, rect);
         }
-        return fallback;
+    }
+
+    /// <summary>
+    /// 矢量底图（M5 的 C 类模板）。底稿里几百个对象在模板里只占 1 个元素位（定案 D5），
+    /// 所以这里一次画一整份，不拆开、不重排。
+    /// </summary>
+    private static void DrawVector(DrawingContext dc, VectorItem vector, double scale, double pixelsPerDip)
+    {
+        var box = new Rect(
+            Mm.ToDiu(vector.X) * scale, Mm.ToDiu(vector.Y) * scale,
+            Mm.ToDiu(vector.Width) * scale, Mm.ToDiu(vector.Height) * scale);
+
+        var plan = SvgDrawableBuilder.Load(vector.AbsolutePath);
+        var drawing = SvgDrawableBuilder.BuildDrawing(
+            plan, vector.Width, vector.Height, pixelsPerDip,
+            vector.ReferenceOnly ? RenderRules.ReferenceOpacity : 1);
+
+        if (drawing is null)
+        {
+            // 底稿丢了/读不动：画个虚线框占位，绝不留一片看着像"本来就没东西"的空白
+            dc.DrawRectangle(null, ReferencePen, box);
+            return;
+        }
+
+        dc.PushTransform(new TranslateTransform(box.Left, box.Top));
+        try
+        {
+            dc.DrawDrawing(drawing);
+        }
+        finally
+        {
+            dc.Pop();
+        }
+
+        if (vector.ReferenceOnly) DrawReferenceBadge(dc, box, pixelsPerDip);
+    }
+
+    /// <summary>参考底图的角标：淡蓝虚线框 + "参考" 二字，明确告诉人这东西不上纸（定案 D7）。</summary>
+    private static void DrawReferenceBadge(DrawingContext dc, Rect box, double pixelsPerDip = 1)
+    {
+        dc.DrawRectangle(null, ReferencePen, box);
+        var label = new FormattedText(
+            "参考底图·不打印",
+            CultureInfo.CurrentCulture,
+            FlowDirection.LeftToRight,
+            new Typeface(RenderRules.SafeFontFamily(TemplateElement.DefaultFont), FontStyles.Normal, FontWeights.Bold, FontStretches.Normal),
+            9,
+            RenderRules.ReferenceTint,
+            pixelsPerDip)
+        {
+            MaxTextWidth = Math.Max(20, box.Width),
+            Trimming = TextTrimming.None,
+        };
+        dc.DrawText(label, new Point(box.Left + 2, box.Bottom - label.Height - 2));
     }
 
     /// <summary>按给定可用区域算出自适应缩放倍数（毫米尺寸通用，单标签与整版都用它）。</summary>

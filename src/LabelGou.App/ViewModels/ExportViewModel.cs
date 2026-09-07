@@ -37,6 +37,13 @@ public sealed class ExportViewModel : ObservableObject
         }
         SelectedPdfFormat = PdfFormatOptions[0];
 
+        foreach (var mode in new[] { SvgExportMode.PerSheet, SvgExportMode.PerLabel })
+        {
+            SvgModeOptions.Add(new ChoiceOption<SvgExportMode>(mode,
+                mode == SvgExportMode.PerSheet ? "整页一图（含角线）" : "一枚一图（对方自己拼版）"));
+        }
+        SelectedSvgMode = SvgModeOptions[0];
+
         _outputDirectory = DefaultOutputDirectory();
 
         RefreshPrintersCommand = new RelayCommand(RefreshPrinters);
@@ -44,6 +51,7 @@ public sealed class ExportViewModel : ObservableObject
         ExportPdfCommand = new RelayCommand(RunExportPdf, () => CanStartJob);
         ExportPngCommand = new RelayCommand(RunExportPng, () => CanStartJob);
         ExportTiffCommand = new RelayCommand(RunExportTiff, () => CanStartJob);
+        ExportSvgCommand = new RelayCommand(RunExportSvg, () => CanStartJob);
         ChooseFolderCommand = new RelayCommand(ChooseFolder);
         CancelCommand = new RelayCommand(Cancel, () => IsBusy);
     }
@@ -59,11 +67,15 @@ public sealed class ExportViewModel : ObservableObject
 
     public ObservableCollection<ChoiceOption<PdfImageKind>> PdfFormatOptions { get; } = new();
 
+    public ObservableCollection<ChoiceOption<SvgExportMode>> SvgModeOptions { get; } = new();
+
     public RelayCommand RefreshPrintersCommand { get; }
     public RelayCommand PrintCommand { get; }
     public RelayCommand ExportPdfCommand { get; }
     public RelayCommand ExportPngCommand { get; }
     public RelayCommand ExportTiffCommand { get; }
+
+    public RelayCommand ExportSvgCommand { get; }
     public RelayCommand ChooseFolderCommand { get; }
     public RelayCommand CancelCommand { get; }
 
@@ -100,6 +112,48 @@ public sealed class ExportViewModel : ObservableObject
         }
     }
     private ChoiceOption<PdfImageKind> _selectedPdfFormat = null!;
+
+    public ChoiceOption<SvgExportMode> SelectedSvgMode
+    {
+        get => _selectedSvgMode;
+        set => Set(ref _selectedSvgMode, value);
+    }
+    private ChoiceOption<SvgExportMode> _selectedSvgMode = null!;
+
+    /// <summary>默认转曲（定案：所见即所得 + 不怕对方缺中文字体）。取消勾选才保留 <c>&lt;text&gt;</c>。</summary>
+    public bool SvgTextAsOutlines
+    {
+        get => _svgTextAsOutlines;
+        set => Set(ref _svgTextAsOutlines, value);
+    }
+    private bool _svgTextAsOutlines = true;
+
+    public bool SvgEmbedImages
+    {
+        get => _svgEmbedImages;
+        set => Set(ref _svgEmbedImages, value);
+    }
+    private bool _svgEmbedImages = true;
+
+    public bool SvgIncludeNotes
+    {
+        get => _svgIncludeNotes;
+        set => Set(ref _svgIncludeNotes, value);
+    }
+    private bool _svgIncludeNotes;
+
+    /// <summary>把面板上的开关汇成一份 Core 侧口径（⑥ 面板、导出命令与单测都走它，避免默认值写两处）。</summary>
+    public SvgExportOptions BuildSvgOptions() => new()
+    {
+        Mode = SelectedSvgMode.Value,
+        TextAsOutlines = SvgTextAsOutlines,
+        EmbedRasterImages = SvgEmbedImages,
+        IncludeNotes = SvgIncludeNotes,
+        IncludeCropMarks = IncludeTrimMarks,
+        IncludeRegistrationMarks = IncludeTrimMarks,
+        Producer = SheetExportService.ProducerName,
+        Title = _owner.ProfileName,
+    };
 
     /// <summary>页范围文本，空 = 全部。真源在 Core 的 PageRange，这里只存用户敲的字。</summary>
     public string PageRangeText
@@ -358,6 +412,18 @@ public sealed class ExportViewModel : ObservableObject
 
         RunJob($"TIFF 导出→{Path.GetFileName(target)}", (progress, token) =>
             SheetExportService.ExportTiff(request, target, progress, token));
+    }
+
+    private void RunExportSvg()
+    {
+        if (!TryResolveRange(out var range, out var error)) { StatusText = error!; return; }
+        var request = BuildRequest(range!, out error);
+        if (request is null) { StatusText = error!; return; }
+
+        var options = BuildSvgOptions();
+        var folder = Path.Combine(OutputDirectory, SheetExportService.SafeFileName(request.BaseName) + "-SVG");
+        RunJob($"SVG 导出→{folder}", (progress, token) =>
+            SheetExportService.ExportSvg(request, folder, options, progress, token));
     }
 
     private void RunPrint()

@@ -1,0 +1,156 @@
+<Window x:Class="LabelGou.App.TemplateImportWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="从底稿导入 · 先看清读到了什么，再落库"
+        Width="960" Height="700"
+        MinWidth="780" MinHeight="520"
+        FontFamily="Microsoft YaHei" FontSize="12.5"
+        Background="#F4F6F8"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
+
+    <Window.Resources>
+        <!--
+            StepTitle / Hint 在本窗口再定一份（与 TemplateEditorWindow 同一个理由）：
+            App.xaml 的资源只有 Application.Current 存在时才能解析，
+            而独立窗口必须能在没有 Application 的环境里被加载（单测就是这么加载它的）。
+        -->
+        <Style TargetType="TextBlock" x:Key="StepTitle">
+            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="Foreground" Value="#1A3A5C" />
+        </Style>
+        <Style TargetType="TextBlock" x:Key="Hint">
+            <Setter Property="Foreground" Value="#666666" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+            <Setter Property="FontSize" Value="11" />
+        </Style>
+    </Window.Resources>
+
+    <DockPanel Margin="10">
+
+        <!-- 底部：错误提示 + 动作。所有反馈都写在这块，窗口不弹 MessageBox（§七-13） -->
+        <StackPanel DockPanel.Dock="Bottom" Margin="0,8,0,0">
+            <TextBlock Text="{Binding ErrorText}" Foreground="#B00020" TextWrapping="Wrap"
+                       Margin="0,0,0,6">
+                <TextBlock.Style>
+                    <Style TargetType="TextBlock">
+                        <Setter Property="Visibility" Value="Visible" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding ErrorText}" Value="">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </TextBlock.Style>
+            </TextBlock>
+            <Grid>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
+                    <Button Content="全部提升" Command="{Binding PromoteAllCommand}" />
+                    <Button Content="全部留在底图" Command="{Binding PromoteNoneCommand}" />
+                    <TextBlock Text="{Binding StatusLine}" Style="{StaticResource Hint}" VerticalAlignment="Center"
+                               Margin="10,0,0,0" TextWrapping="Wrap" MaxWidth="470" />
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button Content="取消" Command="{Binding CloseCommand}" IsCancel="True" />
+                    <Button Content="导入并选中" Command="{Binding ImportCommand}" FontWeight="Bold"
+                            IsDefault="True" Margin="6,0,0,0" />
+                </StackPanel>
+            </Grid>
+        </StackPanel>
+
+        <!-- 顶部：读到了什么 -->
+        <GroupBox DockPanel.Dock="Top" Margin="0,0,0,8">
+            <GroupBox.Header>
+                <TextBlock Text="我从这份底稿里读到了什么" Style="{StaticResource StepTitle}" />
+            </GroupBox.Header>
+            <ItemsControl ItemsSource="{Binding SummaryLines}">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <TextBlock Text="{Binding}" TextWrapping="Wrap" Margin="0,1,0,1" />
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </GroupBox>
+
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <GroupBox Grid.Row="0" Margin="0,0,0,8">
+                <GroupBox.Header>
+                    <TextBlock Text="这份模板叫什么、标签多大" Style="{StaticResource StepTitle}" />
+                </GroupBox.Header>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="76" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="76" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="模板名称：" VerticalAlignment="Center" />
+                    <TextBox Grid.Column="1" Text="{Binding TemplateName, UpdateSourceTrigger=PropertyChanged}"
+                             ToolTip="会同时用作 assets 里底图文件的名前缀" />
+                    <TextBlock Grid.Column="2" Text="宽(mm)：" VerticalAlignment="Center" Margin="10,0,2,0" />
+                    <TextBox Grid.Column="3" Text="{Binding LabelWidthText, UpdateSourceTrigger=PropertyChanged}"
+                             ToolTip="底稿画布宽就是默认值，改了就按比例居中适配，不会拉伸" />
+                    <TextBlock Grid.Column="4" Text="高(mm)：" VerticalAlignment="Center" Margin="10,0,2,0" />
+                    <TextBox Grid.Column="5" Text="{Binding LabelHeightText, UpdateSourceTrigger=PropertyChanged}" />
+                </Grid>
+            </GroupBox>
+
+            <GroupBox Grid.Row="1">
+                <GroupBox.Header>
+                    <TextBlock Text="哪些文字提升成可编辑元素（只有对得上样例数据的才预先勾上）" Style="{StaticResource StepTitle}" />
+                </GroupBox.Header>
+                <Grid>
+                    <DataGrid x:Name="RowsGrid"
+                              ItemsSource="{Binding Rows}"
+                              AutoGenerateColumns="False"
+                              CanUserAddRows="False"
+                              CanUserDeleteRows="False"
+                              HeadersVisibility="Column"
+                              GridLinesVisibility="Horizontal"
+                              SelectionUnit="FullRow"
+                              FontSize="11.5"
+                              RowHeaderWidth="0">
+                        <DataGrid.Columns>
+                            <DataGridCheckBoxColumn Header="提升" Width="52"
+                                                    Binding="{Binding Promote, UpdateSourceTrigger=PropertyChanged}" />
+                            <DataGridTextColumn Header="底稿里的文字" Binding="{Binding Content}" IsReadOnly="True" Width="230" />
+                            <DataGridTextColumn Header="位置·尺寸·字号" Binding="{Binding PositionText}" IsReadOnly="True" Width="185" />
+                            <DataGridTemplateColumn Header="绑到字段" Width="190">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <ComboBox ItemsSource="{Binding FieldOptions}"
+                                                  SelectedItem="{Binding SelectedField, UpdateSourceTrigger=PropertyChanged}"
+                                                  DisplayMemberPath="Label"
+                                                  ToolTip="不绑就按底稿里的原文当固定文字印；绑了以后每张标签换数据" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTextColumn Header="为什么这么判（可改）" Binding="{Binding Reason}" IsReadOnly="True" Width="*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+
+                    <TextBlock Text="{Binding NoTextHint}" HorizontalAlignment="Center" VerticalAlignment="Center"
+                               TextWrapping="Wrap" TextAlignment="Center">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource Hint}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding Rows.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </Grid>
+            </GroupBox>
+        </Grid>
+    </DockPanel>
+</Window>

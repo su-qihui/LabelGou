@@ -54,7 +54,14 @@ goto end
 
 :cmd_publish
 call "%DOTNET_EXE%" publish src\LabelGou.App\LabelGou.App.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=false -o artifacts\publish\labelgou-win-x64
-goto end
+set "PUB_RC=%ERRORLEVEL%"
+REM Spec D12: the CorelDRAW helper macro and its instructions must ship WITH the app.
+REM xcopy copies bytes as-is, so the .bas stays GBK/CRLF (VBA editor requirement).
+if exist "tools\cdr" (
+  xcopy /y /i /e "tools\cdr" "artifacts\publish\labelgou-win-x64\tools\cdr" >nul
+  echo [INFO] copied tools\cdr into the publish folder
+)
+exit /b %PUB_RC%
 
 :cmd_clean
 for /d %%d in (src tests) do (

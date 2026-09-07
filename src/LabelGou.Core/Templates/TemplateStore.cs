@@ -119,6 +119,54 @@ public sealed class TemplateStore
         File.WriteAllText(path, ToJson(template));
     }
 
+    /// <summary>模板资源子目录名（图与矢量底图都存这儿，与模板 JSON 同根，整目录拷走就能换机器）。</summary>
+    public const string AssetFolderName = "assets";
+
+    /// <summary>资源目录绝对路径（不存在时由 <see cref="SaveAsset(string,string)"/> 负责创建）。</summary>
+    public string AssetDirectory => Path.Combine(_directory, AssetFolderName);
+
+    /// <summary>
+    /// 把一份文本资产（SVG 底图）落进 <c>assets\</c>，返回<strong>可直接填进 <c>ImagePath</c> 的相对路径</strong>。
+    /// <para>同名直覆：同一份底稿反复导入时不该留一堆垃圾文件。</para>
+    /// </summary>
+    public string SaveAsset(string fileName, string content)
+    {
+        System.IO.Directory.CreateDirectory(AssetDirectory);
+        var path = Path.Combine(AssetDirectory, SafeAssetName(fileName));
+        File.WriteAllText(path, content);
+        return Path.Combine(AssetFolderName, Path.GetFileName(path));
+    }
+
+    /// <summary>二进制资产（从 .cdr 抠出来的缩略图、用户选的 Logo）。</summary>
+    public string SaveAsset(string fileName, byte[] content)
+    {
+        System.IO.Directory.CreateDirectory(AssetDirectory);
+        var path = Path.Combine(AssetDirectory, SafeAssetName(fileName));
+        File.WriteAllBytes(path, content);
+        return Path.Combine(AssetFolderName, Path.GetFileName(path));
+    }
+
+    /// <summary>按相对路径删一个资源（重导入时清旧的底图）。删不到不当错，宁可留一个孤儿文件也不拦用户。</summary>
+    public void DeleteAsset(string? relativePath)
+    {
+        if (string.IsNullOrWhiteSpace(relativePath)) return;
+        try
+        {
+            var full = Path.IsPathRooted(relativePath) ? relativePath : Path.Combine(_directory, relativePath);
+            if (File.Exists(full)) File.Delete(full);
+        }
+        catch (Exception) { /* 只影响磁盘占用，不影响正确性 */ }
+    }
+
+    /// <summary>把名字洗成能当文件用的样子（中文保留，因为模板名本来就是中文）。</summary>
+    public static string SafeAssetName(string raw)
+    {
+        var invalid = Path.GetInvalidFileNameChars();
+        var cleaned = new string((raw ?? string.Empty).Where(ch => !invalid.Contains(ch)).ToArray()).Trim().TrimEnd('.');
+        if (cleaned.Length == 0) cleaned = "asset";
+        return cleaned.Length > 60 ? cleaned[..60] : cleaned;
+    }
+
     /// <summary>读取单个模板文件（导入/迁移用），同样带校验。</summary>
     public (LabelTemplate? Template, IReadOnlyList<TemplateIssue> Issues) ReadFile(string path)
     {

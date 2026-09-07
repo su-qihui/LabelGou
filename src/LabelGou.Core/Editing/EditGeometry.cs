@@ -211,6 +211,35 @@ public static class EditGeometry
         return (box.X + shift.Dx, box.Y + shift.Dy);
     }
 
+    /// <summary>
+    /// 把一个元素原地收进标签内：<strong>越界贴边，装不下就缩到装得下</strong>（不拒绝、不丢弃）。
+    /// <para>导入底稿、改纸尺寸这类“批量落位”用它；手动拖动时仍走
+    /// <see cref="MoveBy"/> 与 <see cref="ResizeBy"/>，两者口径与本方法同源。</para>
+    /// </summary>
+    public static void ClampIntoLabel(LabelTemplate template, TemplateElement element)
+    {
+        if (template is null) throw new ArgumentNullException(nameof(template));
+        if (element is null) throw new ArgumentNullException(nameof(element));
+
+        if (element.Kind == ElementKind.Line)
+        {
+            element.X = Clamp(element.X, 0, template.WidthMm);
+            element.Y = Clamp(element.Y, 0, template.HeightMm);
+            element.X2 = Clamp(element.X2, 0, template.WidthMm);
+            element.Y2 = Clamp(element.Y2, 0, template.HeightMm);
+            return;
+        }
+
+        var maxWidth = Math.Max(MinSideMm, template.WidthMm);
+        var maxHeight = Math.Max(MinSideMm, template.HeightMm);
+        var width = Math.Clamp(element.Width <= 0 ? MinSideMm : element.Width, MinSideMm, maxWidth);
+        var height = Math.Clamp(element.Height <= 0 ? MinSideMm : element.Height, MinSideMm, maxHeight);
+        element.X = Clamp(element.X, 0, Math.Max(0, template.WidthMm - width));
+        element.Y = Clamp(element.Y, 0, Math.Max(0, template.HeightMm - height));
+        element.Width = width;
+        element.Height = height;
+    }
+
     private static void ApplyShift(TemplateElement element, double dx, double dy)
     {
         element.X += dx;

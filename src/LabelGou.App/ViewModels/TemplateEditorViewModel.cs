@@ -854,7 +854,8 @@ public sealed class TemplateEditorViewModel : ObservableObject
     {
         try
         {
-            SampleLayout = LayoutEngine.BuildSample(_template);
+            // 编辑器的职责就是“照参考图对齐”，所以画布里得看得见那张不上纸的底图
+            SampleLayout = LayoutEngine.BuildSample(_template, includeReference: true);
         }
         catch (Exception ex)
         {

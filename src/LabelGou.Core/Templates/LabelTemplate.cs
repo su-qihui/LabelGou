@@ -13,6 +13,14 @@ public enum ElementKind
     Rect = 2,
     /// <summary>图片（如客户 Logo、条码图）。</summary>
     Image = 3,
+    /// <summary>
+    /// 矢量底图（C 类模板从 CorelDRAW/Illustrator 导出的 SVG 底稿转来）。
+    /// <para>
+    /// <strong>一份几百个对象的底稿在这里只占一个元素位</strong>，所以它不会撞 <see cref="TemplateValidator.MaxElements"/> 上限；
+    /// 底稿里被提升成可编辑文字的那几行才是普通 Text 元素。路径仍用 <see cref="TemplateElement.ImagePath"/>（指向 <c>assets\*.svg</c>）。
+    /// </para>
+    /// </summary>
+    Vector = 4,
 }
 
 public enum HorizontalAlign
@@ -54,8 +62,15 @@ public sealed class TemplateElement
     /// </summary>
     public string? Text { get; set; }
 
-    /// <summary>图片相对路径（相对模板文件所在目录），Kind=Image 时使用。</summary>
+    /// <summary>图片相对路径（相对模板文件所在目录），Kind=Image / Kind=Vector 时使用。</summary>
     public string? ImagePath { get; set; }
+
+    /// <summary>
+    /// 只作对齐参考，<strong>不参与打印与导出</strong>。
+    /// <para>用在从 <c>.cdr</c> 里抠出来的内嵌缩略图上：这张图只有约 50DPI，看着行、印着糊，
+    /// 所以屏幕上画给人对齐用，进纸之前必须过滤掉（过滤口在 <c>LayoutContext.IncludeReference</c>）。</para>
+    /// </summary>
+    public bool ReferenceOnly { get; set; }
 
     public string FontFamily { get; set; } = DefaultFont;
 
@@ -95,7 +110,8 @@ public sealed class TemplateElement
 public sealed class LabelTemplate
 {
     /// <summary>当前 schema 版本。改结构必须递增，并让 <see cref="TemplateValidator"/> 兼容旧版。</summary>
-    public const int CurrentSchemaVersion = 1;
+    /// <remarks>v2 = M5 新增 <see cref="ElementKind.Vector"/> 与 <see cref="TemplateElement.ReferenceOnly"/>；v1 文件仍能读。</remarks>
+    public const int CurrentSchemaVersion = 2;
 
     /// <summary>稳定标识，如 <c>builtin.standard-100x80</c>。用户模板用 <c>user.xxx</c>。</summary>
     public string Id { get; set; } = "user." + Guid.NewGuid().ToString("N")[..8];
@@ -212,6 +228,13 @@ public static class TemplateValidator
                 $"元素数量 {template.Elements.Count} 超过上限 {MaxElements}。"));
         }
 
+        if (template.Elements.Count > 0 && !template.Elements.Any(e => e.Visible && !e.ReferenceOnly) && template.BorderMm <= 0)
+        {
+            // 从 .cdr 导出来的参考底图很容易被人当成成品模板直接去打印，结果一张空纸
+            issues.Add(new TemplateIssue(IssueLevel.Warning,
+                "这份模板里只有参考图（不打印），也没有外框：直接出片会是空白。请在底图上叠上字段，或改用 SVG 导出的保真底图。"));
+        }
+
         for (var i = 0; i < template.Elements.Count; i++)
         {
             var e = template.Elements[i];
@@ -258,8 +281,9 @@ public static class TemplateValidator
                 }
             }
 
-            if (e.Kind == ElementKind.Image && string.IsNullOrWhiteSpace(e.ImagePath))
-                issues.Add(new TemplateIssue(IssueLevel.Warning, $"{tag} 是图片元素但没有指定图片文件。", i));
+            if (e.Kind is ElementKind.Image or ElementKind.Vector && string.IsNullOrWhiteSpace(e.ImagePath))
+                issues.Add(new TemplateIssue(IssueLevel.Warning,
+                    $"{tag} 是{(e.Kind == ElementKind.Vector ? "矢量底图" : "图片")}元素但没有指定文件，它会画不出来。", i));
 
             if (e.ThicknessMm <= 0)
                 issues.Add(new TemplateIssue(IssueLevel.Warning, $"{tag} 线宽为 0，打印时不会显示。", i));

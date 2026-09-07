@@ -165,6 +165,39 @@ public partial class MainWindow : Window
             MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
+    // ---------- M5：从底稿导入（C 类模板） ----------
+
+    /// <summary>
+    /// 三态入口：文件框同时收 <c>.svg</c> 与 <c>.cdr</c>。
+    /// <c>.svg</c> → 完整解析（保真矢量底图 + 可绑文字）；
+    /// <c>.cdr</c> → 只抽内嵌预览图当不可打印的参考底图，并告诉人怎么拿保真版。
+    /// </summary>
+    private void OnImportBackgroundClick(object sender, RoutedEventArgs e)
+    {
+        var dialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "选择 CorelDRAW / Illustrator 导出的底稿",
+            Filter = "底稿|*.svg;*.cdr|SVG 矢量底稿（推荐）|*.svg|CorelDRAW 底稿|*.cdr",
+        };
+        if (dialog.ShowDialog(this) != true) return;
+
+        var (viewModel, error) = TemplateImportViewModel.Open(dialog.FileName, _viewModel.Templates);
+        if (viewModel is null)
+        {
+            MessageBox.Show(this, error ?? "这份底稿导不进来。", "从底稿导入",
+                MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var window = new TemplateImportWindow(viewModel) { Owner = this };
+        window.ShowDialog();                              // 存好了窗口自己置 DialogResult=true 并关闭
+        if (window.ResultTemplate is null) return;        // 取消，或确实没过了校验（原因已写在窗口里）
+
+        var template = window.ResultTemplate;
+        _viewModel.ReloadTemplates(template.Id);
+        Services.AppLog.Info($"底稿导入完成并选中：{template.Name}（{template.Elements.Count} 个元素）");
+    }
+
     private void OnExportTemplateClick(object sender, RoutedEventArgs e)
     {
         var template = _viewModel.SelectedTemplate?.Template;
@@ -232,11 +265,12 @@ public partial class MainWindow : Window
     private void SheetFitNow() => _viewModel.FitSheetTo(SheetHost.ActualWidth, SheetHost.ActualHeight);
 
     private const string AboutText =
-        "LabelGou ·唛头标签助手 v0.4.0（M4）\n\n" +
+        "LabelGou ·唛头标签助手 v0.5.0（M5）\n\n" +
         "面向打印店 / 印刷厂的唛头标签自动化工具。\n" +
-        "当前进度 M4：Excel/CSV 导入 → 字段映射 → 套模板（内置或自己拖的）→ 件号规则编号 → 整版拼版 → 预览 → 直连打印 / PDF / PNG / TIFF。\n\n" +
-        "后续里程碑：M5 CorelDRAW 衔接、\n" +
-        "M6 AI Agent 文档识别、M7 AI 智能排版、M8 打磨发布。\n\n" +
+        "当前进度 M5：Excel/CSV 导入 → 字段映射 → 套模板（内置的、自己拖的、从 CorelDRAW/Illustrator 导出的 SVG 底稿导入的）"
+        + "→ 件号规则编号 → 整版拼版 → 预览 → 直连打印 / PDF / PNG / TIFF / SVG。\n\n" +
+        "与店里的 CorelDRAW 对接：看安装目录下 tools\\cdr 的说明与批量导出宏。\n" +
+        "后续里程碑：M6 AI Agent 文档识别、M7 AI 智能排版、M8 打磨发布。\n\n" +
         "开发计划与进度详见 labelgou-word 目录下的文档。授权：MIT。";
 
     protected override void OnPreviewKeyDown(KeyEventArgs e)
@@ -258,6 +292,13 @@ public partial class MainWindow : Window
         if (e.Key == Key.T && Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
         {
             OnEditTemplateClick(this, new RoutedEventArgs());
+            e.Handled = true;
+            return;
+        }
+
+        if (e.Key == Key.I && Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
+        {
+            OnImportBackgroundClick(this, new RoutedEventArgs());
             e.Handled = true;
             return;
         }

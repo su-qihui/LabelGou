@@ -2,7 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:render="clr-namespace:LabelGou.App.Rendering"
-        Title="LabelGou · 唛头标签助手  v0.4.0（M4：导入 / 映射 / 模板可拖改 / 拼版编号 / 预览 / 打印导出）"
+        Title="LabelGou · 唛头标签助手  v0.5.0（M5：导入 / 映射 / 底稿与模板 / 拼版编号 / 预览 / 打印导出 / SVG）"
         Width="1320" Height="860"
         MinWidth="1080" MinHeight="700"
         FontFamily="Microsoft YaHei" FontSize="12.5"
@@ -19,6 +19,7 @@
                 <MenuItem Header="导出 PDF…" Command="{Binding Export.ExportPdfCommand}" />
                 <MenuItem Header="导出整版图片 PNG…" Command="{Binding Export.ExportPngCommand}" />
                 <MenuItem Header="导出多页 TIFF…" Command="{Binding Export.ExportTiffCommand}" />
+                <MenuItem Header="导出整版 SVG（给 CorelDRAW）…" Command="{Binding Export.ExportSvgCommand}" />
                 <Separator />
                 <MenuItem Header="退出(_X)" Click="OnExitClick" />
             </MenuItem>
@@ -31,6 +32,7 @@
                 <MenuItem Header="编辑当前模板…(_E)" Click="OnEditTemplateClick" InputGestureText="Ctrl+T" />
                 <MenuItem Header="从当前模板另存副本…" Click="OnDuplicateTemplateClick" />
                 <Separator />
+                <MenuItem Header="从底稿导入…（SVG / CDR）(_I)" Click="OnImportBackgroundClick" InputGestureText="Ctrl+I" />
                 <MenuItem Header="导入模板文件…" Click="OnImportTemplateClick" />
                 <MenuItem Header="导出当前模板为文件…" Click="OnExportTemplateClick" />
                 <MenuItem Header="删除当前用户模板…" Click="OnDeleteTemplateClick" />
@@ -192,6 +194,8 @@
                                         ToolTip="从空白开始拖一套自己的唛头" />
                                 <Button Content="编辑模板…" Click="OnEditTemplateClick" MinWidth="86"
                                         ToolTip="把上面选中的模板拖改一下（内置模板会先自动存一份副本）" />
+                                <Button Content="从底稿导入…" Click="OnImportBackgroundClick" MinWidth="96"
+                                        ToolTip="拿 CorelDRAW/AI 导出的 SVG 当底图，对得上样例数据的文字可以直接绑字段（Ctrl+I）" />
                             </StackPanel>
                             <TextBlock Text="{Binding TemplateInfoText}" Style="{StaticResource Hint}" Margin="0,6,0,0" />
                         </StackPanel>
@@ -453,11 +457,27 @@
                                           ToolTip="勾了就能选纸盒/单面双面，但不算静默批量" />
                             </WrapPanel>
 
+                            <WrapPanel Margin="0,6,0,0">
+                                <TextBlock Text="SVG 成件：" VerticalAlignment="Center" />
+                                <ComboBox ItemsSource="{Binding Export.SvgModeOptions}"
+                                          SelectedItem="{Binding Export.SelectedSvgMode}"
+                                          DisplayMemberPath="Label" MinWidth="176" Margin="4,0,0,0"
+                                          ToolTip="整页一图：拿回去就能出片；一枚一图：给对方在 CorelDRAW 里自己拼大版" />
+                                <CheckBox Content="文字转曲" IsChecked="{Binding Export.SvgTextAsOutlines}" Margin="12,0,0,0" VerticalAlignment="Center"
+                                          ToolTip="勾了：字变成轮廓，对方缺中文字体也不掉字，所见即所得（但不能在 CDR 里改字）" />
+                                <CheckBox Content="图片内嵌" IsChecked="{Binding Export.SvgEmbedImages}" Margin="12,0,0,0" VerticalAlignment="Center"
+                                          ToolTip="勾了：图以 base64 写在 SVG 里，单文件拷走不丢图；不勾则写文件引用" />
+                                <CheckBox Content="带注记层" IsChecked="{Binding Export.SvgIncludeNotes}" Margin="12,0,0,0" VerticalAlignment="Center"
+                                          ToolTip="多一层元素参考框与字段名，在 CDR 里可整层删，校版时用" />
+                            </WrapPanel>
+
                             <WrapPanel Margin="0,8,0,0">
                                 <Button Content="打印整版" Command="{Binding Export.PrintCommand}" FontWeight="Bold" />
                                 <Button Content="导出 PDF…" Command="{Binding Export.ExportPdfCommand}" Margin="6,0,0,0" />
                                 <Button Content="导出 PNG" Command="{Binding Export.ExportPngCommand}" Margin="6,0,0,0" />
                                 <Button Content="导出 TIFF" Command="{Binding Export.ExportTiffCommand}" Margin="6,0,0,0" />
+                                <Button Content="导出 SVG…" Command="{Binding Export.ExportSvgCommand}" Margin="6,0,0,0"
+                                        ToolTip="衔接店里的 CorelDRAW 出片流程：1 用户单位 = 1 毫米" />
                                 <Button Content="取消当前任务" Command="{Binding Export.CancelCommand}" Margin="6,0,0,0" />
                             </WrapPanel>
 

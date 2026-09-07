@@ -298,6 +298,51 @@ public class ExportTests
         Assert.Throws<InvalidDataException>(() => writer.AddPage(RgbPage(2, 2, 0x00) with { Data = new byte[3] }));
     }
 
+    // ---------- SVG 成件开口 ----------
+
+    [Fact]
+    public void SvgDefaultsArePerSheetOutlinedAndSelfContained()
+    {
+        var text = SvgExportOptions.Default.Describe();
+
+        Assert.Contains("整页一图", text);
+        Assert.Contains("文字转曲", text);
+        Assert.Contains("图片内嵌", text);
+        Assert.Contains("图层：角线/套准", text);   // 默认给角线与套准十字
+        Assert.DoesNotContain("注记", text);            // 默认关，要的人自己开
+    }
+
+    [Fact]
+    public void PerLabelModeDoesNotClaimSheetLayersItNeverWrites()
+    {
+        var perLabel = new SvgExportOptions { Mode = SvgExportMode.PerLabel };
+        var described = perLabel.Describe();
+        var issues = new List<string>();
+        perLabel.CollectIssues(issues);
+
+        // 一枚一图的画布就是标签本身，纸层面的东西一个都不会写，口径说明里就不能报它们
+        Assert.Contains("一枚一图", described);
+        Assert.DoesNotContain("角线", described);
+        Assert.DoesNotContain("套准", described);
+        Assert.Contains("仅内容", described);
+        Assert.Contains(issues, i => i.Contains("一枚一图"));
+    }
+
+    [Fact]
+    public void SvgOptionsRemindButNeverRefuse()
+    {
+        var issues = new List<string>();
+        SvgExportOptions.Default.CollectIssues(issues);
+        Assert.Empty(issues);
+
+        issues.Clear();
+        new SvgExportOptions { TextAsOutlines = false, EmbedRasterImages = false }.CollectIssues(issues);
+
+        Assert.Equal(2, issues.Count);                 // 只是提醒，没有一条是 Error
+        Assert.Contains(issues, i => i.Contains("掉字"));
+        Assert.Contains(issues, i => i.Contains("丢图"));
+    }
+
     /// <summary>从指定字典后面取 stream ... endstream 的原始字节。</summary>
     private static byte[] ExtractStream(byte[] pdf, string text, string dictionaryMarker)
     {

@@ -33,7 +33,15 @@ public sealed record TextItem(
     string? FlagReason = null) : LayoutItem;
 
 /// <summary>图片项（M1 仅在 Logo 有值且文件存在时产出）。</summary>
-public sealed record ImageItem(string AbsolutePath, double X, double Y, double Width, double Height) : LayoutItem;
+/// <param name="ReferenceOnly">true 表示只作对齐参考，不进打印与导出（M5：从 .cdr 抠出来的缩略图）。</param>
+public sealed record ImageItem(string AbsolutePath, double X, double Y, double Width, double Height, bool ReferenceOnly = false) : LayoutItem;
+
+/// <summary>
+/// 矢量底图项（M5 的 C 类模板）：一份从 CDR 导出的 SVG 底稿，坐标已是毫米。
+/// <para>渲染端负责把 <paramref name="AbsolutePath"/> 指向的 SVG 画成 WPF Drawing（App 层 <c>SvgDrawableBuilder</c>），
+/// 矢量出口则直接写回 SVG；Core 只负责落位，不认 SVG 内容。</para>
+/// </summary>
+public sealed record VectorItem(string AbsolutePath, double X, double Y, double Width, double Height, bool ReferenceOnly = false) : LayoutItem;
 
 /// <summary>
 /// 一条记录套一个模板得到的<strong>最终版面</strong>（纯数据、毫米单位、与渲染技术无关）。
@@ -66,7 +74,12 @@ public sealed class LabelLayout
 /// <param name="RowIndex">当前记录序号（1 起）。</param>
 /// <param name="RecordCount">本次任务记录总数。</param>
 /// <param name="SourceFile">数据源文件名，可为 null。</param>
-public sealed record LayoutContext(int RowIndex, int RecordCount, string? SourceFile = null);
+/// <param name="IncludeReference">
+/// 是否把 <see cref="TemplateElement.ReferenceOnly"/> 的元素也算进版面。
+/// <para><strong>默认 false</strong>：打印/PDF/图片/SVG 导出一律不含参考图（那是给人对齐用的，不能上纸）。
+/// 只有单标签预览、整版预览与模板编辑器画布会传 true。</para>
+/// </param>
+public sealed record LayoutContext(int RowIndex, int RecordCount, string? SourceFile = null, bool IncludeReference = false);
 
 /// <summary>
 /// 把「模板 + 一条记录」解析成 <see cref="LabelLayout"/>。
@@ -96,6 +109,7 @@ public static class LayoutEngine
         foreach (var element in template.Elements)
         {
             if (!element.Visible) continue;
+            if (element.ReferenceOnly && !context.IncludeReference) continue;
 
             switch (element.Kind)
             {
@@ -107,9 +121,15 @@ public static class LayoutEngine
                     items.Add(new RectItem(element.X, element.Y, element.Width, element.Height, element.ThicknessMm));
                     break;
 
+                case ElementKind.Vector:
+                    var vectorPath = ResolveAsset(template, element);
+                    if (vectorPath is not null) items.Add(new VectorItem(vectorPath, element.X, element.Y, element.Width, element.Height, element.ReferenceOnly));
+                    else hidden++;
+                    break;
+
                 case ElementKind.Image:
-                    var path = ResolveImage(template, element);
-                    if (path is not null) items.Add(new ImageItem(path, element.X, element.Y, element.Width, element.Height));
+                    var path = ResolveAsset(template, element);
+                    if (path is not null) items.Add(new ImageItem(path, element.X, element.Y, element.Width, element.Height, element.ReferenceOnly));
                     else hidden++;
                     break;
 
@@ -147,11 +167,15 @@ public static class LayoutEngine
         };
     }
 
-    /// <summary>用一份样例记录渲染模板（还没导数据时的"示意预览"）。</summary>
-    public static LabelLayout BuildSample(LabelTemplate template)
-        => Build(template, SampleRecords.StandardSample(), new LayoutContext(1, 1, "样例数据.xlsx"));
+    /// <summary>
+    /// 用一份样例记录渲染模板（还没导数据时的"示意预览"）。
+    /// <para><paramref name="includeReference"/> 只有预览与编辑器画布该传 true：参考底图是给人对齐用的，不能上纸。</para>
+    /// </summary>
+    public static LabelLayout BuildSample(LabelTemplate template, bool includeReference = false)
+        => Build(template, SampleRecords.StandardSample(),
+            new LayoutContext(1, 1, "样例数据.xlsx", includeReference));
 
-    private static string? ResolveImage(LabelTemplate template, TemplateElement element)
+    private static string? ResolveAsset(LabelTemplate template, TemplateElement element)
     {
         if (string.IsNullOrWhiteSpace(element.ImagePath)) return null;
         var candidate = Path.IsPathRooted(element.ImagePath)
