@@ -53,7 +53,8 @@ public class BatchFixedValueTests
 
         var records = RecordMapper.Map(data, profile).Records;
 
-        Assert.Equal("olu830-35*144", records[0].GetText(MarkFieldKey.ItemNo));
+        // 固定值不能顶掉表里的真数据（*144 被清洗规则切掉是另一回事，见 ItemNoTailTests）
+        Assert.Equal("olu830-35", records[0].GetText(MarkFieldKey.ItemNo));
     }
 
     [Fact]

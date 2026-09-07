@@ -64,7 +64,8 @@ public class VendorSampleBaselineTests
         // 展开后 {{CartonTotal}} 是整批总数（给 C/NOS. x / y 用的），本货号自己的 5 件另存一个量
         Assert.Equal("15", expanded.Labels[0].GetText(MarkFieldKey.CartonTotal));
         Assert.Equal("5", expanded.Labels[0].GetCustom("col:本行箱数")!.Text);
-        Assert.Equal("olu830-35*144", expanded.Labels[0].GetText(MarkFieldKey.ItemNo));
+        // 货号尾巴上的 *144 是厂内“每箱装多少”的备注，真样张上没印它（导入时会被切掉并留一条告警）。
+        Assert.Equal("olu830-35", expanded.Labels[0].GetText(MarkFieldKey.ItemNo));
         // 同一货号的 5 张内容一致（真样张上就没印本箱序号），件号只是内部序号
         Assert.Equal(expanded.Labels[0].GetText(MarkFieldKey.ItemNo), expanded.Labels[4].GetText(MarkFieldKey.ItemNo));
     }
@@ -83,7 +84,8 @@ public class VendorSampleBaselineTests
         var layout = LayoutEngine.Build(BuiltInTemplates.RowsFour140x100(), labels[0], new LayoutContext(1, labels.Count));
         var printed = layout.Items.OfType<TextItem>().Select(t => t.Content).ToList();
 
-        Assert.Contains("Item no：olu830-35*144", printed);
+        // 这一行现在与 CDR 真件逐字一致：`Item no：olu830-35`（*144 被清掉，144 由下一行 QTY 承载）
+        Assert.Contains("Item no：olu830-35", printed);
         Assert.Contains("QTY：144 pcs", printed);
         Assert.Contains("Ctns：5件", printed);
         // 已知缺口（对接文档 §十-A-12，已于第 8 棒用整批固定值补上）：BOLAROM 这类"整批共用的客户名"在表里不是一个列，

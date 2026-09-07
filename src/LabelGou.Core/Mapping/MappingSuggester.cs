@@ -171,6 +171,25 @@ public static class RecordMapper
         @"[-+]?\d+(?:[.,]\d+)?",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
+    /// <summary>
+    /// 取货号里 <c>*</c> 之前的一段。返回 null 表示不该动这个值（没有星号、或以星号开头）。
+    /// <para>只按第一个 <c>*</c> 切一刀，后面的品名一并丢掉——真样张上货号行就只有货号
+    /// （TOP 的 <c>b5006*16\n VESCAGA ERRAS</c> 印出来是 <c>b5006</c>），品名要印就得单独给它一个字段。</para>
+    /// </summary>
+    public static (string Kept, string Stripped)? StripItemNoTail(string? raw)
+    {
+        var text = raw?.Trim() ?? string.Empty;
+        var star = text.IndexOf('*');
+        if (star <= 0) return null;
+        var kept = text[..star].TrimEnd();
+        if (kept.Length == 0) return null;
+        // 换行后的内容也算被去掉的尾巴，一并报出来，让用户看得见丢了什么
+        var lineBreak = text.IndexOfAny(new[] { '\n', '\r' });
+        var strippedTo = lineBreak < 0 ? text.Length : lineBreak;
+        var stripped = text[star..strippedTo].Trim();
+        return stripped.Length == 0 ? null : (kept, stripped);
+    }
+
     public static MappingResult Map(TabularData data, MappingProfile profile)
     {
         var records = new List<MarkRecord>(data.RowCount);
@@ -190,7 +209,17 @@ public static class RecordMapper
                 if (string.IsNullOrWhiteSpace(raw)) continue;
 
                 var def = MarkFieldCatalog.Get(mapping.Field);
-                var value = new MarkValue(raw, ValueOrigin.ExcelImport)
+                var text = raw.Trim();
+                // 货号里的 * 后缀（olu830-35*144、b5011*16 INVISTUC）是「每箱装多少」的厂内备注，不是货号本身。
+                // 三家真样张实证纸上有它就没对过：金沐表 A3=olu830-35*144，CDR 印的是 Item no：olu830-35；
+                // TOP 表 b5006*16 只取 b5006。删它等于改印刷数据，所以必须留一条告警把原值标出来（§七铁律：不静默截断）。
+                if (def.Key == MarkFieldKey.ItemNo && StripItemNoTail(text) is { } tail)
+                {
+                    issues.Add(new MappingIssue(
+                        rowNumber, def.Key, $"货号原值「{text}」去掉了「{tail.Stripped}」，按「{tail.Kept}」印刷", IssueSeverity.Warning));
+                    text = tail.Kept;
+                }
+                var value = new MarkValue(text, ValueOrigin.ExcelImport)
                 {
                     SourceRef = $"第 {HeaderRowDetector.ColumnLetter(mapping.ColumnIndex)} 列「{data.Headers[mapping.ColumnIndex]}」",
                 };

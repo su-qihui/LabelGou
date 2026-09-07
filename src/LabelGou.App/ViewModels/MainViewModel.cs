@@ -744,6 +744,35 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         StatusMessage = "已按表头别名重新自动连接。";
     }
 
+    private static readonly System.Text.RegularExpressions.Regex FieldTokenPattern =
+        new(@"\{\{\s*([A-Za-z][A-Za-z0-9_]*)\s*\}\}", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>
+    /// 模板文字里引用了、但这批数据既没连到列也没填整批固定值的字段（按中文名，去重）。
+    /// <para><c>{{col:列标题}}</c> 那种直取列的写法不在这里查：列在不在表里由 <see cref="FieldRows"/> 那边管，
+    /// 而且它本来就是“表里有”的东西。</para>
+    /// </summary>
+    private IReadOnlyList<string> TemplateFieldsWithoutValue(MappingProfile profile)
+    {
+        var template = SelectedTemplate?.Template;
+        if (template is null) return Array.Empty<string>();
+
+        var missing = new List<string>();
+        foreach (var element in template.Elements)
+        {
+            if (element.Kind != ElementKind.Text || string.IsNullOrEmpty(element.Text)) continue;
+            foreach (System.Text.RegularExpressions.Match m in FieldTokenPattern.Matches(element.Text))
+            {
+                if (!MarkFieldCatalog.TryParseKey(m.Groups[1].Value, out var key)) continue;
+                if (FieldRows.Any(r => r.Definition.Key == key && r.ColumnIndex >= 0)) continue;
+                if (!string.IsNullOrWhiteSpace(profile.FixedValueFor(key))) continue;
+                var chinese = MarkFieldCatalog.Get(key).ChineseName;
+                if (!missing.Contains(chinese)) missing.Add(chinese);
+            }
+        }
+        return missing;
+    }
+
     private void ApplyMapping()
     {
         var data = _data;
@@ -769,6 +798,15 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         var boundCount = profile.BoundCount;
         var suffix = result.Issues.Count == 0 ? "无告警" : $"{result.Issues.Count} 条告警，建议核对";
         StatusMessage = $"已连接 {boundCount} 个字段，共 {_rawRecords.Count} 条唛头记录 · {suffix}";
+
+        // 模板要用的字段既没连到列也没填固定值 → 那一行印出来就是空的。用户圈的“字没填过来”就是这个：
+        // 金沐那张表的客户名 BOLAROM 不在任何一列里，只能靠整批固定值，但入口藏在一个按钮里没人看见。
+        // 这里不猜他该填什么，只把缺哪几项、去哪儿补直接说出来。
+        var missing = TemplateFieldsWithoutValue(profile);
+        if (missing.Count > 0)
+        {
+            StatusMessage += $" · 模板还差 {missing.Count} 项没值（{string.Join("、", missing)}），在第 2 步点「整批固定值…」补上";
+        }
 
         // 件号交给 M2 编号引擎统一处理（它会回贴标签集并触发重算）
         Sheet.RefreshFromSource();

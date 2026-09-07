@@ -18,6 +18,9 @@ public static class BuiltInTemplates
         Bilingual120x90(),
         RowsFour140x100(),
         RowsBigTwo160x120(),
+        QiuRows140x100(),
+        OluRows160x120(),
+        TopRows140x100(),
     };
 
     /// <summary>每次调用返回新实例，避免界面编辑时污染内置定义。</summary>
@@ -28,6 +31,9 @@ public static class BuiltInTemplates
         IdBilingual => Bilingual120x90(),
         IdRowsFour => RowsFour140x100(),
         IdRowsBigTwo => RowsBigTwo160x120(),
+        IdQiuRows => QiuRows140x100(),
+        IdOluRows => OluRows160x120(),
+        IdTopRows => TopRows140x100(),
         _ => null,
     };
 
@@ -36,6 +42,15 @@ public static class BuiltInTemplates
     public const string IdBilingual = "builtin.bilingual-120x90";
     public const string IdRowsFour = "builtin.rows-140x100-4line";
     public const string IdRowsBigTwo = "builtin.rows-160x120-2line";
+
+    /// <summary>邱总：140×100 四行全居中（全角冒号）。</summary>
+    public const string IdQiuRows = "builtin.qiu-140x100-4line";
+
+    /// <summary>OLU：160×120 首行纯货号大字 + 三行小字（无冒号）。</summary>
+    public const string IdOluRows = "builtin.olu-160x120-4line";
+
+    /// <summary>TOP：140×100 四行左对齐（半角冒号+空格、常规字重）。</summary>
+    public const string IdTopRows = "builtin.top-140x100-4line";
 
     /// <summary>标准外贸箱唛：上收货人、中合同/明细、下件号与原产地，带外框与分隔线。</summary>
     public static LabelTemplate Standard100x80()
@@ -144,18 +159,99 @@ public static class BuiltInTemplates
         var spec = new RowLayoutSpec
         {
             Id = IdRowsFour,
-            Name = "行式四行 140×100",
-            Note = "真厂商样张形状：顶部客户名撑满一大条 + 货号/数量/件数三行明细，无框线。",
+            Name = "金沐・行式四行 140×100",
+            Note = "抄自 7.8 金沐 唛头 CDR+SVG：顶部客户名一大条居中 + 货号/数量/件数三行同字号明细左对齐，无框线。",
             WidthMm = 140,
             HeightMm = 100,
-            PaddingMm = 5,
+            PaddingMm = 4,
+            GapMm = 1.5,
+            DrawBorder = false,
+        };
+        spec.Rows.Add(new RowSpec { Content = "{{Consignee}}", Weight = 1.4, Stretch = true, Align = HorizontalAlign.Center });
+        // 三行明细在真样张里是同一个字号（SVG 14.602mm ≈ 41.4pt）。以前这里写 Stretch=true，
+        // 三行各自反算字号，只要哪一行值长一点就被缩字号，于是 QTY/Ctns 反而比 Item no 大——
+        // 用户圈出来的“字体大小不统一”就是这个。明细一律固定字号、左对齐。
+        const double detailPt = 41.4;
+        spec.Rows.Add(new RowSpec { Content = "Item no：{{ItemNo}}", Weight = 1, SizePt = detailPt });
+        spec.Rows.Add(new RowSpec { Content = "QTY：{{Quantity}} pcs", Weight = 1, SizePt = detailPt });
+        spec.Rows.Add(new RowSpec { Content = "Ctns：{{col:本行箱数}}件", Weight = 1, SizePt = detailPt });
+        return MarkBuiltIn(spec);
+    }
+
+    /// <summary>
+    /// 邱总 140×100 四行全居中（全角冒号）。抄自 <c>labelgou-CL\邱总</c> 真样张。
+    /// <para>第二行 <c>ITEM：香水 perfume</c> 在那张表里不随箱变（表只有 ITEM NO / QTY / 一开四 三列），
+    /// 所以按真件写成固定文字；换货时改这一行或改用整批固定值。</para>
+    /// </summary>
+    public static LabelTemplate QiuRows140x100()
+    {
+        var spec = new RowLayoutSpec
+        {
+            Id = IdQiuRows,
+            Name = "邱总・四行居中 140×100",
+            Note = "抄自 邱总 CDR：JP / ITEM：香水 perfume / ITEM No：… / QTY：… PCS，四行全居中、全角冒号，无框无图。",
+            WidthMm = 140,
+            HeightMm = 100,
+            PaddingMm = 4,
+            GapMm = 1.5,
+            DrawBorder = false,
+        };
+        spec.Rows.Add(new RowSpec { Content = "{{Consignee}}", Weight = 1, SizePt = 59.5, Align = HorizontalAlign.Center });
+        spec.Rows.Add(new RowSpec { Content = "ITEM：香水 perfume", Weight = 1, SizePt = 45, Align = HorizontalAlign.Center });
+        spec.Rows.Add(new RowSpec { Content = "ITEM No：{{ItemNo}}", Weight = 1, SizePt = 45, Align = HorizontalAlign.Center });
+        spec.Rows.Add(new RowSpec { Content = "QTY：{{Quantity}} PCS", Weight = 1, SizePt = 53, Align = HorizontalAlign.Center });
+        return MarkBuiltIn(spec);
+    }
+
+    /// <summary>
+    /// OLU 160×120：首行是**无标签的纯货号大字**（真件里占 85% 行宽），后三行左对齐小字。
+    /// <para>抄自 <c>labelgou-CL\OLU</c>。已知欠账：真件右侧还有两个运输标志（带框易碎 + 向上箭头），
+    /// 本工具还没有矢量标志库，这两块暂不画；真件把货号大写化（olu830-70→OLU830-70）也还没做。</para>
+    /// </summary>
+    public static LabelTemplate OluRows160x120()
+    {
+        var spec = new RowLayoutSpec
+        {
+            Id = IdOluRows,
+            Name = "OLU・大字货号 160×120",
+            Note = "抄自 OLU CDR：首行纯货号放到最大 + 三行小字（数量PCS / 固定行 / MADE IN CHINA）。右侧两个运输标志待矢量库补。",
+            WidthMm = 160,
+            HeightMm = 120,
+            PaddingMm = 6,
             GapMm = 2,
             DrawBorder = false,
         };
-        spec.Rows.Add(new RowSpec { Content = "{{Consignee}}", Weight = 1.6, Stretch = true, Align = HorizontalAlign.Center });
-        spec.Rows.Add(new RowSpec { Content = "Item no：{{ItemNo}}", Weight = 1, Stretch = true });
-        spec.Rows.Add(new RowSpec { Content = "QTY：{{Quantity}} pcs", Weight = 1, Stretch = true });
-        spec.Rows.Add(new RowSpec { Content = "Ctns：{{col:本行箱数}}件", Weight = 1, Stretch = true });
+        spec.Rows.Add(new RowSpec { Content = "{{ItemNo}}", Weight = 1.6, Stretch = true });
+        const double smallPt = 23.5;
+        spec.Rows.Add(new RowSpec { Content = "{{Quantity}}PCS", Weight = 1, SizePt = smallPt });
+        spec.Rows.Add(new RowSpec { Content = "Z&X", Weight = 1, SizePt = smallPt });
+        spec.Rows.Add(new RowSpec { Content = "MADE IN CHINA", Weight = 1, SizePt = smallPt });
+        return MarkBuiltIn(spec);
+    }
+
+    /// <summary>
+    /// TOP 140×100 四行左对齐：中英双标签 + 半角冒号后跟一个空格 + 常规字重（五家里字最细）。
+    /// <para>抄自 <c>labelgou-CL\TOP</c>。已知欠账三件：右上 EAN-13 条码（条码引擎未做）、
+    /// 左上黑底反白 TOP 块（需图片槽）、品名行 <c>品名DESC: …</c>（字段目录里还没有“品名”这一项）。</para>
+    /// </summary>
+    public static LabelTemplate TopRows140x100()
+    {
+        var spec = new RowLayoutSpec
+        {
+            Id = IdTopRows,
+            Name = "TOP・双语文四行 140×100",
+            Note = "抄自 TOP CDR：货号/装箱数/件数/MADE IN CHINA 四行，半角冒号+空格、常规字重。条码与 TOP 标志块、品名行待补。",
+            WidthMm = 140,
+            HeightMm = 100,
+            PaddingMm = 5,
+            GapMm = 1.5,
+            DrawBorder = false,
+        };
+        const double topPt = 24;
+        spec.Rows.Add(new RowSpec { Content = "货号ITEM NO: {{ItemNo}}", Weight = 1, SizePt = topPt, Bold = false });
+        spec.Rows.Add(new RowSpec { Content = "装箱数QTY: {{Quantity}} PCS", Weight = 1, SizePt = topPt, Bold = false });
+        spec.Rows.Add(new RowSpec { Content = "件数CTN: {{col:本行箱数}} 件", Weight = 1, SizePt = topPt, Bold = false });
+        spec.Rows.Add(new RowSpec { Content = "MADE IN CHINA", Weight = 1, SizePt = topPt, Bold = false });
         return MarkBuiltIn(spec);
     }
 
