@@ -98,7 +98,11 @@ public sealed class ImpositionViewModel : ObservableObject
         foreach (var spec in _sheetStore.ListAll()) SheetOptions.Add(new SheetOption(spec));
         // 先接上次用的那张纸（一开四这类纸规选过一次就不该每次重选），没记过才退回 A4。
         var rememberedId = _uiState?.Load().SheetSpecId;
+        // 「一开四」是上一版按错误理解设的默认（五家真样张全部一页一枚，一开四只是裁切指令），
+        // 被记下来不等于用户主动选过，所以当一次陈旧值处理，直接落到新的一页一枚档。
+        if (rememberedId == BuiltInSheetSpecs.IdCut4_280x200) rememberedId = null;
         SelectedSheetOption = SheetOptions.FirstOrDefault(s => s.Spec.Id == rememberedId)
+                              ?? SheetOptions.FirstOrDefault(s => s.Spec.Id == BuiltInSheetSpecs.IdOnePerLabel)
                               ?? SheetOptions.FirstOrDefault(s => s.Spec.Id == BuiltInSheetSpecs.IdA4)
                               ?? SheetOptions.FirstOrDefault();
 

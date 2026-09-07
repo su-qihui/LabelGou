@@ -18,9 +18,8 @@ public static class BuiltInTemplates
         Bilingual120x90(),
         RowsFour140x100(),
         RowsBigTwo160x120(),
-        QiuRows140x100(),
-        OluRows160x120(),
-        TopRows140x100(),
+        // 邱总 / OLU / TOP 三套故意不列在这里：用户给的那批样张是「让 AI 去学的训练素材」，
+        // 不是让我抄成五个内置选项。它们的定义留在本文件里当评测基准（见下面三个方法的注）。
     };
 
     /// <summary>每次调用返回新实例，避免界面编辑时污染内置定义。</summary>
@@ -31,9 +30,6 @@ public static class BuiltInTemplates
         IdBilingual => Bilingual120x90(),
         IdRowsFour => RowsFour140x100(),
         IdRowsBigTwo => RowsBigTwo160x120(),
-        IdQiuRows => QiuRows140x100(),
-        IdOluRows => OluRows160x120(),
-        IdTopRows => TopRows140x100(),
         _ => null,
     };
 
@@ -43,7 +39,7 @@ public static class BuiltInTemplates
     public const string IdRowsFour = "builtin.rows-140x100-4line";
     public const string IdRowsBigTwo = "builtin.rows-160x120-2line";
 
-    /// <summary>邱总：140×100 四行全居中（全角冒号）。</summary>
+    /// <summary>以下三个 id 不在内置清单里（不进下拉），只服务 AI 认版式的评测基准。</summary>
     public const string IdQiuRows = "builtin.qiu-140x100-4line";
 
     /// <summary>OLU：160×120 首行纯货号大字 + 三行小字（无冒号）。</summary>
@@ -180,8 +176,10 @@ public static class BuiltInTemplates
 
     /// <summary>
     /// 邱总 140×100 四行全居中（全角冒号）。抄自 <c>labelgou-CL\邱总</c> 真样张。
-    /// <para>第二行 <c>ITEM：香水 perfume</c> 在那张表里不随箱变（表只有 ITEM NO / QTY / 一开四 三列），
-    /// 所以按真件写成固定文字；换货时改这一行或改用整批固定值。</para>
+    /// <para><strong>不进内置清单</strong>：那是把训练素材当答案抄给用户选。本方法现在的身份是
+    /// 「AI 认版式」的评测基准——模型看这张样张就该输出版式 JSON，跟这份定义对得上才算会。</para>
+    /// <para>真件第二行是 <c>ITEM：香水 perfume</c>（那批货的品名，不随箱变），但它是那一单的货，
+    /// 给别的表用就会多印一行不相干的字（用户圈出的“乱加一个不知道什么”）——所以品名必须走字段而不是写死。</para>
     /// </summary>
     public static LabelTemplate QiuRows140x100()
     {

@@ -157,6 +157,16 @@ public static class ImpositionEngine
     {
         ArgumentNullException.ThrowIfNull(spec);
 
+        // 「一页一枚」在这里把纸面展开成具体毫米：必须在校验与排版之前、而且只在这一处。
+        // 预览/打印/PDF 三条出口都从 Build 走，在界面里再算一份就会算出两套页码。
+        // 传进来的 spec 永远是调用方新取的一份副本（BuiltInSheetSpecs.GetById / SheetSpecStore.ListAll），
+        // 所以就地改写不会把下拉清单里的那一项尺寸带跑。
+        if (spec.FollowsLabel && labelWidthMm > Eps && labelHeightMm > Eps)
+        {
+            spec.PaperWidthMm = labelWidthMm + spec.MarginLeftMm + spec.MarginRightMm;
+            spec.PaperHeightMm = labelHeightMm + spec.MarginTopMm + spec.MarginBottomMm;
+        }
+
         var issues = new List<TemplateIssue>(SheetSpecValidator.Validate(spec, labelWidthMm, labelHeightMm));
         var (w, h) = EffectiveLabelSize(spec, labelWidthMm, labelHeightMm);
 

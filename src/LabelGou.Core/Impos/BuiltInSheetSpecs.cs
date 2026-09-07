@@ -22,7 +22,14 @@ public static class BuiltInSheetSpecs
 
     public const string IdA4Small = "sheet.a4.small-60x40";
 
-    /// <summary>28×20 的纸「一开四」：裁 4 张 140×100，厂商表里 D 列写“一开四”说的就是它。</summary>
+    /// <summary>一页一枚：纸 = 唛头 + 页边，1 列 1 行。<strong>默认档</strong>：五家真样张全是这种用法。</summary>
+    public const string IdOnePerLabel = "sheet.one-per-label";
+
+    /// <summary>
+    /// 28×20 的纸上一并排 4 枚：这是「一纸多枚」（不干胶/小标签同印）的档，
+    /// <strong>不等于</strong>厂商表里那个「一开四」——后者是纸张裁切与贴法指令（金沐 D3 批注原文
+    /// 「张数等于件数」），一张纸上只印一枚。上一版把两者当成一回事，所以默认算出 2 列 × 2 行。
+    /// </summary>
     public const string IdCut4_280x200 = "sheet.cut4-280x200";
 
     public const string IdCustom = "sheet.custom";
@@ -30,7 +37,7 @@ public static class BuiltInSheetSpecs
     /// <summary>全部内置纸规（每次调用都是新实例）。</summary>
     public static IReadOnlyList<SheetSpec> All() => new List<SheetSpec>
     {
-        A4(), A4Landscape(), A3(), A4Dense(), A4Small60x40(), Cut4_280x200(), Custom(),
+        OnePerLabel(), A4(), A4Landscape(), A3(), A4Dense(), A4Small60x40(), Cut4_280x200(), Custom(),
     };
 
     /// <summary>按 id 取一份新副本；未知 id 返回 null。</summary>
@@ -42,6 +49,7 @@ public static class BuiltInSheetSpecs
         IdA4Dense => A4Dense(),
         IdA4Small => A4Small60x40(),
         IdCut4_280x200 => Cut4_280x200(),
+        IdOnePerLabel => OnePerLabel(),
         IdCustom => Custom(),
         _ => null,
     };
@@ -85,9 +93,23 @@ public static class BuiltInSheetSpecs
         "空白起点：把纸张、页边、间距、行列改成你店里刀模的实际数值。", 210, 297, 10, 2);
 
     /// <summary>
-    /// 280×200 一开四：2 列 × 2 行铺满，每枚 140×100，中间那一刀就是两枚标签的公共边。
-    /// <para>厂商表里在备注列写“一开四”的纸就是这种（见 <c>labelgou-CL\7.8 金沐 唛头</c>）。
-    /// 页边与间距都是 0：尺寸是 4×(140×100) 刚好铺满，多留 1mm 就排不下 4 枚。</para>
+    /// 一页一枚（纸面跟随当前模板尺寸）：默认档。
+    /// <para>占位尺寸按 140×100 的唛头 + 2mm 页边给（给校验器一个合法的数），引擎会在
+    /// <c>ImpositionEngine.Build</c> 里按真模板重算，所以模板换成 160×120 也仍是一页一枚。</para>
+    /// </summary>
+    public static SheetSpec OnePerLabel()
+    {
+        var spec = New(IdOnePerLabel, "一页一枚（纸 = 唛头）",
+            "每张纸只印一枚唛头，纸面按当前模板尺寸自动展开（含页边）。五家真样张全部是这种用法；表里的“一开四/一开二”是裁切指令，不是拼版。", 144, 104, 2, 0);
+        spec.FollowsLabel = true;
+        return spec;
+    }
+
+    /// <summary>
+    /// 280×200 上一纸四枚：2 列 × 2 行铺满，每枚 140×100，中间那一刀就是两枚标签的公共边。
+    /// <para>适用于不干胶底纸或“一张纸裁下来就是四枚”的打法；<strong>它不是厂商表里那个“一开四”</strong>
+    /// （那是裁切与贴法指令，一张纸只印一枚，见 <see cref="OnePerLabel"/>）。页边与间距都是 0：
+    /// 尺寸是 4×(140×100) 刚好铺满，多留 1mm 就排不下 4 枚。</para>
     /// </summary>
     public static SheetSpec Cut4_280x200()
     {

@@ -49,6 +49,13 @@ public sealed class SheetSpec
 
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
 
+    /// <summary>
+    /// 纸面跟着标签走（「一页一枚」）：宽高一律在 <c>ImpositionEngine.Build</c> 里按实际标签尺寸展开。
+    /// <para>五家真样张全部是一页一枚（CDR 页面尺寸 = 唛头尺寸），表里的「一开四 / 一开二」只是纸张裁切
+    /// 与贴法指令，不是拼版。清单里这份的宽高只是占位（校验要有一个合法的数），真正生效的是引擎里那次展开。</para>
+    /// </summary>
+    public bool FollowsLabel { get; set; }
+
     /// <summary>true 表示内置种子，不可被保存覆盖、不可删除。</summary>
     public bool BuiltIn { get; set; }
 

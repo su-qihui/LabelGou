@@ -1,4 +1,5 @@
 using LabelGou.Core.Data;
+using LabelGou.Core.Impos;
 using LabelGou.Core.Mapping;
 using LabelGou.Core.Marks;
 using LabelGou.Core.Templates;
@@ -120,19 +121,51 @@ public class ItemNoTailTests
     }
 
     [Fact]
-    public void 内置模板清单里五家都在且名字带厂牌()
+    public void 厂牌样张不充当内置模板只能当评测基准()
     {
         var ids = BuiltInTemplates.All.Select(t => t.Id).ToList();
 
+        // 用户说得很清楚：那几张样张是拿来训练的，不是让我抄成五个选项直接塞给他选。
+        // 所以三套厂牌定义可以从代码里调到（评测用），但绝不可出现在内置清单 / GetById 里。
+        Assert.DoesNotContain(BuiltInTemplates.IdQiuRows, ids);
+        Assert.DoesNotContain(BuiltInTemplates.IdOluRows, ids);
+        Assert.DoesNotContain(BuiltInTemplates.IdTopRows, ids);
+        Assert.Null(BuiltInTemplates.GetById(BuiltInTemplates.IdQiuRows));
+        // 通用骨架仍在（金沐那张表当下就靠它跑）
         Assert.Contains(BuiltInTemplates.IdRowsFour, ids);
-        Assert.Contains(BuiltInTemplates.IdQiuRows, ids);
-        Assert.Contains(BuiltInTemplates.IdOluRows, ids);
-        Assert.Contains(BuiltInTemplates.IdTopRows, ids);
         Assert.Contains(BuiltInTemplates.IdRowsBigTwo, ids);
-        // 名字里带厂牌，用户在下拉里能一眼认出"这就是我给我的那张样张"
-        Assert.Contains(BuiltInTemplates.All, t => t.Id == BuiltInTemplates.IdQiuRows && t.Name.StartsWith("邱总"));
-        Assert.Contains(BuiltInTemplates.All, t => t.Id == BuiltInTemplates.IdOluRows && t.Name.StartsWith("OLU"));
-        Assert.Contains(BuiltInTemplates.All, t => t.Id == BuiltInTemplates.IdTopRows && t.Name.StartsWith("TOP"));
+        // 写死的单号品名不得出现在任何内置模板里（用户圈的“乱加一个不知道什么”）
+        Assert.All(BuiltInTemplates.All, t => Assert.DoesNotContain("香水", string.Concat(
+            t.Elements.Where(e => e.Kind == ElementKind.Text).Select(e => e.Text))));
+    }
+
+    [Fact]
+    public void 一页一枚把纸面展开成标签加页边()
+    {
+        var spec = BuiltInSheetSpecs.GetById(BuiltInSheetSpecs.IdOnePerLabel)!;
+
+        var plan = ImpositionEngine.Build(spec, 140, 100, 32);
+
+        Assert.True(spec.FollowsLabel, "一页一枚必须标着 FollowsLabel，否则引擎不会展开");
+        Assert.Equal(1, plan.PerPage);
+        Assert.Equal(32, plan.PageCount);
+        // 纸 = 唛头 + 左右（上下）页边（140+4 / 100+4），不是上一版那张 280×200 排四枚
+        Assert.Equal(144, plan.Spec.PaperWidthMm, 3);
+        Assert.Equal(104, plan.Spec.PaperHeightMm, 3);
+        Assert.True(plan.PerPage > 0);   // 排不出枚数时引擎会把 PerPage 归零，上面那三条已经把它钉住了
+    }
+
+    [Fact]
+    public void 一页一枚跟模板走换成160乘120仍是一页一枚()
+    {
+        var spec = BuiltInSheetSpecs.GetById(BuiltInSheetSpecs.IdOnePerLabel)!;
+
+        var plan = ImpositionEngine.Build(spec, 160, 120, 9);
+
+        Assert.Equal(1, plan.PerPage);
+        Assert.Equal(9, plan.PageCount);
+        Assert.Equal(164, plan.Spec.PaperWidthMm, 3);
+        Assert.Equal(124, plan.Spec.PaperHeightMm, 3);
     }
 
     private static List<TemplateElement> TextRows(LabelTemplate template) =>

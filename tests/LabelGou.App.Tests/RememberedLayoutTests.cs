@@ -32,7 +32,7 @@ public sealed class RememberedLayoutTests : IDisposable
         store.Save(new UiState
         {
             TemplateId = BuiltInTemplates.IdRowsFour,
-            SheetSpecId = BuiltInSheetSpecs.IdCut4_280x200,
+            SheetSpecId = BuiltInSheetSpecs.IdA3,
         });
 
         var result = OnSta(() =>
@@ -42,7 +42,26 @@ public sealed class RememberedLayoutTests : IDisposable
         });
 
         Assert.Equal(BuiltInTemplates.IdRowsFour, result.Template);
-        Assert.Equal(BuiltInSheetSpecs.IdCut4_280x200, result.Sheet);
+        Assert.Equal(BuiltInSheetSpecs.IdA3, result.Sheet);
+    }
+
+    /// <summary>
+    /// 「一开四」当默认是上一版把裁切指令当成拼版的错误理解（五家真样张全部一页一枚）。
+    /// 它被记下来只是因为我把它设成了默认，不等于用户主动选过，所以启动时要让位给一页一枚。
+    /// </summary>
+    [Fact]
+    public void 记着一开四时让位给一页一枚()
+    {
+        var store = new UiStateStore(_dir);
+        store.Save(new UiState
+        {
+            TemplateId = BuiltInTemplates.IdRowsFour,
+            SheetSpecId = BuiltInSheetSpecs.IdCut4_280x200,
+        });
+
+        var sheet = OnSta(() => new MainViewModel(store).Sheet.SelectedSheetOption?.Spec.Id);
+
+        Assert.Equal(BuiltInSheetSpecs.IdOnePerLabel, sheet);
     }
 
     [Fact]
@@ -58,7 +77,8 @@ public sealed class RememberedLayoutTests : IDisposable
         });
 
         Assert.Equal(BuiltInTemplates.IdStandard, result.Template);
-        Assert.Equal(BuiltInSheetSpecs.IdA4, result.Sheet);
+        // 记的那套没了就退回当前默认档（一页一枚），而不是退成 null 让界面空着
+        Assert.Equal(BuiltInSheetSpecs.IdOnePerLabel, result.Sheet);
     }
 
     [Fact]
