@@ -34,7 +34,7 @@ public sealed class ModelOutcome
 /// 冷启动加载模型另算，所以超时默认给到 180 秒；② 它把 JSON 放在 <b>thinking</b> 字段里，
 /// <c>response</c> 是空的——只读 response 会误判成"模型什么都没返回"。</para>
 /// </summary>
-public static class OllamaVisionClient
+public static partial class OllamaVisionClient
 {
     private static readonly HttpClient Http = new() { Timeout = Timeout.InfiniteTimeSpan };
 
@@ -67,6 +67,10 @@ public static class OllamaVisionClient
     {
         if (string.IsNullOrWhiteSpace(settings.Endpoint) || string.IsNullOrWhiteSpace(settings.Model))
             return (false, "没有填模型端点或模型名。");
+
+        // 云端（OpenAI 兼容协议）走另一套探活：它没有 /api/tags，只有 /models。
+        if (settings.Provider == RecognitionSettings.Providers.OpenAi)
+            return await ProbeOpenAiAsync(settings, cancel, handler).ConfigureAwait(false);
 
         try
         {
@@ -111,6 +115,10 @@ public static class OllamaVisionClient
         HttpMessageHandler? handler = null)
     {
         if (!File.Exists(imagePath)) return new ModelOutcome { Error = "要识别的图片不存在。" };
+
+        // 同一个门面，按协议分流：调用方（RecognitionService）不需要知道对端是 Ollama 还是百炼。
+        if (settings.Provider == RecognitionSettings.Providers.OpenAi)
+            return await AskFieldsViaOpenAiAsync(settings, imagePath, FieldPrompt(), cancel, handler).ConfigureAwait(false);
 
         string payload;
         try

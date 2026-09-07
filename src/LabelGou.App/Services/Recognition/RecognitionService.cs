@@ -244,8 +244,11 @@ public static class RecognitionService
             }
             else
             {
-                var outcome = await OllamaVisionClient
-                    .AskFieldsAsync(settings, file, cancel, modelHandler).ConfigureAwait(false);
+                // 看不图的云端模型（DeepSeek 这类）只接本地 OCR 认出的文字行；
+                // 看得图的（百炼 qwen-vl、本机的 qwen3-vl）才把原图发出去。两路都是同一次交叉校验的第二通道。
+                var outcome = settings.ModelAcceptsImages
+                    ? await OllamaVisionClient.AskFieldsAsync(settings, file, cancel, modelHandler).ConfigureAwait(false)
+                    : await OllamaVisionClient.AskFieldsFromOcrLinesAsync(settings, text, cancel, modelHandler).ConfigureAwait(false);
                 batch.RawModelPayload = outcome.Json;
                 if (!outcome.Ok)
                 {

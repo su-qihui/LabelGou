@@ -40,6 +40,27 @@ public sealed class RecognitionSettings
     /// <summary>单次请求上限。实测 4B 视觉模型约 34 秒/张，冷启动加载模型还要更久。</summary>
     public int TimeoutSeconds { get; set; } = 180;
 
+    /// <summary>
+    /// 协议：<c>ollama</c> 走本机原生接口（/api/tags、/api/generate）；
+    /// <c>openai</c> 走 OpenAI 兼容的 /chat/completions（阿里云百炼、DeepSeek、vLLM、Ollama 自己的 /v1 都是这一类）。
+    /// <para>为什么不是一个地址自动探：两套协议的请求体形状不同（images 数组 vs content 里的 image_url），
+    /// 猜错会报一堆看不出所以然的 400。填错协议时界面会直接说“端点像 X 但你选的是 Y”。</para>
+    /// </summary>
+    public string Provider { get; set; } = Providers.Ollama;
+
+    /// <summary>云端密钥。<b>优先读环境变量</b>（见 <see cref="ApiKeyEnvVar"/>），这里只存用户自己填进设置界面的值。</summary>
+    public string? ApiKey { get; set; }
+
+    /// <summary>密钥的环境变量名。默认先查它，避开把密钥写进磁盘。</summary>
+    public string ApiKeyEnvVar { get; set; } = "LABELGOU_LLM_KEY";
+
+    /// <summary>
+    /// 这个模型吃不吃图。DeepSeek 自家的 deepseek-chat <b>不支持图片</b>，
+    /// 它只能接本地 OCR 认出的文字行（定案 D11 的“把 OCR 行当证据池”），所以关掉这项时
+    /// 图片通道会明确报错而不是默默回一堆编出来的字段。
+    /// </summary>
+    public bool ModelAcceptsImages { get; set; } = true;
+
     /// <summary>OCR 语言；留空表示用系统里第一个可用识别包。</summary>
     public string? OcrLanguage { get; set; }
 
@@ -53,6 +74,46 @@ public sealed class RecognitionSettings
         Uri.TryCreate(Endpoint?.Trim() ?? string.Empty, UriKind.Absolute, out var uri)
         && LocalHosts.Contains(uri.Host, StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// 取真正生效的密钥：环境变量优先，其次才是存在设置里的那个。
+    /// <para>优先环境变量不是洁癖：这台机的 <c>%APPDATA%\LabelGou\recognition.json</c> 是明文，
+    /// 而店铺电脑会被人接手、也会被备份脚本扫走；能不放上去就不放。</para>
+    /// </summary>
+    public string? ResolveApiKey()
+    {
+        var fromEnv = Environment.GetEnvironmentVariable(ApiKeyEnvVar ?? string.Empty);
+        if (!string.IsNullOrWhiteSpace(fromEnv)) return fromEnv.Trim();
+        return string.IsNullOrWhiteSpace(ApiKey) ? null : ApiKey.Trim();
+    }
+
+    /// <summary>两个常用云端的现成参数，省得用户手填地址填错。</summary>
+    public static readonly CloudPreset[] CloudPresets =
+    {
+        new("阿里云百炼（qwen-vl-max，看图）", "https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen-vl-max", true),
+        new("DeepSeek（deepseek-chat，只看文字）", "https://api.deepseek.com", "deepseek-chat", false),
+    };
+
+    /// <summary>把设置切到某个云端预设。</summary>
+    public void ApplyPreset(CloudPreset preset)
+    {
+        Endpoint = preset.Endpoint;
+        Model = preset.Model;
+        Provider = Providers.OpenAi;
+        ModelAcceptsImages = preset.AcceptsImages;
+        // 云端一律把超时拉到 60 秒以上：公网往返 + 排队，180 秒是个不折腾人的上限。
+        if (TimeoutSeconds < 60) TimeoutSeconds = 120;
+    }
+
+    /// <summary>协议名。只有两个值，所以用常量而不是枚举：设置文件里要能直接看懂。</summary>
+    public static class Providers
+    {
+        public const string Ollama = "ollama";
+        public const string OpenAi = "openai";
+    }
+
+    /// <summary>云端预设（名字、基地址、模型名、吃不吃图）。</summary>
+    public sealed record CloudPreset(string Name, string Endpoint, string Model, bool AcceptsImages);
+
     /// <summary>给状态栏/核对窗口用的一行通道说明。</summary>
     public string DescribeChannels()
     {
@@ -61,7 +122,8 @@ public sealed class RecognitionSettings
         if (UseVisionModel)
         {
             var where = StaysOnThisMachine ? "本机" : "外部服务，数据会离开这台电脑";
-            parts.Add($"大模型 {Model}（{where}）");
+            var eyes = ModelAcceptsImages ? "" : "· 不看图，只整理 OCR 文字";
+            parts.Add($"{(Provider == Providers.OpenAi ? "云端" : "模型")} {Model}（{where}{eyes}）");
         }
 
         return parts.Count == 0 ? "未启用任何识别通道" : string.Join(" + ", parts);
