@@ -40,8 +40,12 @@ public static class MappingSuggester
 
         foreach (var candidate in candidates.OrderByDescending(x => x.Score).ThenBy(x => x.Column))
         {
+            // 先查列、后占字段。反过来写（先 usedFields.Add 再判列冲突）会造出一个隐形黑洞：
+            // 字段在“最高分那一列”上撞车后就被打上已用标记，于是它本可以绑的其它列永远轮不到——
+            // 真表 `件数 CTN` 就是因为同表 `货号 ITEM NO:` 里的 “no” 先把 CartonNo 占掉而整列没绑上。
+            if (usedColumns.Contains(candidate.Column)) continue;
             if (!usedFields.Add(candidate.Field)) continue;
-            if (!usedColumns.Add(candidate.Column)) continue;
+            usedColumns.Add(candidate.Column);
             profile.Bind(candidate.Field, candidate.Column, headers);
         }
 
@@ -127,7 +131,7 @@ public static class MappingSuggester
         foreach (var alias in def.Aliases)
         {
             var na = HeaderRowDetector.Normalize(alias);
-            if (na.Length < 2) continue;
+            if (IsTooShortToContain(na)) continue;
             if (normalizedHeader.Contains(na, StringComparison.Ordinal)) return (0.72, "列标题包含别名");
             if (na.Contains(normalizedHeader, StringComparison.Ordinal) && normalizedHeader.Length >= 2)
                 return (0.62, "别名包含列标题");
@@ -143,6 +147,14 @@ public static class MappingSuggester
 
         return (0, string.Empty);
     }
+
+    /// <summary>
+    /// 两字母以内的拉丁别名（<c>no</c> / <c>of</c> / <c>po</c> / <c>gw</c>）只许精确命中，不许靠包含命中：
+    /// 它们会出现在几乎任何英文表头里（<c>ITEM NO</c>、<c>CARTON NO</c>），拿它们做包含匹配等于把不相关的列抢走。
+    /// 两字的中文别名（“件数”“数量”“毛重”）反而信息量足够，不能一起禁。
+    /// </summary>
+    private static bool IsTooShortToContain(string normalizedAlias)
+        => normalizedAlias.Length <= 2 && normalizedAlias.All(ch => ch < 0x80);
 }
 
 /// <summary>
@@ -205,6 +217,31 @@ public static class RecordMapper
                 var raw = data.GetCell(r, c);
                 if (string.IsNullOrWhiteSpace(raw)) continue;
                 builder.SetCustom("col:" + data.Headers[c], raw);
+            }
+
+            // 整批固定值：表里没这一列、但整批都要印同一个值（厂商表的客户名 BOLAROM 就属于这种）。
+            // 顺序很关键：放在表格列之后、自动补号之前，所以“表里有值”优先于固定值，
+            // 而固定值又优先于工具自己生成的号（不让补号把用户填的常量顶掉）。
+            foreach (var (name, text) in profile.FixedValues)
+            {
+                if (string.IsNullOrWhiteSpace(text)) continue;
+                if (!MarkFieldCatalog.TryParseKey(name, out var fixedField)) continue;
+                if (builder.Has(fixedField)) continue;
+                var fixedDef = MarkFieldCatalog.Get(fixedField);
+                var fixedValue = new MarkValue(text, ValueOrigin.BatchFixed) { SourceRef = "整批固定值（不在表里）" };
+                var fixedProblem = Validate(fixedDef, fixedValue.Text);
+                if (fixedProblem is not null)
+                {
+                    var (severity, message) = fixedProblem.Value;
+                    issues.Add(new MappingIssue(rowNumber, fixedField, message, severity));
+                    fixedValue = new MarkValue(text, ValueOrigin.BatchFixed)
+                    {
+                        SourceRef = "整批固定值（不在表里）",
+                        Warning = message,
+                        NeedsReview = severity == IssueSeverity.Error,
+                    };
+                }
+                builder.Set(fixedField, fixedValue);
             }
 
             // 件号补齐：数据里没有就按行序推（来源标 Rule，与导入数据区分，便于界面注明"本工具生成"）

@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using LabelGou.App.Mvvm;
+using LabelGou.App.Services;
 using LabelGou.Core.Impos;
 using LabelGou.Core.Layout;
 using LabelGou.Core.Marks;
@@ -61,6 +62,7 @@ public sealed class ImpositionViewModel : ObservableObject
 {
     private readonly SheetSpecStore _sheetStore = new();
     private readonly ILabelSource _source;
+    private readonly UiStateStore? _uiState;
 
     private SheetOption? _selectedSheetOption;
     private SheetSpec? _working;
@@ -78,9 +80,12 @@ public sealed class ImpositionViewModel : ObservableObject
     private int _copies = 1;
     private IReadOnlyList<MarkRecord> _labels = Array.Empty<MarkRecord>();
 
-    public ImpositionViewModel(ILabelSource source)
+    /// <param name="source">数据口（模板与原始记录）。</param>
+    /// <param name="uiState">界面状态；传了才会记住上次用的纸规（单测不传，避免写用户目录）。</param>
+    public ImpositionViewModel(ILabelSource source, UiStateStore? uiState = null)
     {
         _source = source;
+        _uiState = uiState;
 
         FirstPageCommand = new RelayCommand(() => PageIndex = 1, () => PageCount > 1);
         PrevPageCommand = new RelayCommand(() => PageIndex = Math.Max(1, PageIndex - 1), () => PageIndex > 1);
@@ -91,7 +96,10 @@ public sealed class ImpositionViewModel : ObservableObject
         ResetSheetCommand = new RelayCommand(ResetSheet, () => SelectedSheetOption is not null);
 
         foreach (var spec in _sheetStore.ListAll()) SheetOptions.Add(new SheetOption(spec));
-        SelectedSheetOption = SheetOptions.FirstOrDefault(s => s.Spec.Id == BuiltInSheetSpecs.IdA4)
+        // 先接上次用的那张纸（一开四这类纸规选过一次就不该每次重选），没记过才退回 A4。
+        var rememberedId = _uiState?.Load().SheetSpecId;
+        SelectedSheetOption = SheetOptions.FirstOrDefault(s => s.Spec.Id == rememberedId)
+                              ?? SheetOptions.FirstOrDefault(s => s.Spec.Id == BuiltInSheetSpecs.IdA4)
                               ?? SheetOptions.FirstOrDefault();
 
         foreach (var (mode, label) in new[]
@@ -169,7 +177,19 @@ public sealed class ImpositionViewModel : ObservableObject
             if (!Set(ref _selectedSheetOption, value)) return;
             LoadWorkingFromSelection();
             RebuildPlan();
+            RememberSheetSpecId(value?.Spec.Id);
         }
+    }
+
+    /// <summary>把纸规 id 写进界面状态；与已记的相同就不写盘（启动那一次赋值不该产生 IO）。</summary>
+    private void RememberSheetSpecId(string? specId)
+    {
+        var store = _uiState;
+        if (store is null || string.IsNullOrEmpty(specId)) return;
+        var state = store.Load();
+        if (state.SheetSpecId == specId) return;
+        state.SheetSpecId = specId;
+        store.Save(state);
     }
 
     /// <summary>true 表示当前选的是内置纸规（改动需另存）。</summary>

@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.Data;
 using System.IO;
 using System.Windows;
+using System.Windows.Media;
 using LabelGou.App.Export;
 using LabelGou.App.Mvvm;
 using LabelGou.App.Services;
@@ -123,6 +124,9 @@ public sealed class FieldRowVm : ObservableObject
 public sealed class MainViewModel : ObservableObject, ILabelSource
 {
     private readonly ProfileStore _profileStore = new();
+
+    /// <summary>M7：上次用的模板与纸规（打开软件就能接着上次干，不用每次重选）。</summary>
+    private readonly UiStateStore _uiState;
     private readonly TemplateStore _templateStore = new();
 
     private TabularData? _data;
@@ -141,8 +145,14 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
     private bool _showGuides;
     private bool _aiGateBlocked;
 
-    public MainViewModel()
+    public MainViewModel() : this(uiState: null)
     {
+    }
+
+    /// <param name="uiState">界面状态；单测传临时目录那份，不往用户机器上写（§五-48）。</param>
+    public MainViewModel(UiStateStore? uiState)
+    {
+        _uiState = uiState ?? new UiStateStore();
         OpenFileCommand = new RelayCommand(OpenFile);
         ReloadSheetCommand = new RelayCommand(() => LoadSource(_sourcePath, SelectedSheet));
         AutoSuggestCommand = new RelayCommand(AutoSuggest, () => _data is not null);
@@ -159,7 +169,7 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
 
         // M2：拼版与编号的界面状态独立成一个 VM，它通过 ILabelSource 反过来取记录与模板
         // （先建好再选模板，因为 SelectedTemplate 的 setter 会通知它重算）
-        Sheet = new ImpositionViewModel(this);
+        Sheet = new ImpositionViewModel(this, _uiState);
         Sheet.NumberingApplied += OnNumberedLabelsChanged;
         SheetZoomInCommand = new RelayCommand(() => Sheet.SheetZoom = Math.Min(8, Sheet.SheetZoom * 1.25));
         SheetZoomOutCommand = new RelayCommand(() => Sheet.SheetZoom = Math.Max(0.1, Sheet.SheetZoom / 1.25));
@@ -168,7 +178,12 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         Export = new ExportViewModel(this);
 
         foreach (var template in _templateStore.ListAll()) TemplateOptions.Add(new TemplateOption(template));
-        SelectedTemplate = TemplateOptions.FirstOrDefault(t => t.Id == BuiltInTemplates.IdStandard) ?? TemplateOptions.FirstOrDefault();
+        // 先接上次用的那套（内置模板每加一批都退回标准模板，会让新版式在界面上等于不存在），
+        // 没记过、或记的那个已被删了，才退回标准内置。
+        var remembered = _uiState.Load();
+        SelectedTemplate = TemplateOptions.FirstOrDefault(t => t.Id == remembered.TemplateId)
+            ?? TemplateOptions.FirstOrDefault(t => t.Id == BuiltInTemplates.IdStandard)
+            ?? TemplateOptions.FirstOrDefault();
         RefreshProfiles();
         Sheet.RefreshFromSource();
     }
@@ -349,8 +364,19 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
                 TemplateInfoText = DescribeTemplate(value?.Template);
                 RebuildLayout();
                 Sheet.RebuildPlan();
+                RememberTemplateId(value?.Id);
             }
         }
+    }
+
+    /// <summary>把模板 id 写进界面状态；与已记的相同就不写盘（启动那一次赋值不该产生 IO）。</summary>
+    private void RememberTemplateId(string? templateId)
+    {
+        if (string.IsNullOrEmpty(templateId)) return;
+        var state = _uiState.Load();
+        if (state.TemplateId == templateId) return;
+        state.TemplateId = templateId;
+        _uiState.Save(state);
     }
 
     /// <summary><see cref="ILabelSource"/>：拼版 VM 用它拿当前模板。</summary>
@@ -576,6 +602,11 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         profile.AutoNumberCartons = AutoNumberCartons;
         profile.Numbering = Sheet.BuildRule();
         profile.Note = _working?.Note ?? string.Empty;
+        // 整批固定值不来自列绑定，上面的循环带不回来，只能从旧方案里接——否则改一个下拉就把用户填的 BOLAROM 抹了
+        if (_working is not null)
+        {
+            foreach (var (key, text) in _working.FixedValues) profile.FixedValues[key] = text;
+        }
 
         foreach (var row in FieldRows)
         {
@@ -584,13 +615,67 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         return profile;
     }
 
+    /// <summary>② 区「整批固定值…」对话框的一行：字段名 + 它有没有表格列 + 当前固定值。</summary>
+    public sealed class FixedValueRow
+    {
+        public required FieldDefinition Definition { get; init; }
+
+        /// <summary>该字段已连到表格列：固定值只在单元格空着时兜底，不覆盖表里的值。</summary>
+        public bool HasColumn { get; init; }
+
+        public string Value { get; set; } = string.Empty;
+
+        // 下面三个只服务 FixedValuesWindow 的 DataTemplate：没列的字段才是这个对话框的主角，所以加重、提蓝。
+        public string Hint => HasColumn ? "已连表格列，仅在该列空着时兜底" : "表里没这一列，整批共用";
+
+        public FontWeight NameWeight => HasColumn ? FontWeights.Normal : FontWeights.SemiBold;
+
+        public Brush HintBrush => new SolidColorBrush(HasColumn
+            ? Color.FromRgb(0x88, 0x8F, 0x96)
+            : Color.FromRgb(0x1D, 0x4E, 0xD8));
+    }
+
+    public IReadOnlyList<FixedValueRow> BuildFixedValueRows()
+    {
+        var profile = _working;
+        return FieldRows.Select(row => new FixedValueRow
+        {
+            Definition = row.Definition,
+            HasColumn = row.ColumnIndex >= 0,
+            Value = profile?.FixedValueFor(row.Definition.Key) ?? string.Empty,
+        }).ToList();
+    }
+
+    /// <summary>
+    /// 对话框确认：写回方案并立刻重算，预览当场能看到行式模板的第一行有了。
+    /// <para>这里故意为接 <see cref="ApplyMapping"/>，因为它走 <c>CollectProfile</c>（已带住旧固定值），
+    /// 而不是另开一条重算路径——两条算法将来一定会飘。</para>
+    /// </summary>
+    public void ApplyFixedValues(IReadOnlyList<FixedValueRow> rows)
+    {
+        var profile = _working;
+        if (profile is null) return;
+        foreach (var row in rows) profile.SetFixedValue(row.Definition.Key, row.Value);
+        var filled = profile.FixedValues.Count;
+        ApplyMapping();
+        StatusMessage = filled == 0
+            ? "整批固定值已清空，表里没有的列回到不印。"
+            : $"已记下 {filled} 个整批固定值（表里没这些列，整批共用，改方案才会变）。";
+    }
+
     private void AutoSuggest()
     {
         var data = _data;
         if (data is null) return;
 
+        var previousFixed = _working is null ? null : new Dictionary<string, string>(_working.FixedValues);
         _working = MappingSuggester.Suggest(data.Headers,
             string.IsNullOrWhiteSpace(ProfileName) ? "自动匹配方案" : ProfileName.Trim());
+        // 重接列不该抹掉已经填好的整批固定值（它们与列无关）
+        if (previousFixed is not null)
+        {
+            foreach (var (key, text) in previousFixed) _working.FixedValues[key] = text;
+        }
         AutoNumberCartons = _working.AutoNumberCartons;
         RebuildFieldRows();
         ApplyMapping();
@@ -641,6 +726,7 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         rebound.Note = saved.Note;
         rebound.AutoNumberCartons = saved.AutoNumberCartons;
         rebound.Numbering = saved.Numbering;
+        foreach (var (key, text) in saved.FixedValues) rebound.FixedValues[key] = text;
         var hits = 0;
         foreach (var mapping in saved.Mappings)
         {

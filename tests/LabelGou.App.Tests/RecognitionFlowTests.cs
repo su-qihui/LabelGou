@@ -458,7 +458,8 @@ public class RecognitionFlowTests
     {
         OnSta(() =>
         {
-            var vm = new MainViewModel();
+            // 必须注入临时目录的状态口：无参构造会拿 %APPDATA% 那份，测试就会往用户机器上写 uistate.json
+            var vm = new MainViewModel(TestEnvironment.NewTempUiStateStore());
             var record = MakeRun().Batches[0].ToRecord(1);      // 未核对 → 带 NeedsReview
 
             vm.AdoptRecognizedRecords(new[] { record }, "单据.png");

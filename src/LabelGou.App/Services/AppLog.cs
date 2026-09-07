@@ -12,10 +12,20 @@ namespace LabelGou.App.Services;
 public static class AppLog
 {
     private static readonly object Gate = new();
-    private static readonly string Directory_ = Path.Combine(
+    private static string Directory_ = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "LabelGou", "logs");
 
     public static string DirectoryPath => Directory_;
+
+    /// <summary>
+    /// 把日志目录改到别处（<strong>只给测试用</strong>）。
+    /// <para>
+    /// 为什么开这个口：单测会走导入/识别/界面状态这些会写日志的路径，于是现场排障时
+    /// 会在用户真实日志里看到一堆“底稿导入成功：底稿.svg”这种根本没发生过的行（§五-48）。
+    /// 测试装配一开头就把目录指到临时文件夹，产品行为不变。
+    /// </para>
+    /// </summary>
+    public static void SetDirectoryForTests(string directory) => Directory_ = directory;
 
     public static void Info(string message) => Write("INFO ", message, null);
 

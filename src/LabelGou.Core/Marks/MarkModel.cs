@@ -102,6 +102,13 @@ public enum ValueOrigin
 
     /// <summary>多模态大模型抽取（M6）——存在幻觉风险，须与 OCR 通道交叉校验。</summary>
     AiLlm = 4,
+
+    /// <summary>
+    /// 整批固定值（M7）：表里没有这一列，值来自映射方案里的“整批共用”常量（客户名、目的国等）。
+    /// 单独开一个来源是为了界面上能标清“这个值不在表里，改了方案才会变”，
+    /// 与用户逐行手填的 <see cref="Manual"/> 区分开。
+    /// </summary>
+    BatchFixed = 5,
 }
 
 /// <summary>
@@ -149,11 +156,14 @@ public static class MarkFieldCatalog
         new(MarkFieldKey.DestinationCountry, "目的国", "Destination", MarkValueKind.Text,
             new[] { "目的国", "国家", "destination country", "country" }),
 
+        // “件数 / CTN” 在外贸表里几乎总是“本货号共几箱”（展开用的计数列），所以 ctn 归 CartonTotal；
+        // CartonNo（本箱第几件）只收带“号/编号”语义的写法，由自动补号接手。
         new(MarkFieldKey.CartonNo, "件号(本箱)", "No.", MarkValueKind.Integer,
-            new[] { "件号", "箱号", "carton", "carton no", "no", "ctn", "ctn no", "box no", "本箱号", "序号" }, Numeric: true),
+            new[] { "件号", "箱号", "carton", "carton no", "no", "ctn no", "box no", "本箱号", "序号" }, Numeric: true),
 
         new(MarkFieldKey.CartonTotal, "总件数", "of", MarkValueKind.Integer,
-            new[] { "总件数", "总箱数", "件数合计", "total", "of", "total ctn", "cartons", "总数量" }, Numeric: true),
+            new[] { "总件数", "总箱数", "件数合计", "total", "of", "total ctn", "cartons", "总数量",
+                    "件数", "箱数", "ctn" }, Numeric: true),
 
         new(MarkFieldKey.Quantity, "每箱数量", "PCS", MarkValueKind.Integer,
             new[] { "每箱数量", "数量", "pcs", "qty", "quantity", "每箱", "内装数量" }, Numeric: true),
@@ -375,6 +385,9 @@ public sealed class MarkRecordBuilder
         else _values[key] = value;
         return this;
     }
+
+    /// <summary>该字段是否已有非空值（整批固定值靠它判断“该不该兜底”）。</summary>
+    public bool Has(MarkFieldKey key) => _values.TryGetValue(key, out var v) && !v.IsEmpty;
 
     public MarkRecordBuilder SetCustom(string key, string? text, ValueOrigin origin = ValueOrigin.ExcelImport)
     {

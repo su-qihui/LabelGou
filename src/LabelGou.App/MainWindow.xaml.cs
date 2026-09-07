@@ -122,6 +122,23 @@ public partial class MainWindow : Window
         OpenTemplateEditor(template.CloneTemplate(), asBuiltInCopy: false, savedFileName: stale is null ? null : Path.GetFileName(stale));
     }
 
+    /// <summary>
+    /// ② 区「整批固定值…」：表里没这一列、但整批共用一个值（厂商表的客户名 BOLAROM 就属于这种）。
+    /// <para>没数据时不开窗：里面会是十九个空行，开了也没意义。</para>
+    /// </summary>
+    private void OnEditFixedValuesClick(object sender, RoutedEventArgs e)
+    {
+        var rows = _viewModel.BuildFixedValueRows();
+        if (rows.Count == 0)
+        {
+            MessageBox.Show(this, "先在① 打开工厂发来的表格，再填整批固定值。", "整批固定值",
+                MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        var dialog = new FixedValuesWindow(rows) { Owner = this };
+        if (dialog.ShowDialog() == true) _viewModel.ApplyFixedValues(rows);
+    }
+
     private void OnDuplicateTemplateClick(object sender, RoutedEventArgs e)
     {
         var template = _viewModel.SelectedTemplate?.Template;

@@ -43,6 +43,30 @@ public sealed class MappingProfile
 
     public List<FieldMapping> Mappings { get; set; } = new();
 
+    /// <summary>
+    /// <strong>整批固定值</strong>：表里根本没有这一列、但整批标签都要印同一个值。
+    /// <para>
+    /// 厂商表里的客户名（如 BOLAROM）就是典型：它是“这一批货”的属性，不是“这一行”的属性，
+    /// 所以表里没有对应的列，行式模板的第一行因此始终印不出来（旧行为：空行被丢掉）。
+    /// 键 = <see cref="MarkFieldKey"/> 的名字（JSON 存字符串，枚举改顺序不会错位），值 = 要印的文本。
+    /// </para>
+    /// <para>只在字段<strong>没有</strong>表格值时兜底：固定值是补空，不是覆盖真数据。</para>
+    /// </summary>
+    public Dictionary<string, string> FixedValues { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>取某字段的整批固定值；没填返回 null。</summary>
+    public string? FixedValueFor(MarkFieldKey field)
+        => FixedValues.TryGetValue(field.ToString(), out var text) && !string.IsNullOrWhiteSpace(text)
+            ? text.Trim() : null;
+
+    /// <summary>设/改整批固定值；传空白即移除。</summary>
+    public void SetFixedValue(MarkFieldKey field, string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) FixedValues.Remove(field.ToString());
+        else FixedValues[field.ToString()] = text.Trim();
+        UpdatedAt = DateTime.Now;
+    }
+
     /// <summary>是否对没有件号数据的行自动按序号补齐（来源标记为 <see cref="ValueOrigin.Rule"/>）。</summary>
     public bool AutoNumberCartons { get; set; } = true;
 

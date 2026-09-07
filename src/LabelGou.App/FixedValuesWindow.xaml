@@ -1,0 +1,57 @@
+<Window x:Class="LabelGou.App.FixedValuesWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="整批固定值 · 表里没有的列，整批标签共用同一个值"
+        Width="620" Height="600"
+        FontFamily="Microsoft YaHei" FontSize="12.5"
+        Background="#F4F6F8"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
+
+    <!--
+        为什么单独开一个窗口而不是在②区每行加一个输入框：②区已经有 19 行「字段→列」下拉，
+        再加一列会把界面撑得更乱（用户明确说过界面乱）。这里只收"整批共用"这一个语义，
+        并且把"这个值不在表里"这件事写在窗口标题与每行提示上，不让它悄悄混进表格数据。
+    -->
+    <Grid Margin="14">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0" TextWrapping="Wrap" Foreground="#444444" Margin="0,0,0,10"
+                   Text="厂商表里常常没有「客户名」这一列——它是整批货共用的。在这里填一次，本批所有标签都会带上；表里已经有值的字段仍以表格为准，这里只在该列空着时兜底。" />
+
+        <Border Grid.Row="1" Background="White" BorderBrush="#DDE2E7" BorderThickness="1" Padding="10">
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <ItemsControl x:Name="Rows">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Grid Margin="0,3">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="150" />
+                                    <ColumnDefinition Width="230" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="{Binding Definition.ChineseName}"
+                                           VerticalAlignment="Center"
+                                           FontWeight="{Binding NameWeight}" />
+                                <TextBlock Grid.Column="1" Text="{Binding Hint}" VerticalAlignment="Center"
+                                           FontSize="11" Foreground="{Binding HintBrush}" Margin="6,0,10,0" />
+                                <TextBox Grid.Column="2" Text="{Binding Value, UpdateSourceTrigger=PropertyChanged}"
+                                         Padding="4,2" />
+                            </Grid>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </ScrollViewer>
+        </Border>
+
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
+            <Button Content="清空全部" Width="88" Click="OnClearClick" Margin="0,0,8,0"
+                    ToolTip="把所有固定值抹掉，回到只印表格里的数据" />
+            <Button Content="确定" Width="88" IsDefault="True" Click="OnOkClick" FontWeight="Bold" />
+            <Button Content="取消" Width="72" IsCancel="True" Margin="8,0,0,0" />
+        </StackPanel>
+    </Grid>
+</Window>

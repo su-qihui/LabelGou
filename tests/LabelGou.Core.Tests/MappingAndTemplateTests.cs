@@ -49,6 +49,46 @@ public class MappingSuggesterTests
     }
 
     [Fact]
+    public void 真表金沐头三列自动连上货号件数与数量()
+    {
+        // 逐字复刻 labelgou-CL\7.8 金沐 唛头\7.8 金沐 唛头.xlsx 的表头（含单元格内换行与占位列）。
+        // 修前只连上 2 个：件数列谁也没绑上，导致行式模板的 Ctns 那行印不出、也不能按件数展开。
+        var profile = MappingSuggester.Suggest(new[]
+        {
+            "货号\nITEM NO:", "件数\nCTN", "数量\nQTY", "一开四", "列 E", "列 F",
+        });
+
+        Assert.Equal(0, profile.ColumnIndexOf(MarkFieldKey.ItemNo));
+        Assert.Equal(1, profile.ColumnIndexOf(MarkFieldKey.CartonTotal));
+        Assert.Equal(2, profile.ColumnIndexOf(MarkFieldKey.Quantity));
+        Assert.Equal(3, profile.BoundCount);
+        // 备注列与无表头列不许被当成字段抢走
+        Assert.Equal(-1, profile.ColumnIndexOf(MarkFieldKey.CartonNo));
+    }
+
+    [Fact]
+    public void 最高分列被抢不作废字段它仍应拿到次优列()
+    {
+        // 钉住贪心分配的先后顺序：旧写法先 usedFields.Add 再判列冲突，于是件号在“货号”列上撞车后
+        // 就被标成已用，真正能接它的第二列永远轮不到（旧代码下这一列会被总件数抢走）。
+        var profile = MappingSuggester.Suggest(new[] { "CARTON 货号", "carton no 件数" });
+
+        Assert.Equal(0, profile.ColumnIndexOf(MarkFieldKey.ItemNo));
+        Assert.Equal(1, profile.ColumnIndexOf(MarkFieldKey.CartonNo));
+    }
+
+    [Fact]
+    public void 两字母拉丁别名只许精确命中不许抢列()
+    {
+        // “no” 会出现在几乎任何英文表头里（ITEM NO / CARTON NO / POD NO），拿它做包含匹配
+        // 会把货号列当成件号列。修前：仅这一列就会被 CartonNo 抢走。
+        var profile = MappingSuggester.Suggest(new[] { "货号 ITEM NO:" });
+
+        Assert.Equal(0, profile.ColumnIndexOf(MarkFieldKey.ItemNo));
+        Assert.Equal(-1, profile.ColumnIndexOf(MarkFieldKey.CartonNo));
+    }
+
+    [Fact]
     public void 同签名方案命中后可按列标题重连列顺序变化的表()
     {
         var original = MappingSuggester.Suggest(Headers, "顺达装箱单");

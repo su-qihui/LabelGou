@@ -116,6 +116,8 @@
                                 <Button Content="应用映射" Command="{Binding ApplyMappingCommand}" FontWeight="Bold" />
                                 <Button Content="保存方案" Command="{Binding SaveProfileCommand}" />
                                 <Button Content="删除方案" Command="{Binding DeleteProfileCommand}" />
+                                <Button Content="整批固定值…" Click="OnEditFixedValuesClick"
+                                        ToolTip="表里没有那一列、但整批都要印同一个值（如客户名 BOLAROM）就在这里填一次" />
                             </WrapPanel>
 
                             <Grid Margin="0,6,0,0">

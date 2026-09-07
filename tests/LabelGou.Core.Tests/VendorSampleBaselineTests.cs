@@ -86,8 +86,9 @@ public class VendorSampleBaselineTests
         Assert.Contains("Item no：olu830-35*144", printed);
         Assert.Contains("QTY：144 pcs", printed);
         Assert.Contains("Ctns：5件", printed);
-        // 已知缺口（对接文档 §十-A-1）：BOLAROM 这类"整批共用的客户名"在表里不是一个列，
-        // 现在既不能从表格来也不能在方案里填常量，所以这一行只能是空的并被丢掉——不许偷偷印成空白行。
+        // 已知缺口（对接文档 §十-A-12，已于第 8 棒用整批固定值补上）：BOLAROM 这类"整批共用的客户名"在表里不是一个列，
+        // 所以本文件的基准测试刻意不填固定值：这一行只能是空的并被丢掉——不许偷偷印成空白行。
+        // （填了固定值之后的四行齐全由 `_probe\m7-sheet\` 肉眼复核，不靠单测假证。）
         Assert.All(printed, t => Assert.False(string.IsNullOrWhiteSpace(t)));
     }
 
