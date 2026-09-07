@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  LabelGou (唛头标签助手) brand mark - "diamond shipping-mark dog".
+  Concept: a classic export carton shipping mark drawn as a diamond stencil
+  frame that doubles as a dog head (ears poke above the flat top edge),
+  with the "this side up" arrow and two reference-number field rows below.
+  Pure geometry, uniform strokes, single accent color (ink blue nose).
+  Canvas: 512x512 user units. Ink: #1F2429. Accent: #1D4ED8.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <title>LabelGou</title>
+
+  <!-- head: diamond shipping-mark frame with two ears on the top edge -->
+  <path d="M 64 246 L 146 46 L 192 120 L 320 120 L 366 46 L 448 246 L 256 424 Z"
+        fill="none" stroke="#1F2429" stroke-width="24"
+        stroke-linejoin="round" stroke-linecap="round"/>
+
+  <!-- eyes -->
+  <circle cx="198" cy="230" r="16" fill="#1F2429"/>
+  <circle cx="314" cy="230" r="16" fill="#1F2429"/>
+
+  <!-- nose (the only color accent) -->
+  <path d="M 256 296 c 22 0 38 10 38 24 c 0 20 -22 40 -38 40 c -16 0 -38 -20 -38 -40 c 0 -14 16 -24 38 -24 Z"
+        fill="#1D4ED8"/>
+
+  <!-- mouth: small w under the nose -->
+  <path d="M 232 372 q 12 14 24 -2 q 12 12 24 -2"
+        fill="none" stroke="#1F2429" stroke-width="20" stroke-linecap="round"/>
+
+  <!-- "this side up" carton arrow, bottom left -->
+  <path d="M 96 494 V 448 M 74 468 L 96 446 L 118 468 M 70 502 H 122"
+        fill="none" stroke="#1F2429" stroke-width="20"
+        stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- two shipping-mark reference field rows, bottom right -->
+  <path d="M 166 458 H 442 M 166 498 H 370"
+        fill="none" stroke="#1F2429" stroke-width="20" stroke-linecap="round"/>
+</svg>
