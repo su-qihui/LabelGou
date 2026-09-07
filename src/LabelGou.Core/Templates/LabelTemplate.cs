@@ -187,10 +187,17 @@ public static class TemplateValidator
     /// <summary>允许的最小边长。</summary>
     public const double MinLabelSideMm = 8;
 
-    /// <summary>字号上下限（磅）。</summary>
+    /// <summary>字号下限（磅）。</summary>
     public const double MinFontPt = 3;
 
-    public const double MaxFontPt = 60;
+    /// <summary>
+    /// 字号上限（磅）= 45.9mm 字高。
+    /// <para>原来定的是 60pt（21mm），但真厂商样张不是这么回事：<c>labelgou-CL</c> 里
+    /// “广州郑小姐”是 160×120 的纸上只放两行超大字（每行吃掉约 50mm 高），
+    /// “OLU”顶部一行 SKU 大字也一样——60pt 会把它们默默削小一半，导入结果就“看着不对但说不清”。
+    /// 越界与重叠仍有元素级校验拦着，放开的只是“大字”这一项。</para>
+    /// </summary>
+    public const double MaxFontPt = 130;
 
     /// <summary>元素数量上限，防呆也防 AI 无限堆。</summary>
     public const int MaxElements = 80;

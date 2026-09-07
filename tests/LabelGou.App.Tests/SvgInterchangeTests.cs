@@ -366,7 +366,7 @@ public class SvgInterchangeTests
         var text = layout.Items.OfType<TextItem>().Single();
         var fit = TextFit.Solve(text, scale: 1.0, pixelsPerDip: 1.0);
         Assert.NotNull(fit);
-        Assert.Equal(1, TextFit.LineCountOf(fit!.Formatted));
+        Assert.Equal(1, fit!.LineCount);
         Assert.True(fit.CanonicalEmSizeDiu < TextFit.RequestedEmSizeDiu(14),
             "这份夹具得真的缩了，否则下面比的是两个没被考验过的分支");
 

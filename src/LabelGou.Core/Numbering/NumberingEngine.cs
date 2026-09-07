@@ -196,6 +196,13 @@ public static class NumberingEngine
         // 组内序号作为可引用的自定义量，模板可用 {{col:组内序}} 排查错号
         builder.SetCustom("col:组内序", sequenceInGroup.ToString(CultureInfo.InvariantCulture), ValueOrigin.Rule);
 
+        // 「本行几箱」必须单独留一个量：展开模式下 {{CartonTotal}} 已被改写成整批总数（15），
+        // 而厂商唛头印的是本货号自己的箱数（真样张：Ctns：5件）。不留这个量，5 就会被悄悄印成 15。
+        var rowCartonText = expand
+            ? cartonsOfRow.ToString(CultureInfo.InvariantCulture)
+            : source.GetText(rule.ExpandCountField) ?? cartonsOfRow.ToString(CultureInfo.InvariantCulture);
+        builder.SetCustom("col:本行箱数", rowCartonText, ValueOrigin.Rule);
+
         return builder.Build();
     }
 

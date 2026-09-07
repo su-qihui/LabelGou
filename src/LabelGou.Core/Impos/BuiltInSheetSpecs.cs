@@ -22,12 +22,15 @@ public static class BuiltInSheetSpecs
 
     public const string IdA4Small = "sheet.a4.small-60x40";
 
+    /// <summary>28×20 的纸「一开四」：裁 4 张 140×100，厂商表里 D 列写“一开四”说的就是它。</summary>
+    public const string IdCut4_280x200 = "sheet.cut4-280x200";
+
     public const string IdCustom = "sheet.custom";
 
     /// <summary>全部内置纸规（每次调用都是新实例）。</summary>
     public static IReadOnlyList<SheetSpec> All() => new List<SheetSpec>
     {
-        A4(), A4Landscape(), A3(), A4Dense(), A4Small60x40(), Custom(),
+        A4(), A4Landscape(), A3(), A4Dense(), A4Small60x40(), Cut4_280x200(), Custom(),
     };
 
     /// <summary>按 id 取一份新副本；未知 id 返回 null。</summary>
@@ -38,6 +41,7 @@ public static class BuiltInSheetSpecs
         IdA3 => A3(),
         IdA4Dense => A4Dense(),
         IdA4Small => A4Small60x40(),
+        IdCut4_280x200 => Cut4_280x200(),
         IdCustom => Custom(),
         _ => null,
     };
@@ -79,6 +83,24 @@ public static class BuiltInSheetSpecs
     /// <summary>自定义起点：复制后按店里刀模实测数值改。</summary>
     public static SheetSpec Custom() => New(IdCustom, "自定义（另存后改）",
         "空白起点：把纸张、页边、间距、行列改成你店里刀模的实际数值。", 210, 297, 10, 2);
+
+    /// <summary>
+    /// 280×200 一开四：2 列 × 2 行铺满，每枚 140×100，中间那一刀就是两枚标签的公共边。
+    /// <para>厂商表里在备注列写“一开四”的纸就是这种（见 <c>labelgou-CL\7.8 金沐 唛头</c>）。
+    /// 页边与间距都是 0：尺寸是 4×(140×100) 刚好铺满，多留 1mm 就排不下 4 枚。</para>
+    /// </summary>
+    public static SheetSpec Cut4_280x200()
+    {
+        var spec = New(IdCut4_280x200, "28×20 一开四（2 × 2 = 4 枚 140×100）",
+            "整张铺满 4 枚 140×100，页边与间距 0；裁切线只画整版四角，中间那一刀沿两枚标签的公共边。", 280, 200, 0, 0);
+        spec.LabelWidthMm = 140;
+        spec.LabelHeightMm = 100;
+        spec.Columns = 2;
+        spec.Rows = 2;
+        spec.AllowRotate = false;
+        spec.CropMarks = CropMarkMode.SheetCorners;
+        return spec;
+    }
 
     private static SheetSpec New(string id, string name, string note,
         double paperW, double paperH, double margin, double gutter) => new()

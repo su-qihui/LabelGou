@@ -16,6 +16,8 @@ public static class BuiltInTemplates
         Standard100x80(),
         Compact60x40(),
         Bilingual120x90(),
+        RowsFour140x100(),
+        RowsBigTwo160x120(),
     };
 
     /// <summary>每次调用返回新实例，避免界面编辑时污染内置定义。</summary>
@@ -24,12 +26,16 @@ public static class BuiltInTemplates
         IdStandard => Standard100x80(),
         IdCompact => Compact60x40(),
         IdBilingual => Bilingual120x90(),
+        IdRowsFour => RowsFour140x100(),
+        IdRowsBigTwo => RowsBigTwo160x120(),
         _ => null,
     };
 
     public const string IdStandard = "builtin.standard-100x80";
     public const string IdCompact = "builtin.compact-60x40";
     public const string IdBilingual = "builtin.bilingual-120x90";
+    public const string IdRowsFour = "builtin.rows-140x100-4line";
+    public const string IdRowsBigTwo = "builtin.rows-160x120-2line";
 
     /// <summary>标准外贸箱唛：上收货人、中合同/明细、下件号与原产地，带外框与分隔线。</summary>
     public static LabelTemplate Standard100x80()
@@ -124,6 +130,65 @@ public static class BuiltInTemplates
         t.Elements.Add(Text("{{Origin}}", 5, 73, 110, 9, 12, bold: true, HorizontalAlign.Center));
 
         return t;
+    }
+
+    /// <summary>
+    /// 行式四行 140×100（无框）：客户名撑满一大条 + 三行明细。
+    /// <para>形状直接抄自 <c>labelgou-CL\7.8 金沐 唛头</c> 的 CDR 真样张与导出 SVG
+    /// （BOLAROM / Item no：… / QTY：… pcs / Ctns：…件）。客户名走 <c>{{Consignee}}</c>，
+    /// 不写死厂牌——同一个模板要能给下一家厂用。件数那一行走 <c>{{col:本行箱数}}</c> 而不是
+    /// <c>{{CartonTotal}}</c>：展开后后者是整批总数（155），厂商要的是本货号的 5 件。</para>
+    /// </summary>
+    public static LabelTemplate RowsFour140x100()
+    {
+        var spec = new RowLayoutSpec
+        {
+            Id = IdRowsFour,
+            Name = "行式四行 140×100",
+            Note = "真厂商样张形状：顶部客户名撑满一大条 + 货号/数量/件数三行明细，无框线。",
+            WidthMm = 140,
+            HeightMm = 100,
+            PaddingMm = 5,
+            GapMm = 2,
+            DrawBorder = false,
+        };
+        spec.Rows.Add(new RowSpec { Content = "{{Consignee}}", Weight = 1.6, Stretch = true, Align = HorizontalAlign.Center });
+        spec.Rows.Add(new RowSpec { Content = "Item no：{{ItemNo}}", Weight = 1, Stretch = true });
+        spec.Rows.Add(new RowSpec { Content = "QTY：{{Quantity}} pcs", Weight = 1, Stretch = true });
+        spec.Rows.Add(new RowSpec { Content = "Ctns：{{col:本行箱数}}件", Weight = 1, Stretch = true });
+        return MarkBuiltIn(spec);
+    }
+
+    /// <summary>
+    /// 大字两行 160×120（无框、居中）：整张纸只放两行超大字。
+    /// <para>抄自 <c>labelgou-CL\广州郑小姐唛头流水</c>（<c>QI YUE:</c> / <c>AJ7-QI YUE: Aj9</c>）
+    /// 与 <c>邱总</c>（居中大字四行）那一类：字越大越好看，细枝字段一律不上纸。</para>
+    /// </summary>
+    public static LabelTemplate RowsBigTwo160x120()
+    {
+        var spec = new RowLayoutSpec
+        {
+            Id = IdRowsBigTwo,
+            Name = "大字两行 160×120",
+            Note = "整张只放两行超大字（居中撑满）：流水/唛头大字版，适合 160×120 的纸。",
+            WidthMm = 160,
+            HeightMm = 120,
+            PaddingMm = 6,
+            GapMm = 3,
+            DrawBorder = false,
+        };
+        spec.Rows.Add(new RowSpec { Content = "{{Consignee}}", Stretch = true, Align = HorizontalAlign.Center });
+        spec.Rows.Add(new RowSpec { Content = "{{ItemNo}}", Stretch = true, Align = HorizontalAlign.Center });
+        return MarkBuiltIn(spec);
+    }
+
+    /// <summary>行式骨架算完补上内置标记（行高/字号由 <see cref="RowLayoutSpec"/> 算，不手标毫米）。</summary>
+    private static LabelTemplate MarkBuiltIn(RowLayoutSpec spec)
+    {
+        var template = spec.Build()
+            ?? throw new InvalidOperationException($"行式骨架 {spec.Name} 排不出来：留白/行距把版面吃光了。");
+        template.BuiltIn = true;
+        return template;
     }
 
     private static LabelTemplate New(string id, string name, string note, double w, double h) => new()

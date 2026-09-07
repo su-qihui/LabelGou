@@ -160,7 +160,8 @@ public static class LabelRenderer
         if (fit is null) return;
 
         var box = fit.BoxDiu;
-        if (text.Flagged) dc.DrawRectangle(RenderRules.FlagBackground, null, box);
+        // 需人工核对的字段与“缩到下限仍装不下、被省略号截断”共用同一套警示样式（文字颜色已在 TextFit 里换成警示色）
+        if (text.Flagged || fit.Truncated) dc.DrawRectangle(RenderRules.FlagBackground, null, box);
 
         dc.DrawText(fit.Formatted, new Point(box.Left, fit.TextTopDiu));
 

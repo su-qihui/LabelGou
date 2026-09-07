@@ -26,6 +26,12 @@ public sealed class SvgParseOptions
     /// <summary>只要几何不要文字（生成"纯底图"时用）。</summary>
     public bool SkipTexts { get; init; }
 
+    /// <summary>
+    /// 把被逐字拆开的文字拼回整行（<see cref="SvgTextLineJoiner"/>），默认开。
+    /// <para>关掉它是给往返测试留的口：要验“源文件怎么写进来就怎么写出去”时，不能被我们的合并改变元素数。</para>
+    /// </summary>
+    public bool JoinTextLines { get; init; } = true;
+
     /// <summary>元素数超过这个值就停止收集并报错（比 MaxNodes 早，给用户看得懂的话）。</summary>
     public int WarnElementCount { get; init; } = 4000;
 
@@ -79,10 +85,15 @@ public static class SvgParser
             // XDocument.Parse 没有带 XmlReaderSettings 的重载，要进 XmlReader 这条路
             using var reader = System.Xml.XmlReader.Create(new StringReader(xml ?? string.Empty), new System.Xml.XmlReaderSettings
             {
-                // 底稿可能来自别人的机器：绝不去取外部 DTD/实体，离线环境一取就卡住
-                DtdProcessing = System.Xml.DtdProcessing.Prohibit,
+                // 真样本教训：CorelDRAW/Illustrator 导出的 SVG 开头就带
+                // <!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/.../svg11.dtd">，
+                // 用 DtdProcessing.Prohibit 会直接抛异常 → 每一张真底稿都被当成“读不了”拒收。
+                // Ignore 才是既收得下、又不去网上取 DTD 的选项（XmlResolver=null 封死外部实体，
+                // MaxCharactersFromEntities 挡住实体爆炸）。
+                DtdProcessing = System.Xml.DtdProcessing.Ignore,
                 XmlResolver = null,
                 MaxCharactersInDocument = 64L * 1024 * 1024,
+                MaxCharactersFromEntities = 1_000_000L,
             });
             parsed = XDocument.Load(reader, LoadOptions.None);
         }
@@ -99,19 +110,31 @@ public static class SvgParser
         }
 
         new Job(doc, issues, opt).Run(parsed.Root!);
+
+        // CorelDRAW/Illustrator 导出的 SVG 常把一行拆成单字（本机真样本：BOLAROM = 7 个 <text>）。
+        // 不拼回来，字段识别、底图剔除、导入预览全部落空，所以这一步在解析收尾就做，不留给调用方选。
+        var joined = opt.JoinTextLines && !opt.SkipTexts
+            ? SvgTextLineJoiner.Join(doc)
+            : default;
+        if (joined.After < joined.Before)
+            issues.Add(new TemplateIssue(IssueLevel.Info, joined.Describe()));
+
         return new SvgParseResult(doc, issues);
     }
 
     /// <summary>
-    /// 宽度估算：CJK 约一个全角，拉丁与数字约 0.55 个。只用于给导入的文字一个初始框，
+    /// 宽度估算：宽字符（汉字、假名、CJK 标点、全角形式）约一个全角，拉丁与数字约 0.55 个。
+    /// 只用于给导入的文字一个初始框，
     /// <strong>不参与任何印刷尺寸决定</strong>（真度量在渲染端由 <c>FormattedText</c> 完成）。
+    /// <para>但它是 <see cref="SvgTextLineJoiner"/> 算字间距的依据：把全角冒号当成半角标点，
+    /// 右端就少算半个字，行内间距被夸大，真样本里“冒号与它后面的值”就会被判成两栏。</para>
     /// </summary>
     public static double EstimateWidthMm(string text, double sizeMm)
     {
         var units = 0.0;
         foreach (var c in text)
         {
-            if (c >= 0x2E80 && c <= 0x9FFF) units += 1.0;          // CJK 与假名
+            if (IsWide(c)) units += 1.0;                            // 宽字符：一个算一个全角
             else if (c is >= 'A' and <= 'Z') units += 0.72;
             else if (c is >= 'a' and <= 'z') units += 0.55;
             else if (c is >= '0' and <= '9') units += 0.56;
@@ -120,6 +143,13 @@ public static class SvgParser
         }
         return Math.Max(sizeMm * 0.3, units * sizeMm);
     }
+
+    /// <summary>宽字符判定：只认这几段，不做完整 East Asian Width 表（那会把表搬进仓库，不值）。</summary>
+    private static bool IsWide(char c) =>
+        c is >= '\u2E80' and <= '\u9FFF'   // CJK 部首、汉字、假名
+        or >= '\u3000' and <= '\u303F'     // CJK 符号与标点（、。〃々〆〇）与全角空格
+        or >= '\uFF00' and <= '\uFF60'     // 全角形式（Ａ Ｚ ！？ ，： 等）
+        or >= '\uFE30' and <= '\uFE4F';    // CJK 兼容形式（竖排括号等）
 
     /// <summary>一次解析的工作状态（矩阵链、样式链、id 表、去重后的告警）。</summary>
     private sealed class Job

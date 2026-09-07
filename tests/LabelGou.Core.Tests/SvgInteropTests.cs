@@ -539,12 +539,22 @@ ABC  </text>"));
     [Fact]
     public void EmptyStringIsRejected() => Assert.True(SvgParser.Parse(string.Empty).HasError);
 
+    /// <summary>
+    /// 真底稿必带 W3C 的 DOCTYPE，所以“看见 DTD 就拒收”是错的（M7 拿真样件才测出来）；
+    /// 但也不许去取它、更不许展开实体。这里把两条边界同时钉住：
+    /// 外部 DTD 指向一个没人监听的地址照样解析成功（说明根本没发请求），
+    /// 而引用未定义实体必须报错，不是悄悄展开。
+    /// </summary>
     [Fact]
-    public void DtdIsRefusedOffline()
+    public void DtdDeclarationIsToleratedButNothingIsFetchedOrExpanded()
     {
-        const string xml = """<?xml version="1.0"?><!DOCTYPE svg [<!ENTITY x "ha">]><svg xmlns="http://www.w3.org/2000/svg" width="10mm" height="10mm"><rect width="1" height="1"/></svg>""";
-        var result = SvgParser.Parse(xml);
-        Assert.True(result.HasError, "离线环境绝不该去解析外部 DTD");
+        const string external = """<?xml version="1.0"?><!DOCTYPE svg SYSTEM "http://127.0.0.9/nothing-listens-here/svg11.dtd"><svg xmlns="http://www.w3.org/2000/svg" width="10mm" height="10mm"><rect width="1" height="1"/></svg>""";
+        var accepted = SvgParser.Parse(external);
+        Assert.False(accepted.HasError, "带 DOCTYPE 的真底稿必须收得下，而且不能去取那个地址");
+        Assert.Single(accepted.Document.Paths);
+
+        const string entity = """<?xml version="1.0"?><!DOCTYPE svg [<!ENTITY x "ha">]><svg xmlns="http://www.w3.org/2000/svg" width="10mm" height="10mm">&x;<rect width="1" height="1"/></svg>""";
+        Assert.True(SvgParser.Parse(entity).HasError, "实体引用不能悄悄展开");
     }
 
     [Fact]
@@ -645,5 +655,120 @@ ABC  </text>"));
         Assert.Equal(first.Bounds.MaxX, again.Bounds.MaxX, 2);
         Assert.Equal(first.Bounds.YMm, again.Bounds.YMm, 2);
         Assert.Equal(first.Bounds.MaxY, again.Bounds.MaxY, 2);
+    }
+
+    // ---------- 逐字拆开的底稿拼回整行（真样本形状，见 SvgTextLineJoiner 注释） ----------
+
+    private const string Page140x100 = """<svg xmlns="http://www.w3.org/2000/svg" width="140mm" height="100mm" viewBox="0 0 140 100">""";
+
+    /// <summary>一行 BOLAROM 被拆成 7 个 <text>，全角冒号还被丢到文件末尾——这就是 CDR X4 导出的真实形状。</summary>
+    private const string PerGlyphBolarom = Page140x100 +
+        @"<text x=""10"" y=""20"" font-size=""10"" font-family=""Arial"">B</text>" +
+        @"<text x=""18"" y=""20"" font-size=""10"" font-family=""Arial"">O</text>" +
+        @"<text x=""26"" y=""20"" font-size=""10"" font-family=""Arial"">L</text>" +
+        @"<text x=""34"" y=""20"" font-size=""10"" font-family=""Arial"">A</text>" +
+        @"<text x=""42"" y=""20"" font-size=""10"" font-family=""Arial"">R</text>" +
+        @"<text x=""50"" y=""20"" font-size=""10"" font-family=""Arial"">O</text>" +
+        @"<text x=""58"" y=""20"" font-size=""10"" font-family=""Arial"">M</text>" +
+        @"<text x=""66"" y=""20"" font-size=""10"" font-family=""Arial"">：</text>" +
+        "</svg>";
+
+    [Fact]
+    public void PerGlyphTextIsStitchedBackIntoOneLine()
+    {
+        var doc = Ok(PerGlyphBolarom);
+        var line = Assert.Single(doc.Texts);
+        Assert.Equal("BOLAROM：", line.Content, ignoreCase: false);
+        Assert.Equal(8, line.MergedFromCount);
+        Assert.Equal(10, line.XMm, 6);          // 左端仍是第一个字的左端，不能越缝越往右跑
+        Assert.Equal(76, line.Bounds.MaxX, 1);  // 包络右端 = 冒号右端（66 + 1.0em）
+    }
+
+    [Fact]
+    public void MergingDoesNotInventErrorsAndTellsTheUserWhatHappened()
+    {
+        var result = SvgParser.Parse(PerGlyphBolarom);
+        Assert.False(result.HasError);
+        Assert.Contains(result.Issues, i => i.Severity == IssueLevel.Info && i.Message.Contains("合并", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void JoiningIsOptOutForRoundTripFidelity()
+    {
+        var raw = Ok(PerGlyphBolarom, new SvgParseOptions { JoinTextLines = false });
+        Assert.Equal(8, raw.Texts.Count);
+        Assert.Equal("B", raw.Texts[0].Content);
+    }
+
+    [Fact]
+    public void SeparateLinesColumnsAndFontSizesNeverGetGluedTogether()
+    {
+        // 同基线但隔了 24mm 的是两栏；基线差 20mm 的是两行；字号从 10 跳到 20 的是客户名与明细行
+        const string source = Page140x100 +
+            @"<text x=""10"" y=""20"" font-size=""10"" font-family=""Arial"">A</text>" +
+            @"<text x=""18"" y=""20"" font-size=""10"" font-family=""Arial"">B</text>" +
+            @"<text x=""42"" y=""20"" font-size=""10"" font-family=""Arial"">C</text>" +
+            @"<text x=""10"" y=""40"" font-size=""10"" font-family=""Arial"">D</text>" +
+            @"<text x=""10"" y=""60"" font-size=""20"" font-family=""Arial"">E</text>" +
+            "</svg>";
+        var doc = Ok(source);
+        Assert.Equal(new[] { "AB", "C", "D", "E" }, doc.Texts.Select(t => t.Content).ToArray());
+    }
+
+    [Fact]
+    public void OutOfSourceOrderGlyphsLandInVisualOrder()
+    {
+        // 冒号在文件里排在最后，但 x 在中间：合并必须按映射后的 X 排，不能按文档顺序串
+        const string source = Page140x100 +
+            @"<text x=""30"" y=""20"" font-size=""10"" font-family=""Arial"">2</text>" +
+            @"<text x=""10"" y=""20"" font-size=""10"" font-family=""Arial"">QTY</text>" +
+            @"<text x=""22"" y=""20"" font-size=""10"" font-family=""Arial"">：</text>" +
+            "</svg>";
+        Assert.Equal("QTY：2", Assert.Single(Ok(source).Texts).Content);
+    }
+
+    /// <summary>
+    /// 基线容差必须按**毫米**算。本例两行隔 2.5mm、字大 6mm：
+    /// 拿磅当毫米用就会得出 3.06mm 的宽容差，把上下两行缝成一行（真摔过一跤）。
+    /// </summary>
+    [Fact]
+    public void BaselineToleranceIsMillimetresNotPoints()
+    {
+        const string source = Page140x100 +
+            @"<text x=""10"" y=""20"" font-size=""6"" font-family=""Arial"">UPPER</text>" +
+            @"<text x=""10"" y=""22.5"" font-size=""6"" font-family=""Arial"">LOWER</text>" +
+            "</svg>";
+        var doc = Ok(source);
+        Assert.Equal(new[] { "UPPER", "LOWER" }, doc.Texts.Select(t => t.Content).ToArray());
+    }
+
+    /// <summary>真样本形状：「Ctns：5」粗体 + 「件」正常体在同一基线上，不能因字重不同拆成两行。</summary>
+    [Fact]
+    public void MixedWeightPiecesOnOneBaselineStayTogether()
+    {
+        const string source = Page140x100 +
+            @"<text x=""10"" y=""20"" font-size=""6"" font-weight=""bold"" font-family=""Arial"">Ctns</text>" +
+            @"<text x=""22"" y=""20"" font-size=""6"" font-weight=""bold"" font-family=""Arial"">：</text>" +
+            @"<text x=""28"" y=""20"" font-size=""6"" font-weight=""bold"" font-family=""Arial"">5</text>" +
+            @"<text x=""31"" y=""20"" font-size=""6"" font-family=""Arial"">件</text>" +
+            "</svg>";
+        Assert.Equal("Ctns：5件", Assert.Single(Ok(source).Texts).Content);
+    }
+
+    /// <summary>
+    /// CorelDRAW/Illustrator 导出的 SVG 开头带 W3C 的 DOCTYPE。
+    /// 禁 DTD 会让每一张真底稿都被拒收（这就是“SVG 导入没效果”的第一层原因），
+    /// 但收下来也不能去网上取它——XmlResolver 为 null，取不到就报错，绝不卡住。
+    /// </summary>
+    [Fact]
+    public void SvgDoctypeFromExportToolIsAcceptedWithoutFetchingIt()
+    {
+        const string source = """<?xml version="1.0" encoding="UTF-8"?>""" + "\n" +
+            """<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">""" + "\n" +
+            Page140x100 +
+            @"<text x=""10"" y=""20"" font-size=""10"" font-family=""Arial"">QTY</text>" +
+            "</svg>";
+        var doc = Ok(source);
+        Assert.Equal("QTY", Assert.Single(doc.Texts).Content);
     }
 }

@@ -74,7 +74,7 @@ public class SampleDataEndToEndTests
     }
 
     [Fact]
-    public void 三套内置模板套真实样例数据都不越界不空白()
+    public void 全部内置模板套真实样例数据都不越界不空白()
     {
         var data = TableImporter.Import(LocateSample("样例-唛头装箱单.csv"));
         var mapped = RecordMapper.Map(data, MappingSuggester.Suggest(data.Headers));
@@ -86,7 +86,10 @@ public class SampleDataEndToEndTests
                 var layout = LayoutEngine.Build(template, mapped.Records[i], new LayoutContext(i + 1, mapped.Count));
                 var visible = layout.Items.OfType<TextItem>().ToList();
 
-                Assert.True(visible.Count >= 3, $"{template.Name} 第 {i + 1} 条几乎没内容");
+                // 下限从 3 改成 2：行式骨架里的「大字两行 160×120」抄的就是郑小姐那张真样张，
+                // 它本来就只有两行超大字——要求第三行等于否认真样张。真正要守的是“不空白且不越界”。
+                Assert.True(visible.Count >= 2, $"{template.Name} 几乎没内容");
+                Assert.All(visible, t => Assert.False(string.IsNullOrWhiteSpace(t.Content), $"{template.Name} 有一行是空的"));
                 Assert.All(visible, t =>
                 {
                     Assert.InRange(t.Y, 0, template.HeightMm);

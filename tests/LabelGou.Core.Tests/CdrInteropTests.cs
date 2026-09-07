@@ -363,10 +363,12 @@ public class CdrInteropTests
     public void TooManyCandidatesKeepTheMostLikelyOnes()
     {
         var body = new StringBuilder();
-        // 造 70 段都像可变字段的文字（远超 60 上限）
+        // 造 70 段都像可变字段的文字（远超 60 上限）。
+        // 每段占自己的基线（隔 2.5mm，字号 6mm 的容差只到 1.08mm），否则会被
+        // SvgTextLineJoiner 缝成几行，这个测试要验的“候选过多”场景就出不来了。
         for (var i = 0; i < 70; i++)
-            body.Append($"<text x=\"{1 + i % 90}\" y=\"{5 + i % 70}\" font-size=\"6\">POD-{i:00} LOS ANGELES, USA</text>");
-        var svg = $"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"100mm\" height=\"80mm\" viewBox=\"0 0 100 80\">{body}</svg>";
+            body.Append($"<text x=\"1\" y=\"{4 + i * 2.5}\" font-size=\"6\">POD-{i:00} LOS ANGELES, USA</text>");
+        var svg = $"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"100mm\" height=\"180mm\" viewBox=\"0 0 100 180\">{body}</svg>";
 
         var path = WriteTemp(svg);
         try

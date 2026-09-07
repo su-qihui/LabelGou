@@ -423,6 +423,16 @@ public sealed class SvgText
     /// <summary>源文件里的 <c>id</c>（可空）。导入时按它从底图里剔除被提升的文字。</summary>
     public string? Id { get; init; }
 
+    /// <summary>
+    /// 合并成本行之前那些段的 <c>id</c>（可空 = 没合并过）。
+    /// <para>一行被拆成十几个单字时（CorelDRAW 导出的常态），提升成可编辑元素后<strong>这些 id 都得从底图剔掉</strong>，
+    /// 只剔第一个会把剩下的单字再印一遍。</para>
+    /// </summary>
+    public IReadOnlyList<string>? MergedSourceIds { get; init; }
+
+    /// <summary>本行由几个源段合并而成（1 = 未合并）。导入窗口拿它告诉用户“这行原来被拆成了几块”。</summary>
+    public int MergedFromCount { get; init; } = 1;
+
     /// <summary>宽度估算（毫米）。<strong>只用于给导入的元素一个初始框，不参与任何印刷尺寸决定</strong>。</summary>
     public double WidthEstimateMm { get; init; }
 

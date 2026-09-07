@@ -232,11 +232,15 @@ public static class SheetSvgWriter
         var fit = TextFit.Solve(text, scale: 1.0, TextFit.CanonicalPixelsPerDip);
         if (fit is null) return;
 
-        var fill = text.Flagged ? FlagFill : BlackFill;
+        // 截断与需人工核对同一个颜色：矢量出口不许静默把货号截成半截
+        if (fit.Truncated)
+            notes.Add($"「{Shrink(text.Content)}」缩到下限仍装不下，已被省略号截断——这一格必须人工改模板或改数据。");
+
+        var fill = text.Flagged || fit.Truncated ? FlagFill : BlackFill;
 
         if (!options.TextAsOutlines)
         {
-            var lines = TextFit.LineCountOf(fit.Formatted);
+            var lines = fit.LineCount;
             if (lines == 1)
             {
                 var anchorX = text.Align switch
@@ -261,7 +265,7 @@ public static class SheetSvgWriter
                     fill);
                 return;
             }
-            notes.Add($"「{Shrink(text.Content)}」排成了 {TextFit.LineCountOf(fit.Formatted)} 行，未转曲的 <text> 表达不了多行，这一段仍按轮廓写出。");
+            notes.Add($"「{Shrink(text.Content)}」排成了 {fit.LineCount} 行，未转曲的 <text> 表达不了多行，这一段仍按轮廓写出。");
         }
 
         var geometry = fit.Formatted.BuildGeometry(new Point(fit.BoxDiu.Left, fit.TextTopDiu));
