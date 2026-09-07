@@ -265,7 +265,7 @@ public class ImpositionEngineTests
     }
 }
 
-/// <summary>纸规库的存取与闸门。</summary>
+/// <summary>纸规库的存取与闸门，以及「一页一枚」默认档的几何（套准十字、角线余量、页边下限）。</summary>
 public class SheetSpecStoreTests
 {
     private sealed class TempDir : IDisposable
@@ -334,5 +334,142 @@ public class SheetSpecStoreTests
         first.MarginLeftMm = 99;
 
         Assert.NotEqual(99, BuiltInSheetSpecs.GetById(BuiltInSheetSpecs.IdA4)!.MarginLeftMm);
+    }
+
+    // ---------- 一页一枚默认档：辅助线不能默默坑在印面上 ----------
+
+    /// <summary>一页一枚：纸 = 唛头 + 2mm 页边（内置种子就是这么定的）。</summary>
+    private static SheetSpec OnePer(double margin = 2, bool landscape = false) => new()
+    {
+        Id = "test.one-per",
+        Name = "测试一页一枚",
+        FollowsLabel = true,
+        Landscape = landscape,
+        PaperWidthMm = 144,
+        PaperHeightMm = 104,
+        MarginLeftMm = margin,
+        MarginTopMm = margin,
+        MarginRightMm = margin,
+        MarginBottomMm = margin,
+        GutterXMm = 0,
+        GutterYMm = 0,
+        Columns = 1,
+        Rows = 1,
+        AllowRotate = false,
+        CropMarks = CropMarkMode.SheetCorners,
+        RegistrationMarks = true,
+    };
+
+    [Fact]
+    public void 一页一枚加横向用纸仍能每页一枚()
+    {
+        // 旧写法把标签宽加左右边距无条件写进 PaperWidthMm，横向用纸时与轴向错开 90° → 每页 0 枚、一张白纸
+        var plan = ImpositionEngine.Build(OnePer(landscape: true), 140, 100, 3);
+
+        Assert.Equal(1, plan.PerPage);
+        Assert.Equal(144, plan.PageWidthMm, 3);      // 横向：有效宽 = PaperHeightMm = 140 + 2 + 2
+        Assert.Equal(104, plan.PageHeightMm, 3);
+        Assert.DoesNotContain(plan.Issues, i => i.Severity == IssueLevel.Error);
+    }
+
+    [Fact]
+    public void 一页一枚的套准十字不落进标签印面()
+    {
+        var spec = OnePer();
+        var plan = ImpositionEngine.Build(spec, 140, 100, 2);
+
+        var marks = ImpositionEngine.BuildMarks(spec, plan, 1);
+        var reg = marks.Where(m => m.Kind == SheetMarkKind.RegistrationMark).ToList();
+        var label = plan.PlacementsOnPage(1).Single();
+
+        Assert.All(reg, m => Assert.False(
+            m.X1 >= label.X && m.X1 <= label.X + label.Width && m.Y1 >= label.Y && m.Y1 <= label.Y + label.Height,
+            $"套准十字 ({m.X1},{m.Y1}) 落在标签印面里"));
+        // 纸面只比标签多 2mm，四十字都放不下 → 一个不画，而且要说清为什么
+        Assert.Empty(reg);
+        Assert.Contains(plan.Issues, i =>
+            i.Severity == IssueLevel.Warning && i.Message.Contains("套准十字"));
+    }
+
+    [Fact]
+    public void 页边够宽时套准十字照旧四个角都画()
+    {
+        var spec = OnePer(margin: 8);
+        spec.RegistrationInsetMm = 3;
+        spec.RegistrationSizeMm = 4;
+        var plan = ImpositionEngine.Build(spec, 140, 100, 1);
+
+        var reg = ImpositionEngine.BuildMarks(spec, plan, 1).Count(m => m.Kind == SheetMarkKind.RegistrationMark);
+
+        Assert.Equal(8, reg);      // 4 个角 × 每个十字两条线
+        Assert.DoesNotContain(plan.Issues, i => i.Message.Contains("套准十字"));
+    }
+
+    [Fact]
+    public void 角线被页边夹住时不画出一公分的尾巴()
+    {
+        var spec = OnePer();
+        var plan = ImpositionEngine.Build(spec, 140, 100, 1);
+
+        // 旧实现靠 Clamp 把 4mm 的线夹成 1mm 小尾巴（看着像坏了的线）；现在要么按可用外缘收短到能用的长度，要么整角不画
+        var crop = ImpositionEngine.BuildMarks(spec, plan, 1).Where(m => m.Kind == SheetMarkKind.CropMark).ToList();
+        Assert.All(crop, m =>
+        {
+            var length = Math.Max(Math.Abs(m.X2 - m.X1), Math.Abs(m.Y2 - m.Y1));
+            Assert.True(length < 0.01 || length >= 1.5,
+                $"一段角线长 {length:0.###} mm：要么不画，就不能画成看不见的小尾巴");
+        });
+
+        // 校验器对 SheetCorners 也补了余量判断（以前只对 EveryLabel）
+        Assert.Contains(SheetSpecValidator.Validate(spec, 140, 100), i =>
+            i.Severity == IssueLevel.Warning && i.Message.Contains("角线"));
+    }
+
+    [Fact]
+    public void 页边充足够的角线照旧按全长画()
+    {
+        var spec = OnePer(margin: 8);
+        var plan = ImpositionEngine.Build(spec, 140, 100, 1);
+
+        var crop = ImpositionEngine.BuildMarks(spec, plan, 1).Where(m => m.Kind == SheetMarkKind.CropMark).ToList();
+
+        Assert.Equal(8, crop.Count);
+        Assert.All(crop, m => Assert.Equal(spec.CropMarkLengthMm,
+            Math.Max(Math.Abs(m.X2 - m.X1), Math.Abs(m.Y2 - m.Y1)), 3));
+    }
+
+    [Fact]
+    public void 一页一枚的小纸不再被纸张下限报成死胡同()
+    {
+        // 28×18 的小唛头加 2mm 页边 = 32×22，纸高本来就不到 30mm
+        var spec = BuiltInSheetSpecs.GetById(BuiltInSheetSpecs.IdOnePerLabel)!;
+
+        var issues = SheetSpecValidator.Validate(spec, 28, 18);
+
+        Assert.DoesNotContain(issues, i => i.Severity == IssueLevel.Error && i.Message.Contains("小于下限"));
+    }
+
+    [Fact]
+    public void 普通纸规的纸张下限照旧卡得住()
+    {
+        var issues = SheetSpecValidator.Validate(new SheetSpec { Name = "坏纸", PaperWidthMm = 28, PaperHeightMm = 18 });
+
+        Assert.Contains(issues, i => i.Severity == IssueLevel.Error && i.Message.Contains("小于下限"));
+    }
+
+    [Fact]
+    public void 坏纸规文件被跳过时要把文件名与原因报出来()
+    {
+        using var temp = new TempDir();
+        Directory.CreateDirectory(temp.Path);
+        File.WriteAllText(Path.Combine(temp.Path, "坏了一半.json"), "{ this is not json");
+        var store = new SheetSpecStore(temp.Path);
+
+        var report = store.ListWithReport();
+
+        Assert.Equal(BuiltInSheetSpecs.All().Count, report.Specs.Count);
+        var skipped = Assert.Single(report.SkippedFiles);
+        Assert.Contains("坏了一半.json", skipped, StringComparison.Ordinal);
+        Assert.Contains("JSON", skipped, StringComparison.Ordinal);
     }
 }

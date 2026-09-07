@@ -201,8 +201,11 @@ public static class SheetSpecValidator
                 $"纸规版本 v{spec.SchemaVersion} 高于当前程序支持的 v{SheetSpec.CurrentSchemaVersion}，请升级 LabelGou。"));
         }
 
-        CheckSide(issues, "纸张宽度", spec.PaperWidthMm);
-        CheckSide(issues, "纸张高度", spec.PaperHeightMm);
+        // 「一页一枚」的纸面是引擎按实际标签展开的，二十几毫米的小唛头加页边本来就不到 30mm，
+        // 拿标准纸的下限去卡它只会把一个能用的档报成死胡同（上一版就是这样）。
+        var paperFloorMm = spec.FollowsLabel ? 1 : SheetSpec.MinPaperSideMm;
+        CheckSide(issues, "纸张宽度", spec.PaperWidthMm, paperFloorMm);
+        CheckSide(issues, "纸张高度", spec.PaperHeightMm, paperFloorMm);
 
         foreach (var (label, value) in new[]
                  {
@@ -250,6 +253,22 @@ public static class SheetSpecValidator
                     issues.Add(new TemplateIssue(IssueLevel.Warning,
                         $"每枚都画角线时至少需要 {needed:0.#} mm 的标签间距，当前 {spec.GutterXMm:0.#}/{spec.GutterYMm:0.#} mm —— " +
                         "相邻角线会重叠，建议改用「整版四角」或加大间距。"));
+                }
+            }
+            else
+            {
+                // 整版四角的角线向外走，吃的是页边：页边不够就会被纸张边界夹掉。
+                // 上一版靠 Clamp 默默夹成 1mm 的小尾巴（看着像坏了的线），现在引擎主动收短、这里把原因说清。
+                var narrowest = Math.Min(Math.Min(spec.MarginLeftMm, spec.MarginRightMm),
+                    Math.Min(spec.MarginTopMm, spec.MarginBottomMm));
+                var needed = spec.CropMarkGapMm + spec.CropMarkLengthMm;
+                if (narrowest < needed)
+                {
+                    issues.Add(new TemplateIssue(IssueLevel.Warning,
+                        narrowest - spec.CropMarkGapMm < 1.5
+                            ? $"最窄的一边页边只有 {narrowest:0.#} mm，装不下 {needed:0.#} mm（间隙 + 线长）的四角角线：这几个角会整角不画。" +
+                              "纸面贴满标签的档（一页一枚、一开四铺满）就是这样，建议把裁切线关掉或加宽页边。"
+                            : $"最窄的一边页边只有 {narrowest:0.#} mm，小于角线要的 {needed:0.#} mm（间隙 + 线长）：四角角线会被裁切。"));
                 }
             }
         }

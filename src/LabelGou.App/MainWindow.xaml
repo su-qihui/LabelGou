@@ -275,9 +275,14 @@
 
                             <UniformGrid Columns="4" Margin="0,6,0,0">
                                 <TextBlock Text="纸宽" Style="{StaticResource Hint}" />
-                                <TextBox Text="{Binding Sheet.Working.PaperWidthMm, UpdateSourceTrigger=PropertyChanged}" />
+                                <!--  一页一枚（FollowsLabel）下这两个框每次都被引擎按标签尺寸覆写，能输入就是假旋钮：直接灰掉并说清为什么  -->
+                                <TextBox Text="{Binding Sheet.Working.PaperWidthMm, UpdateSourceTrigger=PropertyChanged}"
+                                         IsEnabled="{Binding Sheet.PaperSizeEditable}"
+                                         ToolTip="跟随标签尺寸：纸宽 = 唛头宽 + 左右页边，这里填了不生效" />
                                 <TextBlock Text="纸高" Style="{StaticResource Hint}" VerticalAlignment="Center" />
-                                <TextBox Text="{Binding Sheet.Working.PaperHeightMm, UpdateSourceTrigger=PropertyChanged}" />
+                                <TextBox Text="{Binding Sheet.Working.PaperHeightMm, UpdateSourceTrigger=PropertyChanged}"
+                                         IsEnabled="{Binding Sheet.PaperSizeEditable}"
+                                         ToolTip="跟随标签尺寸：纸高 = 唛头高 + 上下页边，这里填了不生效" />
                             </UniformGrid>
 
                             <UniformGrid Columns="4" Margin="0,4,0,0">

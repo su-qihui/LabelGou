@@ -29,18 +29,27 @@ public sealed class SheetSpecStore
     public string UserDirectory => _directory;
 
     /// <summary>全部纸规：内置在前，用户纸规按名称排序在后。</summary>
-    public IReadOnlyList<SheetSpec> ListAll()
+    public IReadOnlyList<SheetSpec> ListAll() => ListWithReport().Specs;
+
+    /// <summary>
+    /// 列目录并且把“那份没进来”一并带回去。
+    /// <para>上一版只 <c>return null</c> 然把 JSON 语法错吃掉，用户另存的纸规就这样静默蒸发（§五-64
+    /// 同类问题）：Core 不引用界面也不写日志，所以把名单交给调用方去弹。</para>
+    /// </summary>
+    public SheetListReport ListWithReport()
     {
         var list = new List<SheetSpec>(BuiltInSheetSpecs.All());
+        var skipped = new List<string>();
         if (System.IO.Directory.Exists(_directory))
         {
             foreach (var file in System.IO.Directory.EnumerateFiles(_directory, "*.json").OrderBy(f => f))
             {
-                var spec = TryRead(file);
+                var (spec, reason) = TryRead(file);
                 if (spec is not null) list.Add(spec);
+                else skipped.Add($"{Path.GetFileName(file)}：{reason}");
             }
         }
-        return list;
+        return new SheetListReport(list, skipped);
     }
 
     public SheetSpec? GetById(string? id)
@@ -77,7 +86,7 @@ public sealed class SheetSpecStore
             ? System.IO.Directory.EnumerateFiles(_directory, "*.json")
                 .FirstOrDefault(f =>
                 {
-                    var spec = TryRead(f);
+                    var (spec, _) = TryRead(f);
                     return spec is not null && string.Equals(spec.Id, id, StringComparison.Ordinal);
                 })
             : null;
@@ -86,21 +95,38 @@ public sealed class SheetSpecStore
         return true;
     }
 
-    private SheetSpec? TryRead(string path)
+    private static (SheetSpec? Spec, string? Reason) TryRead(string path)
     {
+        string json;
         try
         {
-            var spec = JsonSerializer.Deserialize<SheetSpec>(File.ReadAllText(path), ProfileStore.JsonOptions);
-            if (spec is null) return null;
-            spec.BuiltIn = false;
-            // 有硬伤的旧文件不进列表，免得拼版算出离谱几何；靠日志/界面统计提示用户
-            return SheetSpecValidator.Validate(spec).HasError() ? null : spec;
+            json = File.ReadAllText(path);
         }
-        catch (Exception)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            return null;
+            return (null, $"文件读不出来（{ex.GetType().Name}）");
         }
+
+        SheetSpec? spec;
+        try
+        {
+            spec = JsonSerializer.Deserialize<SheetSpec>(json, ProfileStore.JsonOptions);
+        }
+        catch (JsonException ex)
+        {
+            return (null, $"JSON 格式不对（{ex.Message}）");
+        }
+
+        if (spec is null) return (null, "内容不是纸规");
+        spec.BuiltIn = false;
+        // 有硬伤的旧文件不进列表，免得拼版算出离谱几何；但「哪个文件、为什么」必须能被人看见：
+        // Core 不写日志也不碰界面，所以把原因带回去交给调用方（上一版这里是默默 return null）。
+        var error = SheetSpecValidator.Validate(spec).FirstOrDefault(i => i.Severity == IssueLevel.Error);
+        return error is null ? (spec, null) : (null, $"纸规本身不合法（{error.Message}）");
     }
+
+    /// <summary>一次列目录的结果：能用的纸规 + 被跳过的文件（文件名与原因，直接能拼进界面提示）。</summary>
+    public sealed record SheetListReport(IReadOnlyList<SheetSpec> Specs, IReadOnlyList<string> SkippedFiles);
 
     private static string MakeFileName(SheetSpec spec)
     {

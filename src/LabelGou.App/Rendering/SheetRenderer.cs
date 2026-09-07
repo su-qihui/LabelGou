@@ -29,9 +29,6 @@ public enum PageRenderPurpose
 /// </summary>
 public static class SheetRenderer
 {
-    private static readonly Color CropColor = Color.FromRgb(0, 0, 0);
-    private static readonly Color RegistrationColor = Color.FromRgb(0, 120, 200);
-    private static readonly Color OutlineColor = Color.FromRgb(170, 170, 170);
     private static readonly Color PaperEdgeColor = Color.FromRgb(150, 150, 150);
     private static readonly Color MarginColor = Color.FromRgb(200, 200, 200);
 
@@ -110,17 +107,22 @@ public static class SheetRenderer
             var x = Mm.ToDiu(placement.X) * scale;
             var y = Mm.ToDiu(placement.Y) * scale;
 
+            // 整版里不给每枚标签铺白底、也不描那圈 0.26mm 灰框：
+            // 那个参数就是为整版场景设的（单枚预览才用）。一铺就会盖掉同一页上的套准十字与角线，
+            // 而那圈灰框在打印/PDF/PNG 上都是多出来的一道脏线（SVG 出口又没有，五出口就漂移了）。
             if (placement.Rotated)
-                LabelRenderer.DrawRotated(dc, layout, scale, x, y, showElementGuides, pixelsPerDip, target: target);
+                LabelRenderer.DrawRotated(dc, layout, scale, x, y, showElementGuides, pixelsPerDip,
+                    drawBackground: false, target: target);
             else
-                LabelRenderer.Draw(dc, layout, scale, x, y, showElementGuides, pixelsPerDip, target: target);
+                LabelRenderer.Draw(dc, layout, scale, x, y, showElementGuides, pixelsPerDip,
+                    drawBackground: false, target: target);
         }
 
         if (purpose == PageRenderPurpose.Printer) dc.Pop();
     }
 
     /// <summary>
-    /// 角线画笔：线宽走 <see cref="RenderRules"/> 的唯一口径，颜色按标记类型分。
+    /// 标记画笔：线宽走 <see cref="RenderRules"/> 的唯一口径，颜色也取同一份（与 SVG 出口同源）。
     /// <para>Core 给的 <see cref="SheetMarkLine.ThicknessMm"/> 是真实印刷线宽（默认 0.3mm 左右），
     /// 导出/打印按它换算，屏幕预览保底可见。</para>
     /// </summary>
@@ -128,9 +130,9 @@ public static class SheetRenderer
     {
         var brush = new SolidColorBrush(mark.Kind switch
         {
-            SheetMarkKind.RegistrationMark => RegistrationColor,
-            SheetMarkKind.LabelOutline => OutlineColor,
-            _ => CropColor,
+            SheetMarkKind.RegistrationMark => RenderRules.RegistrationColor,
+            SheetMarkKind.LabelOutline => RenderRules.LabelOutlineColor,
+            _ => RenderRules.CropMarkColor,
         });
         brush.Freeze();
         return RenderRules.PenFor(brush, mark.ThicknessMm, scale, target,

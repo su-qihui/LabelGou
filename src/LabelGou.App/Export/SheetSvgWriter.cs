@@ -41,11 +41,26 @@ public static class SheetSvgWriter
 
     private static readonly SvgPaint BlackFill = new() { Color = "#000000" };
 
-    private static readonly SvgPaint FlagFill = new() { Color = "#c62828" };
+    private static readonly SvgPaint FlagFill = new() { Color = RenderRules.HexOf(RenderRules.FlagColor) };
+
+    private static readonly SvgPaint FlagBackdrop = new() { Color = RenderRules.HexOf(RenderRules.FlagColor), Opacity = 0.11 };
 
     private static readonly SvgPaint NoteStroke = new() { Color = "#999999", WidthMm = 0.1 };
 
     private static readonly SvgPaint NoteFill = new() { Color = "#999999" };
+
+    /// <summary>三种标记的颜色从 <see cref="RenderRules"/> 取，与预览/打印/位图那三条出口同一份。</summary>
+    private static readonly SvgPaint CropPaint = new() { Color = RenderRules.HexOf(RenderRules.CropMarkColor) };
+
+    private static readonly SvgPaint RegistrationPaint = new() { Color = RenderRules.HexOf(RenderRules.RegistrationColor) };
+
+    private static readonly SvgPaint OutlinePaint = new() { Color = RenderRules.HexOf(RenderRules.LabelOutlineColor) };
+
+    /// <summary>把底稿里带颜色的笔刷写成 SVG 颜色；拿不到实体色就退回黑（唛头本来就是单色活）。</summary>
+    private static SvgPaint PaintOf(Brush? brush, SvgPaint fallback)
+        => brush is SolidColorBrush solid
+            ? new SvgPaint { Color = RenderRules.HexOf(solid.Color), Opacity = solid.Opacity }
+            : fallback;
 
     /// <summary>
     /// 写一页（0 起始，与 <see cref="SheetExportRequest.PageIndexes"/> 同一口径）。
@@ -93,7 +108,7 @@ public static class SheetSvgWriter
             builder.StartLayer("crop-marks", "裁切角线");
             foreach (var mark in marks.Where(m => m.Kind == SheetMarkKind.CropMark))
             {
-                builder.Line(mark.X1, mark.Y1, mark.X2, mark.Y2, Stroke(mark.ThicknessMm, "#000000"));
+                builder.Line(mark.X1, mark.Y1, mark.X2, mark.Y2, Stroke(mark.ThicknessMm, CropPaint.Color));
             }
             builder.EndLayer();
         }
@@ -103,7 +118,7 @@ public static class SheetSvgWriter
             builder.StartLayer("registration", "套准十字");
             foreach (var mark in marks.Where(m => m.Kind == SheetMarkKind.RegistrationMark))
             {
-                builder.Line(mark.X1, mark.Y1, mark.X2, mark.Y2, Stroke(mark.ThicknessMm, "#000000"));
+                builder.Line(mark.X1, mark.Y1, mark.X2, mark.Y2, Stroke(mark.ThicknessMm, RegistrationPaint.Color));
             }
             builder.EndLayer();
         }
@@ -113,7 +128,7 @@ public static class SheetSvgWriter
             builder.StartLayer("label-outlines", "刀框示意");
             foreach (var mark in marks.Where(m => m.Kind == SheetMarkKind.LabelOutline))
             {
-                builder.Line(mark.X1, mark.Y1, mark.X2, mark.Y2, Stroke(mark.ThicknessMm, "#888888"));
+                builder.Line(mark.X1, mark.Y1, mark.X2, mark.Y2, Stroke(mark.ThicknessMm, OutlinePaint.Color));
             }
             builder.EndLayer();
         }
@@ -238,6 +253,15 @@ public static class SheetSvgWriter
 
         var fill = text.Flagged || fit.Truncated ? FlagFill : BlackFill;
 
+        // 淡红底：与预览/打印同一判据（Flagged 或被截断都算），而且必须画在字之前、
+        // 也要在「未转曲早退」之前，否则单行不转曲那条出口连个提示都不剩。
+        if (text.Flagged || fit.Truncated)
+        {
+            builder.Rect(fit.BoxDiu.Left * UnitToMm, fit.BoxDiu.Top * UnitToMm,
+                fit.BoxDiu.Width * UnitToMm, fit.BoxDiu.Height * UnitToMm,
+                FlagBackdrop, null);
+        }
+
         if (!options.TextAsOutlines)
         {
             var lines = fit.LineCount;
@@ -270,14 +294,6 @@ public static class SheetSvgWriter
 
         var geometry = fit.Formatted.BuildGeometry(new Point(fit.BoxDiu.Left, fit.TextTopDiu));
         var commands = SvgGeometryConverter.ToCommands(geometry, UnitToMm, out var evenOdd, notes);
-        if (text.Flagged)
-        {
-            // 与预览一致：待人工核对的内容在件上照样带淡红底，避免"屏幕上看见了、件上没提示"
-            builder.Rect(fit.BoxDiu.Left * UnitToMm, fit.BoxDiu.Top * UnitToMm,
-                fit.BoxDiu.Width * UnitToMm, fit.BoxDiu.Height * UnitToMm,
-                new SvgPaint { Color = "#c62828", Opacity = 0.11 }, null);
-        }
-
         builder.Path(commands, fill, null, evenOdd);
     }
 
@@ -356,13 +372,14 @@ public static class SheetSvgWriter
         }
 
         // 底稿里的文字同样转曲：否则对方机器缺那款中文字体就会掉字（§五-6 的老坑）
+        // 颜色跟底稿一致，不再一律抹成黑：预览里看见的红字，导出到件上也得是红字
         foreach (var text in plan.Texts)
         {
             var drawable = SvgDrawableBuilder.BuildText(text, TextFit.CanonicalPixelsPerDip);
             if (drawable is null) continue;
             var geometry = drawable.Formatted.BuildGeometry(drawable.OriginDiu);
             var commands = SvgGeometryConverter.ToCommands(geometry, UnitToMm, out var evenOdd, notes);
-            builder.Path(commands, BlackFill, null, evenOdd);
+            builder.Path(commands, PaintOf(text.Fill, BlackFill), null, evenOdd);
         }
 
         builder.EndLayer();

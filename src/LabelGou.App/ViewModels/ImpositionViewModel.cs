@@ -92,10 +92,13 @@ public sealed class ImpositionViewModel : ObservableObject
         NextPageCommand = new RelayCommand(() => PageIndex = Math.Min(PageCount, PageIndex + 1), () => PageIndex < PageCount);
         LastPageCommand = new RelayCommand(() => PageIndex = PageCount, () => PageCount > 1);
         ApplySheetCommand = new RelayCommand(RebuildPlan, () => Working is not null);
-        SaveSheetAsCommand = new RelayCommand(SaveSheetAs, () => Working is not null && !Working.BuiltIn);
+        // 另存对用户改的一律开放：上一版判的是 !Working.BuiltIn，而工作副本的 BuiltIn 是从种子回填过来的 true，
+        // 默认档（一页一枚，内置）就这样把按钮永久灰掉 —— 用户改的页边重启即丢。
+        // SaveSheetAs 走的是 CloneAsUserCopy，不会碰到种子，没有需要挡的那只手。
+        SaveSheetAsCommand = new RelayCommand(SaveSheetAs, () => Working is not null);
         ResetSheetCommand = new RelayCommand(ResetSheet, () => SelectedSheetOption is not null);
 
-        foreach (var spec in _sheetStore.ListAll()) SheetOptions.Add(new SheetOption(spec));
+        ReloadSheetOptions();
         // 先接上次用的那张纸（一开四这类纸规选过一次就不该每次重选），没记过才退回 A4。
         var rememberedId = _uiState?.Load().SheetSpecId;
         // 「一开四」是上一版按错误理解设的默认（五家真样张全部一页一枚，一开四只是裁切指令），
@@ -199,6 +202,15 @@ public sealed class ImpositionViewModel : ObservableObject
     /// <summary>true 表示当前选的是内置纸规（改动需另存）。</summary>
     public bool IsBuiltInSheet => Working?.BuiltIn ?? false;
 
+    /// <summary>当前是不是「一页一枚」（纸面跟随标签）。</summary>
+    public bool FollowsLabelSheet => Working?.FollowsLabel ?? false;
+
+    /// <summary>
+    /// 纸宽/纸高这两个框能不能改。
+    /// <para>FollowsLabel 下它们每次都被引擎按标签尺寸覆写，让输入框看起来能改就是假旋钮。</para>
+    /// </summary>
+    public bool PaperSizeEditable => !FollowsLabelSheet;
+
     /// <summary>界面直接编辑的那份纸规（内置纸规的副本，改它不会污染种子）。</summary>
     public SheetSpec? Working
     {
@@ -214,6 +226,8 @@ public sealed class ImpositionViewModel : ObservableObject
         {
             Working = null;
             Raise(nameof(IsBuiltInSheet));
+            Raise(nameof(FollowsLabelSheet));
+            Raise(nameof(PaperSizeEditable));
             return;
         }
 
@@ -223,8 +237,33 @@ public sealed class ImpositionViewModel : ObservableObject
         Working = copy;
         Raise(nameof(IsBuiltInSheet));
         Raise(nameof(HasSheet));
+        Raise(nameof(FollowsLabelSheet));
+        Raise(nameof(PaperSizeEditable));
         _selectedCropMark = CropMarkOptions.FirstOrDefault(o => o.Value == copy.CropMarks);
         Raise(nameof(SelectedCropMark));
+    }
+
+    /// <summary>把用户纸规目录重列一遍，顺便记下被跳过的坏文件（上一版它们静默蒸发，没人知道）。</summary>
+    private void ReloadSheetOptions()
+    {
+        var report = _sheetStore.ListWithReport();
+        SheetOptions.Clear();
+        foreach (var spec in report.Specs) SheetOptions.Add(new SheetOption(spec));
+        _skippedSheetFiles = report.SkippedFiles;
+        if (_skippedSheetFiles.Count > 0)
+        {
+            AppLog.Warning($"纸规目录里有 {_skippedSheetFiles.Count} 个文件没读进来：{string.Join("；", _skippedSheetFiles)}");
+            AppendSkippedSheetFiles();
+        }
+    }
+
+    /// <summary>被跳过的坏纸规文件（文件名 + 原因）；每次重列 SheetIssues 后都要补回去。</summary>
+    private IReadOnlyList<string> _skippedSheetFiles = Array.Empty<string>();
+
+    private void AppendSkippedSheetFiles()
+    {
+        foreach (var line in _skippedSheetFiles)
+            SheetIssues.Add($"⚠ 这个纸规文件被跳过（改坏了或不属于本程序）：{line}");
     }
 
     private void ResetSheet()
@@ -478,12 +517,16 @@ public sealed class ImpositionViewModel : ObservableObject
         {
             SheetIssues.Add($"{Icon(issue.Severity)} {issue.Message}");
         }
+        AppendSkippedSheetFiles();
         if (plan.PerPage <= 0)
         {
             PageIndex = 1;
         }
         PageIndex = Math.Min(PageIndex, Math.Max(1, plan.PageCount));
         Raise(nameof(PageText));
+        // Build 会就地改写 Working 的纸宽/纸高（FollowsLabel 的那次展开），而 SheetSpec 不带变更通知，
+        // 绑定不会自己回读：不 Raise 一下，界面上还留着用户刚填的旧数，看着就是「改了没反应」。
+        Raise(nameof(Working));
         RaiseCommands();
     }
 
@@ -523,10 +566,10 @@ public sealed class ImpositionViewModel : ObservableObject
         {
             SheetIssues.Add($"{Icon(issue.Severity)} {issue.Message}");
         }
+        AppendSkippedSheetFiles();
         if (!saved) return;
 
-        SheetOptions.Clear();
-        foreach (var spec in _sheetStore.ListAll()) SheetOptions.Add(new SheetOption(spec));
+        ReloadSheetOptions();
         SelectedSheetOption = SheetOptions.FirstOrDefault(s => s.Spec.Id == copy.Id) ?? SelectedSheetOption;
     }
 }

@@ -46,6 +46,8 @@ public sealed class PrintRequest
         if (PageIndexes is null || PageIndexes.Count == 0) issues.Add("没有选中任何一页可打印。");
         if (Copies < 1 || Copies > 99) issues.Add($"份数 {Copies} 不合理（1~99）。");
         if (Plan.PerPage <= 0) issues.Add("纸规放不下任何一枚标签，请先调整拼版设置。");
+        // 页号越界：导出端一直有这一项，打印端上一版漏了（选错页就静默少打）
+        Plan.CollectPageRangeIssues(PageIndexes, issues);
     }
 }
 

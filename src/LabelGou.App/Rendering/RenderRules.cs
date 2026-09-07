@@ -46,10 +46,33 @@ public static class RenderRules
     /// <summary>唛头是单色活，墨色就是黑。</summary>
     public static readonly Brush Ink = Brushes.Black;
 
-    /// <summary>需要人工核对的字段：预览里标红 + 淡红底，让它一眼看得见（打印端不会出现，<c>LayoutEngine</c> 已拦截）。</summary>
+    /// <summary>
+    /// 需要人工核对的字段：红字 + 淡红底，预览/打印/导出五个出口都上。
+    /// <para>为什么打印件上也红着：<c>LabelGou.Core.Layout.LayoutEngine</c> 对 <c>NeedsReview</c> 只标记不拦，
+    /// 真正的闸门是输出前的复核确认（<c>ExportViewModel.PassesReviewGate</c>）——红字红底上纸是 §五-59
+    /// 定的刻意行为：漏网时那张纸上得看得见「这一格没核」，而不是看起来完全正常。</para>
+    /// </summary>
     public static readonly Brush FlagInk = Frozen(new SolidColorBrush(Color.FromRgb(198, 40, 40)));
 
+    /// <summary>待核标记的颜色本体（SVG 出口写 <c>fill</c> 要用十六进制，与 <see cref="FlagInk"/> 同源）。</summary>
+    public static readonly Color FlagColor = Color.FromRgb(198, 40, 40);
+
     public static readonly Brush FlagBackground = Frozen(new SolidColorBrush(Color.FromArgb(28, 198, 40, 40)));
+
+    /// <summary>角线：黑（单色活，裁切参考线不该有别的颜色）。</summary>
+    public static readonly Color CropMarkColor = Color.FromRgb(0, 0, 0);
+
+    /// <summary>套准十字：蓝。与标签内容同色就会在拼版时看不出哪个是对位用的。</summary>
+    public static readonly Color RegistrationColor = Color.FromRgb(0, 120, 200);
+
+    /// <summary>刀模示意线：浅灰，只给预览对位用。</summary>
+    public static readonly Color LabelOutlineColor = Color.FromRgb(170, 170, 170);
+
+    /// <summary>
+    /// 标记颜色写给 SVG 的十六进制（与上面三个 <see cref="Color"/> 同源）。
+    /// <para>第五个出口以前自己手写了一串 <c>"#000000"</c> 当套准色，于是预览里蓝十字、件上黑十字。</para>
+    /// </summary>
+    public static string HexOf(Color color) => $"#{color.R:x2}{color.G:x2}{color.B:x2}";
 
     /// <summary>参考底图（<c>ReferenceOnly</c>）淡显到这个不透明度：看得见、但绝不会误认为要印的东西。</summary>
     public const double ReferenceOpacity = 0.35;

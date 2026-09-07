@@ -110,11 +110,13 @@ public static class BuiltInSheetSpecs
     /// <para>适用于不干胶底纸或“一张纸裁下来就是四枚”的打法；<strong>它不是厂商表里那个“一开四”</strong>
     /// （那是裁切与贴法指令，一张纸只印一枚，见 <see cref="OnePerLabel"/>）。页边与间距都是 0：
     /// 尺寸是 4×(140×100) 刚好铺满，多留 1mm 就排不下 4 枚。</para>
+    /// <para>页边为 0 的代价：角线与套准十字在纸上没有空边带可放，引擎会整角不画并给出告警（不是默默画一半）。
+    /// 要裁切参考线就得把页边留到 <c>CropMarkGapMm + CropMarkLengthMm</c> 以上，那时每页枚数会随之下降。</para>
     /// </summary>
     public static SheetSpec Cut4_280x200()
     {
         var spec = New(IdCut4_280x200, "28×20 一开四（2 × 2 = 4 枚 140×100）",
-            "整张铺满 4 枚 140×100，页边与间距 0；裁切线只画整版四角，中间那一刀沿两枚标签的公共边。", 280, 200, 0, 0);
+            "整张铺满 4 枚 140×100，页边与间距 0；铺满就没有地方画角线与套准十字（会提示你），中间那一刀沿两枚标签的公共边。", 280, 200, 0, 0);
         spec.LabelWidthMm = 140;
         spec.LabelHeightMm = 100;
         spec.Columns = 2;

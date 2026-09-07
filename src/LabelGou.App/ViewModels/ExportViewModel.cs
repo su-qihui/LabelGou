@@ -353,7 +353,7 @@ public sealed class ExportViewModel : ObservableObject
         }
         if (!PassesReviewGate(source))
         {
-            error = "已按复核闸门停下：带「需人工核对」标记的标签未得到确认，不进入打印与导出。";
+            error = "已按出口闸门停下：未确认的字段或未处理的纸规错误还在，不进入打印与导出。";
             return null;
         }
 
@@ -438,7 +438,7 @@ public sealed class ExportViewModel : ObservableObject
         }
         if (!PassesReviewGate(source))
         {
-            StatusText = "打印已按复核闸门停下（未确认的字段不能上机）。";
+            StatusText = "打印已按出口闸门停下（未确认的字段或未处理的纸规错误不能上机）。";
             return;
         }
 
@@ -467,16 +467,39 @@ public sealed class ExportViewModel : ObservableObject
     /// <summary>
     /// §七-11 的硬规矩：带 `NeedsReview` 的字段不得默认上机。数一下有几张，有就请用户点头。
     /// 询问器由 MainWindow 挂上（没挂时视为不阻塞，单测环境就靠这一点）。
+    /// <para>纸规本身的 Error 也走这道门：以前 <c>HasError()</c> 没一处消费 <c>plan.Issues</c>，
+    /// 校验器说「这张纸不行」而五个出口一个都不拦，只看 <c>PerPage</c>。</para>
     /// </summary>
     private bool PassesReviewGate(PageContentSource source)
     {
-        var flagged = source.UnconfirmedLabelCount;
-        if (flagged <= 0) return true;
-        var text = $"这批共 {source.LabelCount} 张标签里，有 {flagged} 张含「需人工核对」的字段（红色标记）。\n\n" +
-                   "唛头数字印错就是真实货损。确认这些字段已经人工核对过了吗？";
+        var text = ComposeGateMessage(source.LabelCount, source.UnconfirmedLabelCount, _owner.Sheet.Plan?.ErrorCount ?? 0);
+        if (text is null) return true;
+
         var accepted = _owner.ConfirmGate?.Invoke(text) ?? true;
-        if (!accepted) AppLog.Info($"复核闸门拦下任务：{flagged}/{source.LabelCount} 张待核对");
+        if (!accepted)
+        {
+            AppLog.Info($"出口闸门拦下任务：{source.UnconfirmedLabelCount}/{source.LabelCount} 张待核对，纸规错误 {_owner.Sheet.Plan?.ErrorCount ?? 0} 条");
+        }
         return accepted;
+    }
+
+    /// <summary>
+    /// 闸门要问的那句话；返回 null 表示没东西要拦，直接放行。
+    /// <para>单独抽成一个静态函数：「纸规错误也进闸门」这件事否则只能靠真开一个打印任务才能验，
+    /// 而本机没实体打印机（§五-70）。</para>
+    /// </summary>
+    public static string? ComposeGateMessage(int labelCount, int flagged, int sheetErrors)
+    {
+        if (flagged <= 0 && sheetErrors <= 0) return null;
+
+        var lines = new List<string>();
+        if (flagged > 0)
+            lines.Add($"这批共 {labelCount} 张标签里，有 {flagged} 张含「需人工核对」的字段（红色标记）。");
+        if (sheetErrors > 0)
+            lines.Add($"整版方案上有 {sheetErrors} 条标成错误的纸规问题（列在第 ④ 步的提示里），件上可能缺线、缺角线或裁错位置。");
+        lines.Add(string.Empty);
+        lines.Add("唛头数字印错就是真实货损。确认这些已经人工过目了吗？");
+        return string.Join("\n", lines);
     }
 
     private bool TryResolveRange(out PageRange? range, out string? error)

@@ -419,6 +419,59 @@ public class SvgInterchangeTests
     });
 
     [Fact]
+    public void TruncatedTextCarriesTheRedBackdropOnEverySvgBranch() => OnStaThread(() =>
+    {
+        // 被省略号截断 = 这一格没印全。预览/打印两者都认（LabelRenderer 认 Flagged || Truncated），
+        // SVG 出口以前只认 Flagged，而且未转曲那条分支在画底之前就 return 了 —— 件子上看着完全正常。
+        var template = new LabelTemplate
+        {
+            Id = "test.svg.truncated",
+            Name = "注定截断的一格",
+            WidthMm = LabelW,
+            HeightMm = LabelH,
+            BorderMm = 0,               // 只留一个元素，下面的 Single() 才有意义
+        };
+        template.Elements.Add(new TemplateElement
+        {
+            Kind = ElementKind.Text,
+            Text = "{{DestinationPort}}",
+            X = 4,
+            Y = 6,
+            Width = 12,
+            Height = 4,
+            FontSizePt = 14,
+            MaxLines = 1,               // 单行不许折行：宽度不够只能缩，缩到下限仍装不下才是「被省略号截断」
+        });
+
+        var record = SampleRecords.StandardSample();
+        var layout = LayoutEngine.Build(template, record, new LayoutContext(1, 1));
+        var fit = TextFit.Solve(layout.Items.OfType<TextItem>().Single(), scale: 1.0, pixelsPerDip: 1.0);
+        Assert.NotNull(fit);
+        Assert.True(fit!.Truncated, "这份夹具没真的截断，那下面比的就是两个没被考验过的分支");
+
+        var plan = ImpositionEngine.Build(Spec(), LabelW, LabelH, 1);
+        var request = Request(plan, new PageContentSource(template, new List<MarkRecord> { record }, "样例.xlsx"));
+
+        static List<XElement> InOrder(XDocument doc) => Layer(doc, "labels").Descendants().ToList();
+        static int BackdropIndex(List<XElement> nodes)
+            => nodes.FindIndex(e => e.Name == Svg + "rect"
+                && ((string?)e.Attribute("fill"))?.StartsWith("#c62828", StringComparison.OrdinalIgnoreCase) == true);
+
+        var outlined = XDocument.Parse(Assert.Single(SheetSvgWriter.WritePage(request, 0, SvgExportOptions.Default)).Xml);
+        Assert.True(BackdropIndex(InOrder(outlined)) >= 0, "转曲那条出口没画淡红底");
+
+        var editable = XDocument.Parse(Assert.Single(SheetSvgWriter.WritePage(request, 0,
+            new SvgExportOptions { TextAsOutlines = false })).Xml);
+        var nodes = InOrder(editable);
+        var backdrop = BackdropIndex(nodes);
+        var text = nodes.FindIndex(e => e.Name == Svg + "text");
+        Assert.True(backdrop >= 0, "未转曲（单行 <text>）那条出口没画淡红底——只有它会把提示弄丢");
+        Assert.True(text >= 0);
+        Assert.True(backdrop < text, "淡红底必须画在字之前，否则会把字整块盖住");
+        return true;
+    });
+
+    [Fact]
     public void ReferenceElementsNeverReachTheSheet() => OnStaThread(() =>
     {
         var asset = WriteTemp("fake", ".png");
@@ -671,13 +724,36 @@ public class SvgInterchangeTests
     public void ExportSvgRefusesTooManyFiles() => OnStaThread(() =>
     {
         var directory = Path.Combine(Path.GetTempPath(), "labelgou-svg-" + Guid.NewGuid().ToString("N"));
-        var plan = ImpositionEngine.Build(Spec(), LabelW, LabelH, SheetExportService.MaxSvgFiles + 50);
-        var outcome = SheetExportService.ExportSvg(Request(plan, SourceOf(FrameTemplate())), directory,
+        // 一页 3 枚，要写出 600 个以上就得 200 页往后；上限判的是“真会写出的文件数”
+        var plan = ImpositionEngine.Build(Spec(), LabelW, LabelH, (SheetExportService.MaxSvgFiles + 20) * 3);
+        var outcome = SheetExportService.ExportSvg(
+            Request(plan, SourceOf(FrameTemplate(), plan.LabelCount), plan.PageCount), directory,
             new SvgExportOptions { Mode = SvgExportMode.PerLabel }, null, CancellationToken.None);
 
         Assert.False(outcome.Success);
         Assert.Contains("上限", outcome.Error);
         Assert.False(Directory.Exists(directory));
+        return true;
+    });
+
+    [Fact]
+    public void ExportSvgCountsTheFilesItActuallyWritesNotTheWholeBatch() => OnStaThread(() =>
+    {
+        // 整批 650 枚（远超上限）但只导第一页：上一版按 LabelCount 算，把这单合法请求也拦下了
+        var directory = Path.Combine(Path.GetTempPath(), "labelgou-svg-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var plan = ImpositionEngine.Build(Spec(), LabelW, LabelH, SheetExportService.MaxSvgFiles + 50);
+            var outcome = SheetExportService.ExportSvg(Request(plan, SourceOf(FrameTemplate()), 1), directory,
+                new SvgExportOptions { Mode = SvgExportMode.PerLabel }, null, CancellationToken.None);
+
+            Assert.True(outcome.Success, outcome.Error);
+            Assert.Equal(plan.PlacementsOnPage(1).Count, Directory.GetFiles(directory, "*.svg").Length);
+        }
+        finally
+        {
+            try { Directory.Delete(directory, recursive: true); } catch (IOException) { }
+        }
         return true;
     });
 

@@ -30,14 +30,7 @@ public sealed class SheetExportRequest
         if (Dpi < 72 || Dpi > 2400) issues.Add($"DPI {Dpi} 超出可用范围（72~2400）。");
         if (string.IsNullOrWhiteSpace(BaseName)) issues.Add("文件名不能为空。");
         if (Plan.PerPage <= 0) issues.Add("纸规放不下任何一枚标签，请先调整拼版设置。");
-        foreach (var index in PageIndexes ?? Array.Empty<int>())
-        {
-            if (index < 0 || index >= Math.Max(1, Plan.PageCount))
-            {
-                issues.Add($"页序号 {index + 1} 超出整版页数（共 {Plan.PageCount} 页）。");
-                break;
-            }
-        }
+        Plan.CollectPageRangeIssues(PageIndexes, issues);
     }
 
     public int SheetWidthPx => PageRasterizer.PixelsForMillimetres(Plan.PageWidthMm, Dpi);
@@ -226,8 +219,9 @@ public static class SheetExportService
         var reminders = new List<string>();
         options.CollectIssues(reminders);
 
+        // 一枚一图时数的是“真会写出几个文件”：只导两页却按整批 LabelCount 算上限，会把合法请求误拦下
         var totalFiles = options.Mode == SvgExportMode.PerLabel
-            ? request.Plan.LabelCount
+            ? request.PageIndexes.Sum(i => request.Plan.PlacementsOnPage(i + 1).Count)
             : request.PageIndexes.Count;
         if (totalFiles > MaxSvgFiles)
         {

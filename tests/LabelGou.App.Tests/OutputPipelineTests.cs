@@ -4,6 +4,7 @@ using System.Windows.Media.Imaging;
 using LabelGou.App.Export;
 using LabelGou.App.Printing;
 using LabelGou.App.Rendering;
+using LabelGou.App.ViewModels;
 using LabelGou.Core.Export;
 using LabelGou.Core.Impos;
 using LabelGou.Core.Layout;
@@ -428,6 +429,77 @@ public class OutputPipelineTests
         {
             try { if (Directory.Exists(folder)) Directory.Delete(folder, true); } catch { /* 测试产物删不掉不影响结论 */ }
         }
+    }
+
+    // ---------- 整版上不许多出来的东西（批次二） ----------
+
+    /// <summary>一个什么都不画的模板：纸面上除了拼版辅助线不该有第二样东西。</summary>
+    private static LabelTemplate BlankTemplate() => new()
+    {
+        Id = "test.blank",
+        Name = "空白模板",
+        WidthMm = LabelW,
+        HeightMm = LabelH,
+        BorderMm = 0,
+        CropMarkMm = 0,
+    };
+
+    private static PageContentSource BlankSource(int labelCount)
+        => new(BlankTemplate(), Enumerable.Range(1, labelCount).Select(_ => SampleRecords.StandardSample()).ToList(), "样例.xlsx");
+
+    [Fact]
+    public void 整版不给每枚标签铺白底也不描那圈灰框() => OnStaThread(() =>
+    {
+        // LabelRenderer 那 1DIU 的 (160,160,160) 灰框是单枚预览用的；整版一铺就有两个后果：
+        // 打印/PDF/PNG 上多一道脏线（SVG 出口又没有），而且标签矩形内的套准十字被盖掉。
+        var plan = ImpositionEngine.Build(Spec(), LabelW, LabelH, 4);
+        var bitmap = PageRasterizer.RenderPage(plan, 1, 150, BlankSource(4).AsProvider(), false, PageRenderPurpose.Image, false);
+        var pixels = Read(bitmap);
+        var width = bitmap.PixelWidth;
+        var gray = 0;
+        for (var y = 0; y < bitmap.PixelHeight; y++)
+        {
+            for (var x = 0; x < width; x++)
+            {
+                var i = (y * width + x) * 4;
+                if (Math.Abs(pixels[i] - 160) < 26 && Math.Abs(pixels[i + 1] - 160) < 26 && Math.Abs(pixels[i + 2] - 160) < 26) gray++;
+            }
+        }
+
+        Assert.Equal(0, gray);
+        return true;
+    });
+
+    [Fact]
+    public void 打印请求也拦页号越界()
+    {
+        // 导出端一直有这一项，打印端上一版漏了：选错页会静默少打
+        var plan = ImpositionEngine.Build(Spec(), LabelW, LabelH, 4);
+        var request = new PrintRequest
+        {
+            Plan = plan,
+            Source = Source(4),
+            PageIndexes = new[] { plan.PageCount },       // 页号 0 起始 → 这一页不存在
+        };
+
+        var issues = new List<string>();
+        request.CollectIssues(issues);
+
+        Assert.Contains(issues, i => i.Contains("超出整版页数", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void 纸规错误也写进出闸门的文案()
+    {
+        Assert.Null(ExportViewModel.ComposeGateMessage(10, 0, 0));
+
+        var onlySheetErrors = ExportViewModel.ComposeGateMessage(10, 0, 2);
+        Assert.NotNull(onlySheetErrors);
+        Assert.Contains("2 条标成错误的纸规", onlySheetErrors, StringComparison.Ordinal);
+
+        var both = ExportViewModel.ComposeGateMessage(10, 3, 2);
+        Assert.Contains("3 张含「需人工核对」", both!, StringComparison.Ordinal);
+        Assert.Contains("2 条标成错误的纸规", both!, StringComparison.Ordinal);
     }
 
     private static byte[] Read(RenderTargetBitmap bitmap)

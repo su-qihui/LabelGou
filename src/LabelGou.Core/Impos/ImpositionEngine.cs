@@ -120,6 +120,25 @@ public sealed class SheetPlan
     public IReadOnlyList<LabelPlacement> PlacementsOnPage(int pageIndex)
         => Placements.Where(p => p.PageIndex == pageIndex).ToList();
 
+    /// <summary>纸规/拼版里的 Error 条数。出口前的闸门要用它（以前 <c>HasError()</c> 没一处消费 <c>plan.Issues</c>）。</summary>
+    public int ErrorCount => Issues.Count(i => i.Severity == IssueLevel.Error);
+
+    /// <summary>
+    /// 页号越界检查（页号统一 0 起始）。
+    /// <para>打印与导出共用同一句文案：上一版只有导出端查、打印端没查，选错页会静默少打。</para>
+    /// </summary>
+    public void CollectPageRangeIssues(IReadOnlyList<int>? pageIndexes, IList<string> issues)
+    {
+        foreach (var index in pageIndexes ?? Array.Empty<int>())
+        {
+            if (index < 0 || index >= Math.Max(1, PageCount))
+            {
+                issues.Add($"页序号 {index + 1} 超出整版页数（共 {PageCount} 页）。");
+                break;
+            }
+        }
+    }
+
     /// <summary>一句话总结，直接给状态栏用。</summary>
     public string Describe()
     {
@@ -163,8 +182,22 @@ public static class ImpositionEngine
         // 所以就地改写不会把下拉清单里的那一项尺寸带跑。
         if (spec.FollowsLabel && labelWidthMm > Eps && labelHeightMm > Eps)
         {
-            spec.PaperWidthMm = labelWidthMm + spec.MarginLeftMm + spec.MarginRightMm;
-            spec.PaperHeightMm = labelHeightMm + spec.MarginTopMm + spec.MarginBottomMm;
+            // 页边四个值是贴在「有效框」的两个轴上的（UsableWidthMm = EffectivePaperWidth - 左右边距），
+            // 横向用纸时这两个轴对调了：有效框的宽来自 PaperHeightMm，不是 PaperWidthMm。
+            // 上一版不区分 Landscape 就直接把标签宽加左右边距写进 PaperWidthMm，于是非对称页边时
+            // 算出的纸面跟标签轴向正好错开 90°，每页 0 枚 —— 预览与打印出一张白纸。
+            var across = labelWidthMm + spec.MarginLeftMm + spec.MarginRightMm;
+            var down = labelHeightMm + spec.MarginTopMm + spec.MarginBottomMm;
+            if (spec.Landscape)
+            {
+                spec.PaperHeightMm = across;
+                spec.PaperWidthMm = down;
+            }
+            else
+            {
+                spec.PaperWidthMm = across;
+                spec.PaperHeightMm = down;
+            }
         }
 
         var issues = new List<TemplateIssue>(SheetSpecValidator.Validate(spec, labelWidthMm, labelHeightMm));
@@ -229,7 +262,7 @@ public static class ImpositionEngine
 
         var placements = Place(grid, spec, labelCount);
 
-        return new SheetPlan
+        var plan = new SheetPlan
         {
             Spec = spec,
             Grid = grid,
@@ -241,6 +274,39 @@ public static class ImpositionEngine
             AlternativeRotated = other.Rotated,
             Issues = issues,
         };
+
+        // 辅助线画不画得出来，取决于第 1 页的空白边带够不够（每页几何一样，不必逐页报）。
+        // 这一步必须排在 plan 算好之后，因为要拿真实落位当遮挡物来判；
+        // 报在这里而不是让它静默发生在渲染端，是为了让界面那列 issue 能解释「为什么纸上没有十字」。
+        foreach (var note in BuildMarkNotes(spec, plan, 1))
+            issues.Add(new TemplateIssue(IssueLevel.Warning, note));
+
+        return plan;
+    }
+
+    /// <summary>
+    /// 这一页的套准十字为什么没画全。<see cref="BuildMarks"/> 与 <see cref="Build"/> 共用同一份判据，
+    /// 避免「引擎少画了线、界面却说没事」两套说法。
+    /// <para>角线的余量问题不在这里报：它不依赖本页落位（页边与角线参数就够了），由
+    /// <see cref="SheetSpecValidator.Validate"/> 一次报清，省得同一条问题在 issue 列表里出现两次。</para>
+    /// </summary>
+    private static IEnumerable<string> BuildMarkNotes(SheetSpec spec, SheetPlan plan, int pageIndex)
+    {
+        if (!spec.RegistrationMarks) yield break;
+
+        var placements = plan.PlacementsOnPage(pageIndex);
+        if (placements.Count == 0) yield break;
+
+        var covered = CountCoveredCorners(spec, placements);
+        if (covered == 0) yield break;
+
+        var paperW = spec.EffectivePaperWidthMm;
+        var paperH = spec.EffectivePaperHeightMm;
+        var band = Math.Min(
+            Math.Min(placements.Min(p => p.X), paperW - placements.Max(p => p.X + p.Width)),
+            Math.Min(placements.Min(p => p.Y), paperH - placements.Max(p => p.Y + p.Height)));
+        yield return $"有 {covered} 个角的套准十字位置被标签占着（十字要 " +
+            $"{spec.RegistrationInsetMm + spec.RegistrationSizeMm / 2:0.#} mm 的空白边带，纸面只比标签多 {band:0.#} mm），这几个角没画 —— 套准标记不该落在印面上。";
     }
 
     /// <summary>纸规自带标签尺寸时以纸规为准（它代表刀模，物理尺寸不可违），否则跟随模板。</summary>
@@ -347,13 +413,18 @@ public static class ImpositionEngine
                 // 外接矩形按本页实际内容算：末页只有一半标签时，裁切线跟着缩，不会裁到空处
                 double minX = placements.Min(p => p.X), maxX = placements.Max(p => p.X + p.Width);
                 double minY = placements.Min(p => p.Y), maxY = placements.Max(p => p.Y + p.Height);
-                AddCornerMarks(marks, minX, minY, maxX, maxY, spec);
+                AddCornerMarks(marks, minX, minY, maxX, maxY, spec,
+                    CornerBudget(minX, minY, maxX, maxY, paperW, paperH, spec.CropMarkGapMm));
                 break;
             }
             case CropMarkMode.EveryLabel:
                 foreach (var p in placements)
                 {
-                    AddCornerMarks(marks, p.X, p.Y, p.X + p.Width, p.Y + p.Height, spec);
+                    // 相邻两枚各自向外画，能用的宽度只对半算（校验器已对间距不足给过告警）
+                    var limit = Math.Min(
+                        CornerBudget(p.X, p.Y, p.X + p.Width, p.Y + p.Height, paperW, paperH, spec.CropMarkGapMm),
+                        Math.Min(spec.GutterXMm, spec.GutterYMm) / 2 - spec.CropMarkGapMm);
+                    AddCornerMarks(marks, p.X, p.Y, p.X + p.Width, p.Y + p.Height, spec, limit);
                 }
                 break;
         }
@@ -372,6 +443,9 @@ public static class ImpositionEngine
             };
             foreach (var (cx, cy) in corners)
             {
+                // 十字是给操作员对纸用的，落在标签印面上只会污染画面（而且下一层白底一铺就看不见了）：
+                // 哪个角被标签占着就整角不画，原因由 BuildMarkNotes 进 issue 列表。
+                if (CoveredByLabel(placements, cx - size / 2, cy - size / 2, cx + size / 2, cy + size / 2)) continue;
                 marks.Add(new SheetMarkLine(SheetMarkKind.RegistrationMark, cx - size / 2, cy, cx + size / 2, cy, thickness));
                 marks.Add(new SheetMarkLine(SheetMarkKind.RegistrationMark, cx, cy - size / 2, cx, cy + size / 2, thickness));
             }
@@ -380,12 +454,51 @@ public static class ImpositionEngine
         return marks;
     }
 
-    /// <summary>给一个矩形区域补四条角线（每角两段，全部向外，越出纸张的部分自动夹回来）。</summary>
-    private static void AddCornerMarks(List<SheetMarkLine> marks, double left, double top, double right, double bottom, SheetSpec spec)
+    /// <summary>一段角线短到这个数以下就没意义了（1mm 在打印店那张纸上只是一粒墨）。</summary>
+    private const double MinCornerSegmentMm = 1.5;
+
+    /// <summary>十字/角线这一段是否被某一枚标签的矩形占住（留 0.05mm 容差避开共边误判）。</summary>
+    private static bool CoveredByLabel(IReadOnlyList<LabelPlacement> placements, double left, double top, double right, double bottom)
+    {
+        const double pad = 0.05;
+        return placements.Any(p =>
+            left < p.X + p.Width - pad && right > p.X + pad &&
+            top < p.Y + p.Height - pad && bottom > p.Y + pad);
+    }
+
+    /// <summary>四个角里有多少个套准十字没地方放。</summary>
+    private static int CountCoveredCorners(SheetSpec spec, IReadOnlyList<LabelPlacement> placements)
+    {
+        var paperW = spec.EffectivePaperWidthMm;
+        var paperH = spec.EffectivePaperHeightMm;
+        var half = spec.RegistrationSizeMm / 2;
+        var inset = spec.RegistrationInsetMm;
+        var xLeft = inset + half;
+        var xRight = paperW - inset - half;
+        var yTop = inset + half;
+        var yBottom = paperH - inset - half;
+        return new[] { (xLeft, yTop), (xRight, yTop), (xLeft, yBottom), (xRight, yBottom) }
+            .Count(c => CoveredByLabel(placements, c.Item1 - half, c.Item2 - half, c.Item1 + half, c.Item2 + half));
+    }
+
+    /// <summary>
+    /// 整版四角角线能用的最长一段：四边里最窄的那条空白带（已经扣过与标签边缘的间隙）。
+    /// <para>这个值是主动收短 <c>len</c> 的依据，不再靠 <see cref="Clamp"/> 把线夹成看不见的尾巴。</para>
+    /// </summary>
+    private static double CornerBudget(double left, double top, double right, double bottom,
+        double paperW, double paperH, double gap)
+        => Math.Max(0, Math.Min(Math.Min(left - gap, paperW - right - gap),
+            Math.Min(top - gap, paperH - bottom - gap)));
+
+    /// <summary>给一个矩形区域补四条角线（每角两段，全部向外）。</summary>
+    /// <param name="lenLimit">单段可用上限（毫米）：由外缘空白带算出，不够长就主动收短而不是被纸张边界夹掉。</param>
+    private static void AddCornerMarks(List<SheetMarkLine> marks, double left, double top, double right, double bottom,
+        SheetSpec spec, double lenLimit)
     {
         if (spec.CropMarkLengthMm <= 0) return;
 
-        var len = spec.CropMarkLengthMm;
+        var len = Math.Min(spec.CropMarkLengthMm, lenLimit);
+        if (len < MinCornerSegmentMm) return;
         var gap = spec.CropMarkGapMm;
         var thickness = spec.CropMarkThicknessMm <= 0 ? 0.15 : spec.CropMarkThicknessMm;
         var paperW = spec.EffectivePaperWidthMm;
