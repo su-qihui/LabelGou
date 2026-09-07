@@ -1,0 +1,219 @@
+<Window x:Class="LabelGou.App.RecognitionReviewWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="识别结果核对 · 机器给的一切都要人点过头，才算数据"
+        Width="1240" Height="780"
+        MinWidth="900" MinHeight="520"
+        FontFamily="Microsoft YaHei" FontSize="12.5"
+        Background="#F4F6F8"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
+
+    <Window.Resources>
+        <!--
+            样式在本窗口内自带一份（与 TemplateImportWindow 同一个理由）：
+            App.xaml 的资源只有 Application.Current 存在时才能解析，
+            而独立窗口必须能在没有 Application 的环境里被加载（单测就是这么加载它的）。
+        -->
+        <Style TargetType="TextBlock" x:Key="StepTitle">
+            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="Foreground" Value="#1A3A5C" />
+        </Style>
+        <Style TargetType="TextBlock" x:Key="Hint">
+            <Setter Property="Foreground" Value="#666666" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+            <Setter Property="FontSize" Value="11" />
+        </Style>
+    </Window.Resources>
+
+    <DockPanel Margin="10">
+
+        <!-- 顶部：这一批到底走了哪几路。通道降级和「数据出网」提醒常驻，不给用户看不清的机会 -->
+        <Border DockPanel.Dock="Top" Background="#E8F0F8" BorderBrush="#C6D8EA" BorderThickness="1"
+                Padding="8,5" Margin="0,0,0,8">
+            <TextBlock Text="{Binding ChannelLine}" TextWrapping="Wrap" Foreground="#1A3A5C" />
+        </Border>
+
+        <!-- 底部：告警文本 + 状态 + 动作。窗口内不弹 MessageBox（§七-13） -->
+        <StackPanel DockPanel.Dock="Bottom" Margin="0,8,0,0">
+            <TextBlock Text="{Binding ErrorText}" Foreground="#B00020" TextWrapping="Wrap" Margin="0,0,0,6">
+                <TextBlock.Style>
+                    <Style TargetType="TextBlock">
+                        <Setter Property="Visibility" Value="Visible" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding ErrorText}" Value="">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </TextBlock.Style>
+            </TextBlock>
+            <Grid>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Center">
+                    <Button Content="批量确认有把握项" Command="{Binding BulkConfirmCommand}"
+                            ToolTip="只放行「两通道一致 + 原文命中 + 无告警」的行；不一致或查无原文的一律不放行" />
+                    <Button Content="打开原文件" Command="{Binding OpenSourceCommand}" Margin="6,0,0,0" />
+                    <TextBlock Text="{Binding StatusLine}" Style="{StaticResource Hint}" VerticalAlignment="Center"
+                               Margin="10,0,0,0" TextWrapping="Wrap" MaxWidth="620" />
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button Content="关闭" Command="{Binding CloseCommand}" IsCancel="True" />
+                    <Button Content="导入这一份（已核对完）" Command="{Binding ImportBatchCommand}" FontWeight="Bold"
+                            Margin="6,0,0,0"
+                            ToolTip="这份文档全部字段都确认过了才会亮；没核完就导入等于绕过闸门" />
+                </StackPanel>
+            </Grid>
+        </StackPanel>
+
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="210" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="330" />
+            </Grid.ColumnDefinitions>
+
+            <!-- 左：一份文档一项 -->
+            <GroupBox Grid.Column="0" Margin="0,0,8,0">
+                <GroupBox.Header>
+                    <TextBlock Text="识别了哪些文档" Style="{StaticResource StepTitle}" />
+                </GroupBox.Header>
+                <ListBox x:Name="BatchList" ItemsSource="{Binding Batches}" SelectedItem="{Binding SelectedBatch}"
+                         HorizontalContentAlignment="Stretch" BorderThickness="0" FontSize="11.5">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <StackPanel Margin="2,3">
+                                <TextBlock Text="{Binding SourceName}" TextTrimming="CharacterEllipsis" FontWeight="Bold" />
+                                <TextBlock Text="{Binding ChannelText}" Style="{StaticResource Hint}" />
+                                <TextBlock Text="{Binding PendingText}" Foreground="#B06000" />
+                                <TextBlock Text="{Binding HotText}" Foreground="#B00020" />
+                                <TextBlock Text="{Binding BlockedReason}" Style="{StaticResource Hint}" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                    <ListBox.ItemContainerStyle>
+                        <Style TargetType="ListBoxItem">
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding Imported}" Value="True">
+                                    <Setter Property="Opacity" Value="0.45" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </ListBox.ItemContainerStyle>
+                </ListBox>
+            </GroupBox>
+
+            <!-- 中：字段表。这是整个窗口的主战场 -->
+            <GroupBox Grid.Column="1" Margin="0,0,8,0">
+                <GroupBox.Header>
+                    <TextBlock Text="逐字段核对（改值会自动退回待核；勾上「已核对」才允许导入）"
+                               Style="{StaticResource StepTitle}" />
+                </GroupBox.Header>
+                <DataGrid x:Name="FieldGrid"
+                          ItemsSource="{Binding Rows}"
+                          SelectedItem="{Binding SelectedRow}"
+                          AutoGenerateColumns="False"
+                          CanUserAddRows="False"
+                          CanUserDeleteRows="False"
+                          CanUserReorderColumns="False"
+                          HeadersVisibility="Column"
+                          GridLinesVisibility="Horizontal"
+                          SelectionUnit="FullRow"
+                          RowHeaderWidth="0"
+                          FontSize="11.5">
+                    <DataGrid.RowStyle>
+                        <Style TargetType="DataGridRow">
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsPending}" Value="True">
+                                    <Setter Property="Background" Value="#FFF9E6" />
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding IsHot}" Value="True">
+                                    <Setter Property="Background" Value="#FFEDEDED" />
+                                    <Setter Property="Foreground" Value="#8A0018" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </DataGrid.RowStyle>
+                    <DataGrid.Columns>
+                        <DataGridCheckBoxColumn Header="已核对" Width="56"
+                                                Binding="{Binding Confirmed, UpdateSourceTrigger=PropertyChanged}" />
+                        <DataGridTextColumn Header="字段" Binding="{Binding ChineseName}" IsReadOnly="True" Width="92" />
+                        <DataGridTextColumn Header="要印的值（可改）" Binding="{Binding Value, UpdateSourceTrigger=PropertyChanged}" Width="170" />
+                        <DataGridTextColumn Header="文本层读到" Binding="{Binding TextChannelValue}" IsReadOnly="True" Width="150" />
+                        <DataGridTextColumn Header="模型读到" Binding="{Binding ModelValue}" IsReadOnly="True" Width="150" />
+                        <DataGridTextColumn Header="两通道" Binding="{Binding AgreementText}" IsReadOnly="True" Width="62" />
+                        <DataGridTextColumn Header="证据" Binding="{Binding EvidenceText}" IsReadOnly="True" Width="110" />
+                        <DataGridTextColumn Header="置信" Binding="{Binding ConfidenceText}" IsReadOnly="True" Width="56" />
+                        <DataGridTextColumn Header="为什么要看一眼 / 怎么改的" Binding="{Binding NoteText}" IsReadOnly="True" Width="*" />
+                    </DataGrid.Columns>
+                </DataGrid>
+            </GroupBox>
+
+            <!-- 右：原图 + 原文 + 通道过程。核对照着这三样，不用离开窗口去翻文件 -->
+            <Grid Grid.Column="2">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="150" />
+                </Grid.RowDefinitions>
+
+                <GroupBox Grid.Row="0" Margin="0,0,0,8">
+                    <GroupBox.Header>
+                        <TextBlock Text="原图（只为对答案，不参与排版）" Style="{StaticResource StepTitle}" />
+                    </GroupBox.Header>
+                    <Grid Height="200">
+                        <Image Source="{Binding PreviewImage}" Stretch="Uniform" />
+                        <TextBlock Text="这一份没有可显示的原图：Word 文档走正文直读，或图片读不出来。"
+                                   TextWrapping="Wrap"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock" BasedOn="{StaticResource Hint}">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding PreviewImage}" Value="{x:Null}">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </Grid>
+                </GroupBox>
+
+                <GroupBox Grid.Row="1" Margin="0,0,0,8">
+                    <GroupBox.Header>
+                        <TextBlock Text="文本层原文（点左表某行会跳到这里）" Style="{StaticResource StepTitle}" />
+                    </GroupBox.Header>
+                    <DockPanel>
+                        <TextBlock DockPanel.Dock="Top" Text="{Binding SelectedFieldHint}" Style="{StaticResource Hint}"
+                                   TextWrapping="Wrap" Margin="0,0,0,4" />
+                        <ListBox x:Name="EvidenceList" ItemsSource="{Binding EvidenceLines}"
+                                 SelectedIndex="{Binding SelectedEvidenceIndex, Mode=OneWay}"
+                                 FontSize="11" BorderThickness="0"
+                                 ScrollViewer.HorizontalScrollBarVisibility="Auto">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding}" />
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </DockPanel>
+                </GroupBox>
+
+                <GroupBox Grid.Row="2">
+                    <GroupBox.Header>
+                        <TextBlock Text="通道过程与告警" Style="{StaticResource StepTitle}" />
+                    </GroupBox.Header>
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <ItemsControl ItemsSource="{Binding ChannelLines}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding}" TextWrapping="Wrap" Margin="0,1,0,1" FontSize="11" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                </GroupBox>
+            </Grid>
+        </Grid>
+    </DockPanel>
+</Window>

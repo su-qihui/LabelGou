@@ -4,6 +4,7 @@ using System.IO;
 using System.Windows;
 using LabelGou.App.Export;
 using LabelGou.App.Mvvm;
+using LabelGou.App.Services;
 using LabelGou.Core.Data;
 using LabelGou.Core.Layout;
 using LabelGou.Core.Mapping;
@@ -786,4 +787,49 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
 
     /// <summary>调试/自动化用：当前告警。</summary>
     public IReadOnlyList<MappingIssue> CurrentIssues => _mappingIssues;
+
+    // ---------- M6：识别结果接入 ----------
+
+    /// <summary>状态栏文案（识别这类长流程由界面回报进度；业务分支自己改它）。</summary>
+    public void ReportStatus(string message) => StatusMessage = message;
+
+    /// <summary>
+    /// 把核对完的识别记录接进来当数据源。<b>表格链路随之停用</b>，直到用户重新「打开数据文件」。
+    /// <para>为什么是替换而不是追加：一条唛头记录只能有一个来源，混着 Excel 与识别结果会让
+    /// 「这条数据是谁给的」这个问题失去答案，而 M3 的打印闸门、事后追责都要问它。</para>
+    /// <para>未确认的字段已经带着 <see cref="MarkValue.NeedsReview"/> 写进记录，所以接进来之后
+    /// <see cref="AiGateBlocked"/> 会自己亮起来 —— 这里不再判第二遍。</para>
+    /// </summary>
+    public void AdoptRecognizedRecords(IReadOnlyList<MarkRecord> records, string sourceDescription)
+    {
+        if (records is null || records.Count == 0) return;
+
+        _data = null;
+        _working = null;
+        PreviewTable = null;
+        Raise(nameof(PreviewTable));
+
+        ColumnOptions = new ObservableCollection<ColumnOption>();
+        Raise(nameof(ColumnOptions));
+        FieldRows.Clear();
+        Sheets.Clear();
+        _selectedSheet = null;
+        Raise(nameof(SelectedSheet));
+        IssueLines.Clear();
+
+        _rawRecords = records;
+        _mappingIssues = Array.Empty<MappingIssue>();
+        SourcePath = null;      // 记录不再来自某个表格文件；数据路径框留空，说明写在 HeaderInfoText 里
+
+        AiGateBlocked = _rawRecords.Any(r => r.PendingReview().Any());
+        HeaderInfoText = $"记录来自智能识别：{sourceDescription}（{records.Count} 条）· 表格映射已暂停";
+        StatusMessage = AiGateBlocked
+            ? $"已接入 {records.Count} 条识别记录，其中仍有未核对字段 —— 打印会被闸门拦下，请回到核对窗口确认。"
+            : $"已接入 {records.Count} 条识别记录（全部已人工核对），可以预览与打印。";
+
+        Raise(nameof(RecordTotal));
+        Raise(nameof(HasData));
+        Sheet.RefreshFromSource();
+        AppLog.Info($"接入识别记录 {records.Count} 条：{sourceDescription}");
+    }
 }

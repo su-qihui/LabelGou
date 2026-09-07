@@ -1,6 +1,8 @@
 using System.IO;
+using System.Threading;
 using System.Windows;
 using System.Windows.Input;
+using LabelGou.App.Services.Recognition;
 using LabelGou.App.ViewModels;
 using LabelGou.Core.Editing;
 using LabelGou.Core.Templates;
@@ -198,6 +200,90 @@ public partial class MainWindow : Window
         Services.AppLog.Info($"底稿导入完成并选中：{template.Name}（{template.Elements.Count} 个元素）");
     }
 
+    // ---------- M6：智能识别单据（图片 / Word） ----------
+
+    private bool _recognizing;
+
+    /// <summary>
+    /// 识别入口。三条现场约束决定了它的形状：
+    /// ① 大模型一张约 34 秒，所以必须能中途取消（<see cref="RecognitionProgressWindow"/>）；
+    /// ② 跑着的时候不许再点一次（<see cref="_recognizing"/> 重入锁，两张单子撞在一起只会互相盖结果）；
+    /// ③ 识别结果不直接进数据源 —— 先过核对窗口逐条确认（定案 D13），没核完的不允许接进来。
+    /// </summary>
+    private async void OnRecognizeClick(object sender, RoutedEventArgs e)
+    {
+        if (_recognizing)
+        {
+            _viewModel.ReportStatus("识别还在跑，先等它结束或点取消。");
+            return;
+        }
+
+        var dialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "选择工厂发来的单据（照片 / 截图 / Word）",
+            Filter = RecognitionService.OpenFilter,
+            Multiselect = true,
+        };
+        if (dialog.ShowDialog(this) != true) return;
+
+        _recognizing = true;
+        RecognitionRun? run = null;
+        using var cts = new CancellationTokenSource();
+        var progressWindow = new RecognitionProgressWindow { Owner = this };
+        progressWindow.CancelRequested += () => cts.Cancel();
+
+        try
+        {
+            var progress = new Progress<string>(message =>
+            {
+                progressWindow.Report(message);
+                _viewModel.ReportStatus(message);
+            });
+
+            var task = RecognitionService.RunAsync(dialog.FileNames, RecognitionSettings.Load(), progress, cts.Token);
+            // 跑完（或取消后停下来）就自己收窗，不靠用户去点——续接里只碰 UI，不抛新异常
+            _ = task.ContinueWith(_ => progressWindow.Complete("识别结束，正在打开核对窗口…"),
+                CancellationToken.None, TaskContinuationOptions.OnlyOnRanToCompletion, TaskScheduler.Default);
+            _ = task.ContinueWith(_ => progressWindow.Complete("识别已停下来。"),
+                CancellationToken.None, TaskContinuationOptions.NotOnRanToCompletion, TaskScheduler.Default);
+
+            progressWindow.ShowDialog();      // 用户提前关掉也只是触发取消，后台会自己停下来
+            run = await task;
+        }
+        catch (Exception ex)
+        {
+            Services.AppLog.Error("识别流程异常", ex);
+            MessageBox.Show(this, "识别没能跑完：" + ex.Message, "智能识别",
+                MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+        finally
+        {
+            _recognizing = false;
+            if (progressWindow.IsLoaded) progressWindow.Close();
+        }
+
+        if (run is null) return;
+        if (run.Batches.Count == 0)
+        {
+            _viewModel.ReportStatus(run.Warnings.Count > 0 ? string.Join("；", run.Warnings) : "没有可识别的文件。");
+            return;
+        }
+
+        var review = new RecognitionReviewViewModel(run);
+        var reviewWindow = new RecognitionReviewWindow(review) { Owner = this };
+        reviewWindow.ShowDialog();            // “导入这一份”才是提交动作；关窗不会撤销已经导入过的记录
+
+        if (!reviewWindow.AnyImported)
+        {
+            _viewModel.ReportStatus("识别结果一份也没导入，当前数据源没变（未核对的东西不允许当数据用）。");
+            return;
+        }
+
+        _viewModel.AdoptRecognizedRecords(reviewWindow.ImportedRecords, string.Join("、", review.ImportedNames));
+        var leftover = reviewWindow.LeftoverSummary;
+        if (leftover.Length > 0) _viewModel.ReportStatus($"已接入记录；另有 {leftover}。");
+    }
+
     private void OnExportTemplateClick(object sender, RoutedEventArgs e)
     {
         var template = _viewModel.SelectedTemplate?.Template;
@@ -265,16 +351,28 @@ public partial class MainWindow : Window
     private void SheetFitNow() => _viewModel.FitSheetTo(SheetHost.ActualWidth, SheetHost.ActualHeight);
 
     private const string AboutText =
-        "LabelGou ·唛头标签助手 v0.5.0（M5）\n\n" +
+        "LabelGou ·唛头标签助手 v0.6.0（M6）\n\n" +
         "面向打印店 / 印刷厂的唛头标签自动化工具。\n" +
-        "当前进度 M5：Excel/CSV 导入 → 字段映射 → 套模板（内置的、自己拖的、从 CorelDRAW/Illustrator 导出的 SVG 底稿导入的）"
-        + "→ 件号规则编号 → 整版拼版 → 预览 → 直连打印 / PDF / PNG / TIFF / SVG。\n\n" +
+        "当前进度 M6：Excel/CSV 导入 → 字段映射 → 套模板（内置的、自己拖的、从 CorelDRAW/Illustrator 导出的 SVG 底稿导入的）"
+        + "→ 件号规则编号 → 整版拼版 → 预览 → 直连打印 / PDF / PNG / TIFF / SVG；"
+        + "还能把单据照片 / 截图 / Word 单据识别成记录（本地 OCR + 本机大模型双通道交叉校验）。\n\n" +
+        "识别结果逐条人工核对过才算数据：没核完的字段会被标红，并且不给导入、不给打印。\n" +
+        "识别通道开关、模型端点与超时现在要看 %APPDATA%\\LabelGou\\recognition.json（默认只连本机），界面上还没做设置页。\n" +
         "与店里的 CorelDRAW 对接：看安装目录下 tools\\cdr 的说明与批量导出宏。\n" +
-        "后续里程碑：M6 AI Agent 文档识别、M7 AI 智能排版、M8 打磨发布。\n\n" +
+        "后续里程碑：M7 AI 智能排版、M8 打磨发布。\n\n" +
         "开发计划与进度详见 labelgou-word 目录下的文档。授权：MIT。";
 
     protected override void OnPreviewKeyDown(KeyEventArgs e)
     {
+        // Ctrl+Shift+R：识别入口。Ctrl+O 已经被「打开数据文件」占了，不再抢一个键
+        if (e.Key == Key.R && Keyboard.Modifiers.HasFlag(ModifierKeys.Control)
+            && Keyboard.Modifiers.HasFlag(ModifierKeys.Shift))
+        {
+            OnRecognizeClick(this, new RoutedEventArgs());
+            e.Handled = true;
+            return;
+        }
+
         if (e.Key == Key.O && Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
         {
             if (_viewModel.OpenFileCommand.CanExecute(null)) _viewModel.OpenFileCommand.Execute(null);

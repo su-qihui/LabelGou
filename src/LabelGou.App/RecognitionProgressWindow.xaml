@@ -1,0 +1,35 @@
+<Window x:Class="LabelGou.App.RecognitionProgressWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="正在识别 · 大模型一张约 34 秒，可以中途取消"
+        Width="520" Height="180"
+        FontFamily="Microsoft YaHei" FontSize="12.5"
+        Background="#F4F6F8" ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
+
+    <!--
+        为什么要有这个窗口而不是让主界面转圈：模型一张 34 秒，五张图三分多钟，
+        没有取消按钮用户只能强杀进程（§五-11：弱网/连不上时必须能停下来而不是卡死）。
+        窗口内不弹 MessageBox，进度与原因都写在这一行字上（§七-13）。
+    -->
+    <Grid Margin="14">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0" x:Name="StatusText" Text="准备中…" TextWrapping="Wrap" />
+
+        <ProgressBar Grid.Row="1" x:Name="Bar" IsIndeterminate="True" Height="10" Margin="0,10,0,0" />
+
+        <TextBlock Grid.Row="2" x:Name="NoteText" Margin="0,10,0,0"
+                   Foreground="#666666" FontSize="11" TextWrapping="Wrap"
+                   Text="本地 OCR 是毫秒级的，慢的是大模型（本机实测约 34 秒 / 张）。等不及可以先取消，只拿本地 OCR 的结果去核对。" />
+
+        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button x:Name="CancelButton" Content="取消" Width="88" Click="OnCancelClick" IsCancel="True" />
+        </StackPanel>
+    </Grid>
+</Window>

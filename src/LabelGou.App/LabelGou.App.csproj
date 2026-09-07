@@ -3,7 +3,10 @@
   <!-- LabelGou WPF 前端（M1：导入 → 映射 → 模板 → 单标签预览） -->
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <!-- M6：为了用 Windows 内置 OCR（Windows.Media.Ocr）加上 Windows 目标平台版本。
+         投影程序集 Microsoft.Windows.SDK.NET.dll 是 app-local 拷贝，目标机器不需要装任何东西；
+         它只出现在 App 层，Core 保持 net8.0 纯逻辑身份。 -->
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
     <UseWPF>true</UseWPF>
     <RootNamespace>LabelGou.App</RootNamespace>
     <AssemblyName>LabelGou</AssemblyName>
