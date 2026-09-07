@@ -169,9 +169,12 @@ public static class CrossValidator
         }
 
         // 两路都有：先比规范化后的值，再按证据强弱决定填哪个。
+        // Agreed 的语义是「两路真的对上了」：只有一路说话时必须为 false。
+        // 否则单通道行在核对窗口里显示「一致」且不标红 —— §五-54④ 只拦住了 BulkConfirm，界面仍在骗人（批次一-9）。
+        var singleChannel = b is null;
         var compareA = FieldNormalizer.CompareForm(field, a!.RawValue);
         var compareB = b is null ? string.Empty : FieldNormalizer.CompareForm(field, b.RawValue);
-        var agreed = b is null || (compareA.Length > 0 && string.Equals(compareA, compareB, StringComparison.Ordinal));
+        var agreed = !singleChannel && compareA.Length > 0 && string.Equals(compareA, compareB, StringComparison.Ordinal);
 
         var evidenceA = pool.Find(normA!.Value);
         var evidenceB2 = b is null ? EvidenceMatch.NotFound : pool.Find(normB!.Value);
@@ -184,16 +187,23 @@ public static class CrossValidator
         var pickedNorm = pickText ? normA : normB!;
         var pickedEvidence = pickText ? evidenceA : evidenceB2;
 
-        if (!agreed)
+        if (!agreed && !singleChannel)
         {
             warnings.Add($"两通道不一致：文本层读作「{normA.Value}」，模型给「{normB!.Value}」，已填「{pickedNorm.Value}」，请对照原图确认。");
+        }
+        else if (singleChannel)
+        {
+            // 这句是新的：它把「没人反驳」与「两个都同意」区分开，操作员才会去对原图而不是顺手点确认。
+            warnings.Add("只有一路读到这个值（另一路没开口），没有互相印证，请对照原图确认。");
         }
 
         if (pickedNorm.Warning is { } w) warnings.Add(w);
 
         var confidence = agreed && b is not null
             ? Math.Min(0.95, Math.Max(a.Confidence, b.Confidence) + 0.1)
-            : agreed ? a.Confidence : 0.45;
+            : agreed ? a.Confidence
+            : singleChannel ? a.Confidence
+            : 0.45;
 
         return new ReviewedField
         {

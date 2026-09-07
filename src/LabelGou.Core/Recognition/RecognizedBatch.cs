@@ -97,11 +97,24 @@ public sealed class RecognizedBatch
             {
                 Confidence = field.Confidence,
                 NeedsReview = !field.Confirmed,
-                Warning = field.Warning ?? (field.Confirmed ? null : "未人工核对"),
+                Warning = WarningText(field),
                 SourceRef = sourceRef,
             });
         }
 
         return builder.Build();
+    }
+
+    /// <summary>
+    /// 印面上的告警文案：「未人工核对」必须一直在，不能被另一句告警顶掉。
+    /// <para>旧写法是 `field.Warning ?? "未人工核对"`：只要字段另带一句（比如单通道行新加的
+    /// 「只有一路读到」），闸门与预览上就看不到「这东西还没人核」（批次一-9 的连带面）。</para>
+    /// </summary>
+    private static string? WarningText(ReviewedField field)
+    {
+        var parts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(field.Warning)) parts.Add(field.Warning!.Trim());
+        if (!field.Confirmed) parts.Add("未人工核对");
+        return parts.Count == 0 ? null : string.Join("；", parts);
     }
 }

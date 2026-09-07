@@ -77,7 +77,9 @@ public static class NumberingEngine
         if (issues.HasError())
         {
             // 规则不合法就不动数据：宁可让操作员看到原始件号，也不印一套推演出来的错号
-            return new NumberingResult(records, issues, records.Count, records.Count, 1, ruleRejected: true);
+            // （退回的那批仍要补内置计算量，否则模板里引用 {{col:本行箱数}} 的那一行会整条无声消失）
+            var untouched = WithComputedQuantities(records, rule, expand: false, cartonsPerRecord: null);
+            return new NumberingResult(untouched, issues, records.Count, records.Count, 1, ruleRejected: true);
         }
 
         // —— 1. 每行展开成几箱 ——
@@ -104,7 +106,8 @@ public static class NumberingEngine
             issues.Add(new TemplateIssue(IssueLevel.Error,
                 $"按此规则将生成 {totalLabels.ToString("N0", CultureInfo.InvariantCulture)} 张标签，超过上限 " +
                 $"{NumberingRule.MaxTotalLabels.ToString("N0", CultureInfo.InvariantCulture)} 张，请检查「总件数」列是否填错。"));
-            return new NumberingResult(records, issues, records.Count, (int)Math.Min(totalCartons, int.MaxValue), 1, ruleRejected: true);
+            var clipped = WithComputedQuantities(records, rule, expand, cartonsPerRecord);
+            return new NumberingResult(clipped, issues, records.Count, (int)Math.Min(totalCartons, int.MaxValue), 1, ruleRejected: true);
         }
 
         // —— 2. 分组（决定件号从哪开始重置、y 按哪个总数算） ——
@@ -157,6 +160,58 @@ public static class NumberingEngine
     }
 
     /// <summary>
+    /// 给「没走编号」的那批记录补上内置计算量（<c>col:组内序</c> / <c>col:本行箱数</c>），
+    /// 只写推算量、<strong>不改件号与总件数</strong>。
+    /// <para>为什么要单独做：规则不合法或超上限时引擎原样退回记录，而这些记录没经过
+    /// <see cref="BuildRecord"/>，模板里 <c>Ctns：{{col:本行箱数}}件</c> 会命中「变量全空整条隐藏」
+    /// 而无声少印一行（第 9 棒批次一-11）。补了它，那一行才能照常印出（或照常报缺值）。</para>
+    /// </summary>
+    private static IReadOnlyList<MarkRecord> WithComputedQuantities(
+        IReadOnlyList<MarkRecord> records,
+        NumberingRule rule,
+        bool expand,
+        int[]? cartonsPerRecord)
+    {
+        var list = new List<MarkRecord>(records.Count);
+        for (var i = 0; i < records.Count; i++)
+        {
+            var source = records[i];
+            var builder = source.ToBuilder();
+            builder.SetCustom("col:组内序", (i + 1).ToString(CultureInfo.InvariantCulture), ValueOrigin.Rule);
+            var rowCarton = expand && cartonsPerRecord is not null
+                ? cartonsPerRecord[i].ToString(CultureInfo.InvariantCulture)
+                : RowDataText(source, rule.ExpandCountField);
+            if (!string.IsNullOrWhiteSpace(rowCarton))
+                builder.SetCustom("col:本行箱数", rowCarton!, ValueOrigin.Rule);
+            list.Add(builder.Build());
+        }
+        return list;
+    }
+
+    /// <summary>
+    /// 取一个字段「属于这一行本身」的文本：表格列、识别通道认出的值、逐行手填值。
+    /// <para>两类值刻意不算数据：<see cref="ValueOrigin.Rule"/>（工具自己按行序兜底填的号）与
+    /// <see cref="ValueOrigin.BatchFixed"/>（整批共用的常量）。前者会把九行表撑成 9×9=81 张，
+    /// 后者会把「整批共 155 件」当成每行的箱数（§五-62 同一类错，第 9 棒批次一-1/2）。</para>
+    /// </summary>
+    private static string? RowDataText(MarkRecord record, MarkFieldKey field)
+    {
+        var value = record.Get(field);
+        if (value is null) return null;
+        return value.Origin is ValueOrigin.Rule or ValueOrigin.BatchFixed ? null : value.Text;
+    }
+
+    /// <summary>
+    /// 件号到底算不算「数据里本来就有」：只有工具兜底填的 <see cref="ValueOrigin.Rule"/> 不算。
+    /// <para>否则 <c>RecordMapper.Map</c> 先把件号填成行序，<c>KeepData</c> 分支见「已有值」就不动，
+    /// 用户设的起始号/补零/前后缀会整体失效（§五-20 那条无条件校验白做，批次一-3）。</para>
+    /// </summary>
+    private static bool HasRowNumber(MarkRecord record, MarkFieldKey field)
+        => record.Get(field) is { } v
+           && !string.IsNullOrWhiteSpace(v.Text)
+           && v.Origin != ValueOrigin.Rule;
+
+    /// <summary>
     /// 单个标签应使用的件号/总件数文本如何取舍。
     /// </summary>
     private static MarkRecord BuildRecord(
@@ -178,10 +233,12 @@ public static class NumberingEngine
         switch (rule.Mode)
         {
             case NumberingMode.KeepData:
-                // 只在数据缺失时补号，补出来的也标 Rule，与导入值区分
-                if (!source.Has(MarkFieldKey.CartonNo))
+                // 只在数据缺失时补号，补出来的也标 Rule，与导入值区分。
+                // 「缺失」的判据是「不是表里的值」而不是「没值」：RecordMapper.Map 已按行序兜底填过一轮，
+                // 拿 Has() 当判据会让用户设的起始号/补零/前后缀整体失效（批次一-3）。
+                if (!HasRowNumber(source, MarkFieldKey.CartonNo))
                     builder.Set(MarkFieldKey.CartonNo, new MarkValue(numberText, ValueOrigin.Rule) { SourceRef = sourceRef });
-                if (!source.Has(MarkFieldKey.CartonTotal))
+                if (!HasRowNumber(source, MarkFieldKey.CartonTotal))
                     builder.Set(MarkFieldKey.CartonTotal, new MarkValue(totalText, ValueOrigin.Rule) { SourceRef = sourceRef });
                 break;
 
@@ -198,24 +255,32 @@ public static class NumberingEngine
 
         // 「本行几箱」必须单独留一个量：展开模式下 {{CartonTotal}} 已被改写成整批总数（15），
         // 而厂商唛头印的是本货号自己的箱数（真样张：Ctns：5件）。不留这个量，5 就会被悄悄印成 15。
+        // 不展开时也只能拿表里真正的值：CartonTotal 可能是 Map 兜底填的整批行数（批次一-2），
+        // 拿它当「本行箱数」就是把 15 件印在每箱上；没值就留给界面报缺，不臆造。
         var rowCartonText = expand
             ? cartonsOfRow.ToString(CultureInfo.InvariantCulture)
-            : source.GetText(rule.ExpandCountField) ?? cartonsOfRow.ToString(CultureInfo.InvariantCulture);
-        builder.SetCustom("col:本行箱数", rowCartonText, ValueOrigin.Rule);
+            : RowDataText(source, rule.ExpandCountField);
+        if (!string.IsNullOrWhiteSpace(rowCartonText))
+            builder.SetCustom("col:本行箱数", rowCartonText!, ValueOrigin.Rule);
 
         return builder.Build();
     }
 
-    /// <summary>读一行的箱数；拿不到合法正整数时按 1 箱处理并回一句原因。</summary>
+    /// <summary>
+    /// 读一行的箱数；拿不到合法正整数时按 1 箱处理并回一句原因。
+    /// <para>只认属于本行的数据（<see cref="RowDataText"/>）：兜底填进 <c>CartonTotal</c> 的
+    /// 整批行数或被当成「本行几箱」，九行表就会变成 9×9=81 张标签。</para>
+    /// </summary>
     private static (int Cartons, string? Note) ReadCartonCount(MarkRecord record, MarkFieldKey field)
     {
-        var text = record.GetText(field);
+        var text = RowDataText(record, field);
         if (string.IsNullOrWhiteSpace(text))
-            return (1, $"「{DefName(field)}」为空，按 1 箱处理");
+            return (1, $"「{DefName(field)}」不是表格里的值（没连到列或被兜底填成整批总数），本行按 1 箱处理");
 
-        // 允许 "12"、"12.0"、"12 箱"、"12ctn" 这类写法，取第一个整数
-        var digits = new string(text.Where(char.IsDigit).ToArray());
-        if (digits.Length == 0 || !int.TryParse(digits, NumberStyles.None, CultureInfo.InvariantCulture, out var count))
+        // 允许 "12"、"12 箱"、"12ctn" 这类写法：取第一个连续数字串。
+        // 不能像以前那样把所有数字字符拼起来——注释自证的 "12.0" 会被拼成 120（十倍箱数，批次一-1）。
+        var match = FirstIntegerPattern.Match(text);
+        if (!match.Success || !int.TryParse(match.Value, NumberStyles.None, CultureInfo.InvariantCulture, out var count))
             return (1, $"「{DefName(field)}」＝「{text}」读不出整数，按 1 箱处理");
 
         if (count <= 0) return (1, $"「{DefName(field)}」＝0，按 1 箱处理");
@@ -227,6 +292,11 @@ public static class NumberingEngine
 
     private static string DefName(MarkFieldKey field)
         => MarkFieldCatalog.TryGet(field, out var def) ? def.ChineseName : field.ToString();
+
+    /// <summary>取第一个连续数字串（不是把所有数字拼起来）。</summary>
+    private static readonly System.Text.RegularExpressions.Regex FirstIntegerPattern = new(
+        @"\d+",
+        System.Text.RegularExpressions.RegexOptions.Compiled | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
 
     private static int clampInt(long value) => value > int.MaxValue ? int.MaxValue : (int)value;
 

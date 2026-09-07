@@ -57,6 +57,7 @@ public class ItemNoTailTests
     [Theory]
     [InlineData("olu830-35*144", "olu830-35", "*144")]
     [InlineData("b5006*16\n VESCAGA ERRAS", "b5006", "*16")]
+    [InlineData("b5006\nVESCAGA *16 ERRAS", "b5006", "VESCAGA *16 ERRAS")]   // 换行在星号之前：切在换行处，旧写法算出 start>end 的 Range 而抛异常（批次一-4）
     [InlineData("b5011*16 INVISTUC", "b5011", "*16 INVISTUC")]
     [InlineData("olu830-142", null, null)]
     [InlineData("*144 开头", null, null)]

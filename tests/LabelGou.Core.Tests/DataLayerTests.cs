@@ -149,6 +149,28 @@ public class XlsxTableReaderTests
     }
 
     [Fact]
+    public void 纵向合并不往每一行复制值也不把空行复活()
+    {
+        // 真表里的 F7:F10、备注整列合并这类是「只填一次的批注与合计」。
+        // 旧实现把锚点值复制进区域内每一行，还为传播新建行：
+        // 155 就变成每行的数、行数虚高 → 页数与 {{CartonTotal}} 跟着错（批次一-7）。
+        var rows = new List<IReadOnlyList<string>>
+        {
+            new[] { "客户", "件数", "备注" },
+            new[] { "A", "5", "155 合计" },
+            new[] { "B", "6", "" },
+            Array.Empty<string>(),              // 第 4 行整行没内容（真 XLSX 里根本不会写这一行）
+        };
+        var path = XlsxFixture.WriteToTempFile(
+            XlsxFixture.Build(rows, merges: new[] { "C2:C4" }), "vmerged.xlsx");
+
+        var grid = XlsxTableReader.ReadRawGrid(path);
+
+        Assert.Equal(3, grid.Count);                              // 不能因为传播就把空行救活
+        Assert.DoesNotContain("155 合计", grid[2]);      // 第三行的备注仍应为空
+    }
+
+    [Fact]
     public void 日期样式还原成日期文本而不是OA序列号()
     {
         var target = new DateTime(2026, 9, 12);

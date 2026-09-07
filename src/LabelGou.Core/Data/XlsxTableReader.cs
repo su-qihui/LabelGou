@@ -312,25 +312,21 @@ public static class XlsxTableReader
             merges.Add((a.Value.row, a.Value.col, b.Value.row, b.Value.col));
         }
 
-        // 合并单元格：把锚点值复制到区域内所有格（表头跨列时，每列都能取到该标题）
+        // 合并单元格：只把锚点值复制到**同一行的其他格**（表头跨列时每列都能取到该标题）。
+        // 刻意不做纵向传播（第 9 棒批次一-7）：真表里的纵向合并多是「合计/批注整列只填一次」，
+        // 复制进每一行就是把 155 当成每行的件数；而为了传播去新建行更会让空行复活成记录，
+        // 行数虚高、页数与 {{CartonTotal}} 跟着一起错。纵向只当参考，不往数据里复制。
         foreach (var (minRow, minCol, maxRow, maxCol2) in merges)
         {
-            if (!rows.TryGetValue(minRow, out var anchorBucket)) continue;
-            if (!anchorBucket.TryGetValue(minCol, out var anchorValue)) continue;
+            if (minRow != maxRow) continue;
+            if (!rows.TryGetValue(minRow, out var bucket)) continue;
+            if (!bucket.TryGetValue(minCol, out var anchorValue)) continue;
             if (string.IsNullOrEmpty(anchorValue)) continue;
 
-            for (var r = minRow; r <= maxRow; r++)
+            for (var c = minCol; c <= maxCol2; c++)
             {
-                if (!rows.TryGetValue(r, out var bucket))
-                {
-                    bucket = new Dictionary<int, string>();
-                    rows[r] = bucket;
-                }
-                for (var c = minCol; c <= maxCol2; c++)
-                {
-                    if (!bucket.ContainsKey(c) || string.IsNullOrEmpty(bucket[c])) bucket[c] = anchorValue;
-                    if (c > maxCol) maxCol = c;
-                }
+                if (!bucket.ContainsKey(c) || string.IsNullOrEmpty(bucket[c])) bucket[c] = anchorValue;
+                if (c > maxCol) maxCol = c;
             }
         }
 

@@ -19,12 +19,24 @@ public static class TextNormalizer
     /// <para>注意里面必须有半角 <c>.</c> 本身：本机 OCR 给的是全角 <c>．</c>，而 <see cref="ToHalfwidth"/>
     /// 已经先把它转成了 <c>.</c>，字符表若只写全角形就一个也匹不上（真实跌过一跤：
     /// "25 ． 5 KGS" 只修了前一半，重量被读成 25）。</para>
+    /// <para><b>逗号不在本表里</b>：一律当小数点会把 <c>1,250 KGS</c> 改成 <c>1.250</c> →
+    /// 一千二百五十公斤被印成 1.25（批次一-5）。逗号由下面两个正则分开处理。</para>
     /// </summary>
-    private const string DecimalLookalikes = "。，,．·、.";
+    private const string DecimalLookalikes = "。．·、.";
 
     /// <summary>数字 …分隔符… 数字 → 归一成小数点（分隔符两侧允许空格）。</summary>
     private static readonly Regex DecimalGap = new(
         @"(?<=\d)\s*[" + DecimalLookalikes + @"]\s*(?=\d)",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    /// <summary>千分位：逗号后紧跟恰好三位数字且再后不是数字 → 整组是千分位，直接去掉（不当小数点）。</summary>
+    private static readonly Regex ThousandsComma = new(
+        @"(?<=\d),(?=\d{3}(?!\d))",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    /// <summary>小数逗号：逗号右边只有 1~2 位（"25,5"、"1,25"）时按小数点看待（OCR 也会把小数点认成逗号）。</summary>
+    private static readonly Regex CommaDecimalGap = new(
+        @"(?<=\d)\s*,\s*(?=\d{1,2}(?!\d))",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     /// <summary>
@@ -130,7 +142,10 @@ public static class TextNormalizer
     {
         var half = ToHalfwidth(text);
         if (half.Length < 3) return half;
-        return DecimalGap.Replace(half, ".");
+        // 顺序很关键：先剔千分位，再把剩下的逗号当小数点，最后才是其他分隔符形。
+        var grouped = ThousandsComma.Replace(half, string.Empty);
+        var commaAsDecimal = CommaDecimalGap.Replace(grouped, ".");
+        return DecimalGap.Replace(commaAsDecimal, ".");
     }
 
     /// <summary>按出现顺序抽出全部数字（小数点已归一）。找不到返回空数组。</summary>

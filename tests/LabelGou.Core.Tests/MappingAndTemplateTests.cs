@@ -2,6 +2,7 @@ using LabelGou.Core.Data;
 using LabelGou.Core.Layout;
 using LabelGou.Core.Mapping;
 using LabelGou.Core.Marks;
+using LabelGou.Core.Numbering;
 using LabelGou.Core.Templates;
 using Xunit;
 
@@ -109,6 +110,24 @@ public class MappingSuggesterTests
         var unrelated = new[] { "员工", "部门", "工龄" };
 
         Assert.Null(MappingSuggester.FindBestMatch(unrelated, new[] { original }));
+    }
+
+    [Fact]
+    public void 重合度命中旧方案时整批固定值也要带过来()
+    {
+        // 客户名 BOLAROM 这类不在表里，只存在方案的 FixedValues 里。
+        // 旧的重连路径把 Note/AutoNumberCartons/Numbering 都带了，唯独漏了这一项 →
+        // 同一客户下次来单，纸上凭空少一行（批次一-8；App 侧两处同类重连都带了）。
+        var original = MappingSuggester.Suggest(Headers, "金沐装箱单");
+        original.SetFixedValue(MarkFieldKey.Origin, "MADE IN CHINA");
+        original.Numbering = new NumberingRule { Mode = NumberingMode.ForceSequence, Start = 21 };
+        var slightlyDifferent = Headers.Append("目的国").ToArray();   // 多一列 → 签名变了但重合度够
+
+        var rebound = MappingSuggester.FindBestMatch(slightlyDifferent, new[] { original });
+
+        Assert.NotNull(rebound);
+        Assert.Equal("MADE IN CHINA", rebound!.FixedValueFor(MarkFieldKey.Origin));
+        Assert.Equal(21, rebound.Numbering!.Start);            // 另一面：原本就带了的那两项不能改坏
     }
 }
 

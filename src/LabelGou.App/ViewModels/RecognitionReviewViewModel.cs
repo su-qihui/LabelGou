@@ -120,7 +120,14 @@ public sealed class ReviewFieldRow : ObservableObject
 
     public string? ModelValue => Field.LlmValue;
 
-    public string AgreementText => Field.Agreed ? "一致" : "不一致";
+    /// <summary>
+    /// 「一致」只能给两路都开了口且值相同的行。
+    /// <para>只有一路说话时不能写「不一致」（没人反驳），更不能写「一致」（那是骗人去看下一行）——
+    /// 写「只有一路读到」，操作员才知道这一项得自己对原图（第 9 棒批次一-9）。</para>
+    /// </summary>
+    public string AgreementText => Field.LlmValue is null || Field.TextValue is null
+        ? "只有一路读到"
+        : Field.Agreed ? "一致" : "不一致";
 
     public string EvidenceText => Field.Evidence switch
     {

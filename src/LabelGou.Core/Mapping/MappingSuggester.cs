@@ -88,6 +88,9 @@ public static class MappingSuggester
         rebound.Note = best.Note;
         rebound.AutoNumberCartons = best.AutoNumberCartons;
         rebound.Numbering = best.Numbering;
+        // 整批固定值必须跟着重连：客户名（BOLAROM 这类）不在表里，只存在方案里，
+        // 漏了这一句就是「同一客户下次来单，纸上凭空少一行」（App 侧两处同类重连都带了，批次一-8）。
+        foreach (var (fixedKey, fixedText) in best.FixedValues) rebound.FixedValues[fixedKey] = fixedText;
         rebound.HeaderSignature = signature;
 
         foreach (var mapping in best.Mappings)
@@ -181,12 +184,16 @@ public static class RecordMapper
         var text = raw?.Trim() ?? string.Empty;
         var star = text.IndexOf('*');
         if (star <= 0) return null;
-        var kept = text[..star].TrimEnd();
-        if (kept.Length == 0) return null;
-        // 换行后的内容也算被去掉的尾巴，一并报出来，让用户看得见丢了什么
+        // 换行与星号谁在前就切在哪：真表里两种写法都有（b5006*16\n VESCAGA ERRAS 与 b5006\nVESCAGA *16 ERRAS），
+        // 纸上只印第一段。旧写法只处理星号在前的一种，另一种算出 start>end 的 Range 直接抛异常，
+        // 整批映射跟着挂（批次一-4）。
         var lineBreak = text.IndexOfAny(new[] { '\n', '\r' });
-        var strippedTo = lineBreak < 0 ? text.Length : lineBreak;
-        var stripped = text[star..strippedTo].Trim();
+        var cut = lineBreak >= 0 && lineBreak < star ? lineBreak : star;
+        var end = lineBreak > cut ? lineBreak : text.Length;
+        var kept = text[..cut].TrimEnd();
+        if (kept.Length == 0) return null;
+        // 被去掉的那截原样报出来，让用户看得见丢了什么（删印刷数据不许静默）。
+        var stripped = text[cut..end].Trim();
         return stripped.Length == 0 ? null : (kept, stripped);
     }
 

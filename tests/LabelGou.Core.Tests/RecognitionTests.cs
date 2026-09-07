@@ -170,6 +170,66 @@ public class RecognitionTests
         Assert.Contains("请核对", FieldNormalizer.Normalize(MarkFieldKey.ShipDate, "下周三").Warning, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// 逗号不能一律当小数点：`1,250 KGS` 被改成 `1.250` 就是一千二百五十公斤被印成 1.25（批次一-5）。
+    /// 但 OCR 确实会把小数点认成逗号（`25,5`），所以分成两步：先剔千分位，再把剩下的逗号当小数点。
+    /// </summary>
+    [Theory]
+    [InlineData("1,250 KGS", "1250")]
+    [InlineData("12,345,678 KGS", "12345678")]
+    [InlineData("25,5 KGS", "25.5")]
+    [InlineData("25，5 KGS", "25.5")]
+    public void 千分位逗号不被当小数点(string raw, string expectedNumber)
+    {
+        var n = FieldNormalizer.Normalize(MarkFieldKey.GrossWeight, raw);
+
+        Assert.Equal(expectedNumber, TextNormalizer.Numbers(n.Value).First());
+    }
+
+    [Fact]
+    public void 一千二百五十公斤不该被读成一点二五()
+    {
+        // 量纲告警阈值在 4000 以上，这一项同时要确认它没被小数点归一化拦腰砍过。
+        var n = FieldNormalizer.Normalize(MarkFieldKey.GrossWeight, "1,250 KGS");
+
+        Assert.Equal("1250 KGS", n.Value);
+        Assert.Null(n.Warning);
+    }
+
+    [Fact]
+    public void 补零的斜杠日期不再静默换月()
+    {
+        // 旧行为：03/04/2026 命中精确格式 dd/MM/yyyy 被读成 4 月 3 日且不给任何提示，
+        // 而不补零的 3/4/2026 却走歧义启发式带告警 —— 同一个日期仅因补零就换月（批次一-6）。
+        var padded = FieldNormalizer.Normalize(MarkFieldKey.ShipDate, "03/04/2026");
+        Assert.Equal("2026-03-04", padded.Value);
+        Assert.Contains("请核对", padded.Warning, StringComparison.Ordinal);
+
+        // 年在前的形不歧义，仍不该骚扰用户。
+        var yearFirst = FieldNormalizer.Normalize(MarkFieldKey.ShipDate, "2026-03-04");
+        Assert.Equal("2026-03-04", yearFirst.Value);
+        Assert.Null(yearFirst.Warning);
+    }
+
+    /// <summary>整数字段里出现真正的字母就是锚错/编造（护栏原先只在规则通道有，批次一-10）。</summary>
+    [Theory]
+    [InlineData("MM 2603")]
+    [InlineData("A100")]
+    public void 整数字段出现真字母就报核而不是抽个数(string raw)
+    {
+        var n = FieldNormalizer.Normalize(MarkFieldKey.CartonNo, raw);
+
+        Assert.Equal(raw, n.Value);
+        Assert.Contains("请", n.Warning, StringComparison.Ordinal);
+    }
+
+    /// <summary>但 "Ctn No. 3 / 12" 与 "5件" 是合法数据，不能被字母护栏误伤。</summary>
+    [Theory]
+    [InlineData("Ctn No. 3 / 12", "3")]
+    [InlineData("5件", "5")]
+    public void 件号的前缀标签与中文单位不算字母(string raw, string expected)
+        => Assert.Equal(expected, FieldNormalizer.Normalize(MarkFieldKey.CartonNo, raw).Value);
+
     // ---------- 规则抽取：能不能从真实脏文本里锚出字段 ----------
 
     [Fact]
@@ -178,8 +238,11 @@ public class RecognitionTests
         var found = TextCandidates().ToDictionary(c => c.Field, c => c);
 
         Assert.Equal("25.5 KGS", FieldNormalizer.Normalize(MarkFieldKey.GrossWeight, found[MarkFieldKey.GrossWeight].RawValue).Value);
-        Assert.True(found.ContainsKey(MarkFieldKey.NetWeight), "N .W. 这种带空格的标签必须还能锚住");
-        Assert.True(found.ContainsKey(MarkFieldKey.ItemNo), "ITEM NO 行");
+        // 只断「键在」不算验证：错值也能键在（§五-50 的假绿）。这里把值钉死。
+        Assert.Equal("22.1 KGS", FieldNormalizer.Normalize(MarkFieldKey.NetWeight, found[MarkFieldKey.NetWeight].RawValue).Value);
+        // ITEM NO 的真值是 A-778；OCR 把小数点样的字符插在中间（"A ． 778"），比对形而不是原样，
+        // 是为了将来归一化再进一点时这条测试不会红得莫名其妙。
+        Assert.Equal("a778", TextNormalizer.Compact(FieldNormalizer.Normalize(MarkFieldKey.ItemNo, found[MarkFieldKey.ItemNo].RawValue).Value));
         Assert.Equal("3", FieldNormalizer.Normalize(MarkFieldKey.CartonNo, found[MarkFieldKey.CartonNo].RawValue).Value);
         Assert.Equal("12", FieldNormalizer.Normalize(MarkFieldKey.CartonTotal, found[MarkFieldKey.CartonTotal].RawValue).Value);
         Assert.Contains("CHINA", found[MarkFieldKey.Origin].RawValue, StringComparison.OrdinalIgnoreCase);
@@ -403,23 +466,23 @@ public class RecognitionTests
     [Fact]
     public void SingleChannelRowsNeverRideTheBulkConfirm()
     {
-        // 真样本抓出来的坑：规则通道把客户代码读成 "MACYS ( 0 NTRACT"（CONTRACT 被 OCR 掉了字，锚点断不到下一个标签上）。
-        // 它在原文里确实整段存在 → 证据是 Exact、“一致”也成立（只有一路说话时 Agreed 永远是真），
-        // 旧条件会把它自动放行 —— 而这正是会被印上去的错值。
-        var batch = new RecognizedBatch { SourceName = "probe-label.png" };
-        batch.Fields.Add(new ReviewedField
-        {
-            Field = MarkFieldKey.ClientCode,
-            Value = "MACYS ( 0 NTRACT",
-            TextValue = "MACYS ( 0 NTRACT",      // 只有文本层一路开了口
-            Origin = ValueOrigin.AiOcr,
-            Confidence = 0.58,
-            Evidence = EvidenceLevel.Exact,
-            Agreed = true,
-        });
+        // 真样本抓出来的坑：规则通道把客户代码读成 "MACYS （ 0 NTRACT"（CONTRACT 被 OCR 掉了字）。
+        // 它在原文里确实整段存在 → 证据是 Exact，旧语义下「一致」也成立（只有一路说话时 Agreed 永远为真），
+        // 于是它既能被批量确认放行，又在核对窗口里显示成「两路对上了」。
+        // 本测试走真实 Merge 而不是手搓对象（手搓会盖住 Agreed 这个字段级 bug，批次一-9）。
+        var text = OcrFixture();
+        var merged = CrossValidator.Merge(text, TextCandidates(), null);
 
+        var batch = new RecognizedBatch { SourceName = "probe-label.png" };
+        foreach (var field in merged) batch.Fields.Add(field);
+
+        var gross = One(merged, MarkFieldKey.GrossWeight);
+        Assert.Null(gross.LlmValue);                                // 模型这一路根本没开口
+        Assert.False(gross.Agreed);
+        Assert.True(gross.IsHot, "单通道行必须标红，否则人工核对形同虚设");
+        Assert.Contains("只有一路", gross.Warning, StringComparison.Ordinal);
         Assert.Equal(0, batch.BulkConfirm());
-        Assert.True(batch.Fields[0].IsPending, "只有一路给的值必须人看一眼");
+        Assert.True(batch.Fields.All(f => f.IsPending), "一路说话的行一个都不许自动放行");
     }
 
     [Fact]

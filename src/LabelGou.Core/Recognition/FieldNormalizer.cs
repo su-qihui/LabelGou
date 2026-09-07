@@ -39,9 +39,15 @@ public static class FieldNormalizer
         @"^\s*(?:no\.?|ctn\.?|box)?\s*(\d+)\s*[/／\-]\s*(\d+)\s*$",
         RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
+    /// <summary>
+    /// 能直接定下来的日期形：只有「年在前」与 ISO 两种。
+    /// <para>刻意不包含 <c>dd/MM/yyyy</c> 与 <c>dd-MM-yyyy</c>：<c>03/04/2026</c> 会静默按欧式读成 4 月 3 日，
+    /// 而不补零的 <c>3/4/2026</c> 却走下面的歧义启发式带告警 —— 同一个日期仅因补零就换月且不吭声
+    /// （批次一-6）。把它们交给启发式，补零与否就能拿到同一个答案与同一句「请核对」。</para>
+    /// </summary>
     private static readonly string[] ExactDateFormats =
     {
-        "yyyy-MM-dd", "yyyy/M/d", "yyyy.M.d", "yyyyMMdd", "dd-MM-yyyy", "dd/MM/yyyy",
+        "yyyy-MM-dd", "yyyy/M/d", "yyyy.M.d", "yyyyMMdd",
     };
 
     /// <summary>规范化一个字段值。空值原样返回空，交由上层决定「整条隐藏」还是「待补」。</summary>
@@ -119,6 +125,12 @@ public static class FieldNormalizer
         var numbers = TextNormalizer.Numbers(text);
         if (numbers.Count == 0) return new NormalizedField(text, "这个字段要求整数，但识别结果里没有数字，请核对");
 
+        // 整数字段里出现真正的字母（如 MM2603、A100）说明标签锚断了或模型编了值：
+        // 这一护栏原先只在规则通道（RuleFieldExtractor）有，LLM 通道能直接抽出一个看着正常的数（批次一-10）。
+        // 先剥掉常见的前缀标签再判（Ctn No. 3 / 12 是合法数据），且只看 ASCII 字母（"5件" 不能被误伤）。
+        if (HasStrayAsciiLetter(text))
+            return new NormalizedField(text, "整数字段里出现了字母（不是 Ctn No. 这类标签），可能是锚错或模型编的，请人工改成本箱号");
+
         // 一件号格里出现两个以上数字（如 "3 / 12"）时取第一个，并留话说明，避免静默选错。
         var first = numbers[0];
         var dot = first.IndexOf('.');
@@ -134,6 +146,18 @@ public static class FieldNormalizer
         if (value < 0) return new NormalizedField(first, "出现负数，唛头上不该有负件数，请核对");
         if (numbers.Count > 1) return new NormalizedField(first, $"同一处读到多个数字（{string.Join(" / ", numbers)}），已取第一个，请核对");
         return new NormalizedField(first, null);
+    }
+
+    /// <summary>件号格里合法的英文前缀标签（可以连缀，如 "Ctn No. 3 / 12"；这些字母不算「值里的字母」）。</summary>
+    private static readonly Regex CartonLabelPrefix = new(
+        @"^(?:\s*(?:no\.?|nos\.?|ctn\.?|ctns\.?|carton\.?|box\.?|cases?\.?|of)[\s.:／/-]*)+",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    /// <summary>剥掉件号前缀标签后，剩下的文本里是否还有 ASCII 字母（CJK 单位如「5件」不算）。</summary>
+    private static bool HasStrayAsciiLetter(string text)
+    {
+        var residue = CartonLabelPrefix.Replace(text, string.Empty);
+        return residue.Any(ch => ch is >= 'A' and <= 'Z' or >= 'a' and <= 'z');
     }
 
     private static NormalizedField NormalizeWeight(MarkFieldKey field, string text)
