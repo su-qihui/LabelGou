@@ -223,6 +223,14 @@ public partial class MainWindow : Window
     private bool _recognizing;
 
     /// <summary>
+    /// 模型设置与调试入口：上一轮云端支持只写在代码层、界面上一个入口都没有，
+    /// 用户直接问「哪里接模型、哪里调试」。这个窗口里能选通道（本机 Ollama / 阿里云百炼 /
+    /// DeepSeek / 自定义端点）、探测模型在不在、并拿一张真图当场问一次，把模型原话与耗时摊出来。
+    /// </summary>
+    private void OnAiSettingsClick(object sender, RoutedEventArgs e)
+        => new Services.AiDebugWindow { Owner = this }.ShowDialog();
+
+    /// <summary>
     /// 识别入口。三条现场约束决定了它的形状：
     /// ① 大模型一张约 34 秒，所以必须能中途取消（<see cref="RecognitionProgressWindow"/>）；
     /// ② 跑着的时候不许再点一次（<see cref="_recognizing"/> 重入锁，两张单子撞在一起只会互相盖结果）；

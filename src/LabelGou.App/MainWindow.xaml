@@ -21,6 +21,8 @@
             <MenuItem Header="文件(_F)">
                 <MenuItem Header="打开数据文件…(_O)" Command="{Binding OpenFileCommand}" InputGestureText="Ctrl+O" />
                 <MenuItem Header="智能识别单据…（照片 / 截图 / Word）(_R)" Click="OnRecognizeClick" InputGestureText="Ctrl+Shift+R" />
+                <MenuItem Header="模型（AI）设置与调试…(_A)" Click="OnAiSettingsClick"
+                      ToolTip="选本机 Ollama 还是云端（阿里云百炼 / DeepSeek），并当场试一次看模型到底答什么、多少秒" />
                 <Separator />
                 <MenuItem Header="打印整版…(_P)" Command="{Binding Export.PrintCommand}" InputGestureText="Ctrl+P" />
                 <MenuItem Header="导出 PDF…" Command="{Binding Export.ExportPdfCommand}" />

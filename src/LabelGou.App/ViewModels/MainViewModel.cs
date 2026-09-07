@@ -227,11 +227,14 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
     /// </summary>
     public void ReloadTemplates(string? preferId = null)
     {
-        var keepId = preferId ?? SelectedTemplate?.Id ?? BuiltInTemplates.IdStandard;
+        // 兜底不再是「标准箱唛 100×80」：那是 M1 时代的框线分格模板，要 9 个字段，
+        // 而厂牌表基本只有货号/件数/数量三列——用户每次打开看到四格黑框加两格空白，
+        // 就变成“改了没变化”。行式四行才是真样张那一套。
+        var keepId = preferId ?? SelectedTemplate?.Id ?? BuiltInTemplates.IdRowsFour;
         TemplateOptions.Clear();
         foreach (var template in _templateStore.ListAll()) TemplateOptions.Add(new TemplateOption(template));
         SelectedTemplate = TemplateOptions.FirstOrDefault(t => t.Id == keepId)
-            ?? TemplateOptions.FirstOrDefault(t => t.Id == BuiltInTemplates.IdStandard)
+            ?? TemplateOptions.FirstOrDefault(t => t.Id == BuiltInTemplates.IdRowsFour)
             ?? TemplateOptions.FirstOrDefault();
     }
 
@@ -596,6 +599,7 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
             AutoNumberCartons = _working.AutoNumberCartons;
             RebuildFieldRows();
             ApplyMapping();
+            PickTemplateFittingData();
             AdvanceAfterImport();
         }
         catch (Exception ex)
@@ -754,24 +758,63 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
     /// </summary>
     private IReadOnlyList<string> TemplateFieldsWithoutValue(MappingProfile profile)
     {
-        var template = SelectedTemplate?.Template;
-        if (template is null) return Array.Empty<string>();
-
         var missing = new List<string>();
+        foreach (var key in FieldsUsedBy(SelectedTemplate?.Template))
+        {
+            if (FieldRows.Any(r => r.Definition.Key == key && r.ColumnIndex >= 0)) continue;
+            if (!string.IsNullOrWhiteSpace(profile.FixedValueFor(key))) continue;
+            var chinese = MarkFieldCatalog.Get(key).ChineseName;
+            if (!missing.Contains(chinese)) missing.Add(chinese);
+        }
+        return missing;
+    }
+
+    /// <summary>这份模板的文字里用到哪些字段（<c>{{col:列标题}}</c> 这种直取列的不算，那些永远有值）。</summary>
+    private static List<MarkFieldKey> FieldsUsedBy(LabelTemplate? template)
+    {
+        var used = new List<MarkFieldKey>();
+        if (template is null) return used;
         foreach (var element in template.Elements)
         {
             if (element.Kind != ElementKind.Text || string.IsNullOrEmpty(element.Text)) continue;
             foreach (System.Text.RegularExpressions.Match m in FieldTokenPattern.Matches(element.Text))
             {
                 if (!MarkFieldCatalog.TryParseKey(m.Groups[1].Value, out var key)) continue;
-                if (FieldRows.Any(r => r.Definition.Key == key && r.ColumnIndex >= 0)) continue;
-                if (!string.IsNullOrWhiteSpace(profile.FixedValueFor(key))) continue;
-                var chinese = MarkFieldCatalog.Get(key).ChineseName;
-                if (!missing.Contains(chinese)) missing.Add(chinese);
+                if (!used.Contains(key)) used.Add(key);
             }
         }
-        return missing;
+        return used;
     }
+
+    /// <summary>
+    /// 导入完一张表后，按「这张表能填上几个字段」挑一套最贴合的模板。
+    /// <para>为什么不能只在“当前模板完全印不出”时才接手：用户 uistate 里记着 M1 时代的
+    /// 「标准箱唛 100×80」，那张表里只要货号连上了就算“印得出”，于是一直是那四格粗黑框在眼前，
+    /// 他看的根本不是真样张那一套 —— 这就是“改了还是没变化”的直接原因。</para>
+    /// <para>只在导入时接手（不在每次改映射时接手）：用户手工选过的模板不能被他改一个字段就被顶掉，
+    /// 但下一张表进来就该重新按数据说话。</para>
+    /// </summary>
+    private void PickTemplateFittingData()
+    {
+        var profile = _working;
+        if (profile is null || TemplateOptions.Count == 0) return;
+
+        var scored = TemplateOptions
+            .Select(o => (Option: o, Score: FieldsUsedBy(o.Template).Count(k => HasValueFor(k, profile))))
+            .ToList();
+        var currentScore = scored.FirstOrDefault(t => t.Option.Id == SelectedTemplate?.Id).Score;
+        var best = scored.OrderByDescending(t => t.Score).First();
+        if (best.Score <= currentScore || best.Option.Id == SelectedTemplate?.Id) return;
+
+        var name = SelectedTemplate?.Name ?? "原模板";
+        SelectedTemplate = best.Option;
+        StatusMessage = $"这张表能填上「{best.Option.Name}」的 {best.Score} 个字段（比「{name}」多），已自动改用前者；在第 3 步可以随时换回。{StatusMessage}";
+    }
+
+    /// <summary>这个字段现在有没有值：连到了列，或填了整批固定值。</summary>
+    private bool HasValueFor(MarkFieldKey key, MappingProfile profile)
+        => FieldRows.Any(r => r.Definition.Key == key && r.ColumnIndex >= 0)
+        || !string.IsNullOrWhiteSpace(profile.FixedValueFor(key));
 
     private void ApplyMapping()
     {
