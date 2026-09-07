@@ -2,12 +2,18 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:render="clr-namespace:LabelGou.App.Rendering"
-        Title="LabelGou · 唛头标签助手  v0.6.0（M6：导入 / 映射 / 模板 / 拼版编号 / 预览 / 打印导出 / SVG / 智能识别）"
+        xmlns:mvvm="clr-namespace:LabelGou.App.Mvvm"
+        Title="LabelGou · 唛头标签助手  v0.6.0（五步向导：导入数据 → 连接字段 → 选模板 → 拼版编号 → 核对与输出）"
         Width="1320" Height="860"
         MinWidth="1080" MinHeight="700"
         FontFamily="Microsoft YaHei" FontSize="12.5"
         Background="#F4F6F8"
         WindowStartupLocation="CenterScreen">
+
+    <Window.Resources>
+        <!-- 一步只露一块：每个步骤面板拿自己的步骤号去问转换器（见 Mvvm.StepIndexToVisibilityConverter） -->
+        <mvvm:StepIndexToVisibilityConverter x:Key="StepEq" />
+    </Window.Resources>
 
     <DockPanel>
 
@@ -57,13 +63,45 @@
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
 
-            <!-- ==================== 左侧：四步流程 ==================== -->
-            <ScrollViewer Grid.Column="0" VerticalScrollBarVisibility="Auto" Padding="0,0,6,0">
-                <StackPanel>
+            <!-- ==================== 左侧：五步向导（一次只露一步） ====================
+                 以前六个 GroupBox 从上到下全摊在一个滚动条里：想改纸规得滚过整屏字段，新加的能力
+                 （行式模板、整批固定值）全藏在中部，用户打开软件看不出任何变化。现在步骤条钉在顶上、
+                 内容区一步一块、上一步 / 下一步钉在底下，三样都不跟着内容滚。 -->
+            <Grid Grid.Column="0">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
 
+                <ListBox Grid.Row="0"
+                         ItemsSource="{Binding StepTitles}"
+                         SelectedIndex="{Binding StepIndex, Mode=TwoWay}"
+                         Background="Transparent" BorderThickness="0"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                         ToolTip="点任意一步直接跳过去，不必按顺序走">
+                    <ListBox.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <WrapPanel />
+                        </ItemsPanelTemplate>
+                    </ListBox.ItemsPanel>
+                    <ListBox.ItemContainerStyle>
+                        <Style TargetType="ListBoxItem">
+                            <Setter Property="Padding" Value="9,6" />
+                            <Setter Property="Margin" Value="0,0,4,6" />
+                            <Setter Property="FontSize" Value="12.5" />
+                        </Style>
+                    </ListBox.ItemContainerStyle>
+                </ListBox>
+
+                <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="0,2,6,0">
+                  <StackPanel>
+
+                    <!-- ===== 第 1 步：导入数据 ===== -->
+                    <StackPanel Visibility="{Binding StepIndex, Converter={StaticResource StepEq}, ConverterParameter=0}">
                     <GroupBox>
                         <GroupBox.Header>
-                            <TextBlock Text="① 打开工厂发来的数据（Excel / CSV）" Style="{StaticResource StepTitle}" />
+                            <TextBlock Text="打开工厂发来的数据（Excel / CSV）" Style="{StaticResource StepTitle}" />
                         </GroupBox.Header>
                         <StackPanel>
                             <Grid>
@@ -105,10 +143,13 @@
                             </Border>
                         </StackPanel>
                     </GroupBox>
+                    </StackPanel>
 
+                    <!-- ===== 第 2 步：连接字段 ===== -->
+                    <StackPanel Visibility="{Binding StepIndex, Converter={StaticResource StepEq}, ConverterParameter=1}">
                     <GroupBox>
                         <GroupBox.Header>
-                            <TextBlock Text="② 把表格列连到唛头字段" Style="{StaticResource StepTitle}" />
+                            <TextBlock Text="把表格列连到唛头字段" Style="{StaticResource StepTitle}" />
                         </GroupBox.Header>
                         <StackPanel>
                             <WrapPanel>
@@ -187,10 +228,13 @@
                             </Border>
                         </StackPanel>
                     </GroupBox>
+                    </StackPanel>
 
+                    <!-- ===== 第 3 步：选模板 ===== -->
+                    <StackPanel Visibility="{Binding StepIndex, Converter={StaticResource StepEq}, ConverterParameter=2}">
                     <GroupBox>
                         <GroupBox.Header>
-                            <TextBlock Text="③ 选唛头模板（内置 + 自己拖的）" Style="{StaticResource StepTitle}" />
+                            <TextBlock Text="选唛头模板（内置 + 自己拖的 + 从样件做的）" Style="{StaticResource StepTitle}" />
                         </GroupBox.Header>
                         <StackPanel>
                             <ComboBox ItemsSource="{Binding TemplateOptions}"
@@ -207,10 +251,13 @@
                             <TextBlock Text="{Binding TemplateInfoText}" Style="{StaticResource Hint}" Margin="0,6,0,0" />
                         </StackPanel>
                     </GroupBox>
+                    </StackPanel>
 
+                    <!-- ===== 第 4 步：拼版与编号 ===== -->
+                    <StackPanel Visibility="{Binding StepIndex, Converter={StaticResource StepEq}, ConverterParameter=3}">
                     <GroupBox>
                         <GroupBox.Header>
-                            <TextBlock Text="④ 整版拼版与件号编号（M2）" Style="{StaticResource StepTitle}" />
+                            <TextBlock Text="整版拼版与件号编号" Style="{StaticResource StepTitle}" />
                         </GroupBox.Header>
                         <StackPanel>
                             <Grid>
@@ -373,10 +420,13 @@
                             </Border>
                         </StackPanel>
                     </GroupBox>
+                    </StackPanel>
 
+                    <!-- ===== 第 5 步：核对与输出（告警归到这一步，它是印前最后一道闸）===== -->
+                    <StackPanel Visibility="{Binding StepIndex, Converter={StaticResource StepEq}, ConverterParameter=4}">
                     <GroupBox>
                         <GroupBox.Header>
-                            <TextBlock Text="⑤ 数据核对与告警" Style="{StaticResource StepTitle}" />
+                            <TextBlock Text="数据核对与告警" Style="{StaticResource StepTitle}" />
                         </GroupBox.Header>
                         <StackPanel>
                             <Border BorderBrush="#D8DDE3" BorderThickness="1" Background="White" Height="120">
@@ -398,7 +448,7 @@
 
                     <GroupBox>
                         <GroupBox.Header>
-                            <TextBlock Text="⑥ 输出与打印（M3）" Style="{StaticResource StepTitle}" />
+                            <TextBlock Text="输出与打印" Style="{StaticResource StepTitle}" />
                         </GroupBox.Header>
                         <StackPanel>
                             <Grid>
@@ -496,9 +546,25 @@
                                        Style="{StaticResource Hint}" TextWrapping="Wrap" Margin="0,4,0,0" />
                         </StackPanel>
                     </GroupBox>
+                    </StackPanel>
 
-                </StackPanel>
-            </ScrollViewer>
+                  </StackPanel>
+                </ScrollViewer>
+
+                <!-- 底栏：顶上的步骤条管“跳到哪”，这块管“接着往下走”，都不跟着内容滚。 -->
+                <Grid Grid.Row="2" Margin="0,4,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <Button Grid.Column="0" Content="← 上一步" Command="{Binding PrevStepCommand}" MinWidth="86" />
+                    <TextBlock Grid.Column="1" Text="{Binding StepHint}" Style="{StaticResource Hint}"
+                               VerticalAlignment="Center" HorizontalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                    <Button Grid.Column="2" Content="下一步 →" Command="{Binding NextStepCommand}" MinWidth="86"
+                            Margin="0" FontWeight="Bold" />
+                </Grid>
+            </Grid>
 
             <!-- ==================== 右侧：所见即所得预览（单标签 / 整版） ==================== -->
             <GroupBox Grid.Column="2">

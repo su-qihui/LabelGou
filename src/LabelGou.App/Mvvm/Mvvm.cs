@@ -19,6 +19,23 @@ public sealed class InverseBooleanToVisibilityConverter : System.Windows.Data.IV
         => throw new NotSupportedException();
 }
 
+/// <summary>
+/// 步骤号 → 只显示当前那一步的面板。向导一次只露一块，所以每个面板都要问一句“现在轮到我了吗”；
+/// <paramref name="parameter"/> 传本面板负责的步骤号（0 基）。用转换器而不是给每步派生一个带 DataTrigger 的样式，
+/// 是为了让 XAML 里每个面板只多一个属性，不至于为五步写五套样式。
+/// </summary>
+public sealed class StepIndexToVisibilityConverter : System.Windows.Data.IValueConverter
+{
+    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+        => value is int step && int.TryParse(parameter as string, NumberStyles.Integer, CultureInfo.InvariantCulture, out var wanted)
+            && step == wanted
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+        => throw new NotSupportedException();
+}
+
 /// <summary>最小 MVVM 基类（不引第三方 MVVM 库，保持依赖最少）。</summary>
 public abstract class ObservableObject : INotifyPropertyChanged
 {

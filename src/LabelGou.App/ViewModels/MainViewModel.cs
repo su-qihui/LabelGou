@@ -144,6 +144,7 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
     private double _zoom = 2.4;
     private bool _showGuides;
     private bool _aiGateBlocked;
+    private int _stepIndex;
 
     public MainViewModel() : this(uiState: null)
     {
@@ -173,6 +174,8 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         Sheet.NumberingApplied += OnNumberedLabelsChanged;
         SheetZoomInCommand = new RelayCommand(() => Sheet.SheetZoom = Math.Min(8, Sheet.SheetZoom * 1.25));
         SheetZoomOutCommand = new RelayCommand(() => Sheet.SheetZoom = Math.Max(0.1, Sheet.SheetZoom / 1.25));
+        PrevStepCommand = new RelayCommand(() => StepIndex--, () => !IsFirstStep);
+        NextStepCommand = new RelayCommand(() => StepIndex++, () => !IsLastStep);
 
         // M3：输出与打印（靠上面的拼版结果吃饭，所以必须建在 Sheet 之后）
         Export = new ExportViewModel(this);
@@ -264,6 +267,51 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
     /// <summary>整版预览的缩放（与单标签缩放互不影响）。</summary>
     public RelayCommand SheetZoomInCommand { get; }
     public RelayCommand SheetZoomOutCommand { get; }
+
+    /// <summary>五步向导的后退 / 前进（到头时命令自己变灰，不让点出界）。</summary>
+    public RelayCommand PrevStepCommand { get; }
+    public RelayCommand NextStepCommand { get; }
+
+    // ---------- 五步向导 ----------
+
+    /// <summary>六个面板、五个步骤：数据核对与告警归到“输出”那一步，因为它是印前最后一道闸。</summary>
+    private static readonly string[] StepTitlesField =
+    {
+        "① 导入数据",
+        "② 连接字段",
+        "③ 选模板",
+        "④ 拼版与编号",
+        "⑤ 核对与输出",
+    };
+
+    /// <summary>步骤条上那一排名字（界面上的步骤条与“第 x / 5 步”共用这一份，别在 XAML 里再写一遍）。</summary>
+    public IReadOnlyList<string> StepTitles => StepTitlesField;
+
+    /// <summary>
+    /// 当前停在第几步（0 基，对应 <see cref="StepTitles"/>）。
+    /// 以前这六块是一次全摊开的长滚动条，操作员得自己找“下一步在哪”，新版式藏在中部更是看不见；
+    /// 现在一步只露一块，步骤条点哪块露哪块。
+    /// </summary>
+    public int StepIndex
+    {
+        get => _stepIndex;
+        set
+        {
+            if (Set(ref _stepIndex, Math.Max(0, Math.Min(value, StepTitlesField.Length - 1))))
+            {
+                Raise(nameof(IsFirstStep));
+                Raise(nameof(IsLastStep));
+                Raise(nameof(StepHint));
+            }
+        }
+    }
+
+    public bool IsFirstStep => _stepIndex == 0;
+
+    public bool IsLastStep => _stepIndex == StepTitlesField.Length - 1;
+
+    /// <summary>底栏那行字，告诉操作员走到哪了、下一步该干什么。</summary>
+    public string StepHint => $"第 {_stepIndex + 1} / {StepTitlesField.Length} 步 · {StepTitlesField[_stepIndex]}";
 
     /// <summary>界面用它弹错误框（保持 VM 不直接依赖 MessageBox）。</summary>
     public event Action<string>? ErrorRaised;
@@ -497,7 +545,11 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         LoadSource(dialog.FileName, null);
     }
 
-    private void LoadSource(string? path, string? sheet)
+    /// <summary>
+    /// 读一份表（<paramref name="path"/> 为 null/空白时什么都不做）。对话框、重选工作表、
+    /// 以后的“把文件拖到窗口上”都走这一个入口，单测也直接拿它喂数据。
+    /// </summary>
+    public void LoadSource(string? path, string? sheet)
     {
         if (string.IsNullOrWhiteSpace(path)) return;
         try
@@ -544,12 +596,22 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
             AutoNumberCartons = _working.AutoNumberCartons;
             RebuildFieldRows();
             ApplyMapping();
+            AdvanceAfterImport();
         }
         catch (Exception ex)
         {
             ErrorRaised?.Invoke(ex.Message);
             StatusMessage = "打开失败：" + ex.Message;
         }
+    }
+
+    /// <summary>
+    /// 导入成功后把界面推到“连接字段”那一步：自动连接已经做完了，但要用户看一眼连对没有——
+    /// 这块面板以前在长滚动条中间，用户导完表根本没瞧见，才会说“导入文件没绑定列”。
+    /// </summary>
+    private void AdvanceAfterImport()
+    {
+        if (StepIndex == 0) StepIndex = 1;
     }
 
     private void BuildPreviewTable(TabularData data)

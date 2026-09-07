@@ -9,7 +9,8 @@ using LabelGou.Core.Templates;
 
 namespace LabelGou.App;
 
-/// <summary>主窗口：左侧六步流程（导入→映射→模板→拼版编号→核对→输出打印），右侧按毫米真实尺寸预览单标签与整版。</summary>
+/// <summary>主窗口：左侧五步向导（导入数据 → 连接字段 → 选模板 → 拼版编号 → 核对与输出，一次只露一步），
+/// 右侧按毫米真实尺寸预览单标签与整版。</summary>
 public partial class MainWindow : Window
 {
     private readonly MainViewModel _viewModel = new();
