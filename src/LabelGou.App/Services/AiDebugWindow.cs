@@ -22,11 +22,11 @@ public sealed class AiDebugWindow : Window
 
     private readonly ComboBox _channel = new() { Margin = new Thickness(0, 2, 0, 10) };
     private readonly TextBox _endpoint = new() { Margin = new Thickness(0, 2, 0, 10) };
-    private readonly TextBox _model = new() { Margin = new Thickness(0, 2, 0, 10) };
+    private readonly ComboBox _model = new() { IsEditable = true, Margin = new Thickness(0, 2, 0, 10), IsTextSearchEnabled = false };
     private readonly PasswordBox _apiKey = new() { Margin = new Thickness(0, 2, 0, 10) };
     private readonly CheckBox _acceptsImages = new()
     {
-        Content = "这个模型能看图（DeepSeek 的 deepseek-chat 不支持，取消勾选后它会只整理本地 OCR 认出的文字行）",
+        Content = "这个模型能看图（拉完列表或改模型名时会按名字自动判：带 vl/vision/omni 的吃图，deepseek-chat 这类不吃；判错了你直接改）",
         Margin = new Thickness(0, 2, 0, 12),
     };
     private readonly TextBlock _networkNotice = new() { TextWrapping = TextWrapping.Wrap, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 10) };
@@ -50,14 +50,18 @@ public sealed class AiDebugWindow : Window
         form.Children.Add(_channel);
 
         form.Children.Add(Labeled("服务地址 endpoint（本机 Ollama 填 http://127.0.0.1:11434）", _endpoint));
-        form.Children.Add(Labeled("模型名 model", _model));
+        form.Children.Add(Labeled("模型名 model（点下面的「拉取模型列表」挑，也可以手填）", _model));
+        _model.SelectionChanged += (_, _) => GuessImagesForModel();
         form.Children.Add(Labeled("API 密钥（留空则读环境变量 LABELGOU_LLM_KEY，推荐这种）", _apiKey));
         form.Children.Add(_acceptsImages);
         form.Children.Add(_networkNotice);
 
         var buttons = new StackPanel { Orientation = Orientation.Horizontal };
-        buttons.Children.Add(new Button { Content = "探测模型在不在", Padding = new Thickness(12, 6, 12, 6), Margin = new Thickness(0, 0, 8, 0), IsDefault = true });
-        ((Button)buttons.Children[0]).Click += async (_, _) => await ProbeAsync();
+        var list = new Button { Content = "拉取模型列表", Padding = new Thickness(12, 6, 12, 6), Margin = new Thickness(0, 0, 8, 0), IsDefault = true };
+        list.Click += async (_, _) => await RefreshModelsAsync();
+        buttons.Children.Add(list);
+        buttons.Children.Add(new Button { Content = "探测模型在不在", Padding = new Thickness(12, 6, 12, 6), Margin = new Thickness(0, 0, 8, 0) });
+        ((Button)buttons.Children[1]).Click += async (_, _) => await ProbeAsync();
         var ask = new Button { Content = "拿一张图真问一次（调试用）", Padding = new Thickness(12, 6, 12, 6), Margin = new Thickness(0, 0, 8, 0) };
         ask.Click += async (_, _) => await AskOnceAsync();
         buttons.Children.Add(ask);
@@ -137,8 +141,41 @@ public sealed class AiDebugWindow : Window
         var values = ChannelItems()[_channel.SelectedIndex].Values;
         _endpoint.Text = values.Endpoint;
         _model.Text = values.Model;
-        _acceptsImages.IsChecked = values.ModelAcceptsImages;
+        GuessImagesForModel();
         RefreshNotice();
+        // 切到一家新服务就顺手把模型列表拉下来：用户要的是“从列表里选”，不该还要他再点一下。
+        _ = RefreshModelsAsync();
+    }
+
+    /// <summary>按当前模型名重判“吃不吃图”，并在日志里说清是猜的还是手改的。</summary>
+    private void GuessImagesForModel()
+    {
+        var guess = RecognitionSettings.GuessAcceptsImages(_model.Text);
+        if (_acceptsImages.IsChecked != guess)
+        {
+            _acceptsImages.IsChecked = guess;
+            WriteLine($"按名字猜「{_model.Text}」{(guess ? "能吃图" : "只能看文字")}，不对就直接改上面那个勾选框。");
+        }
+    }
+
+    /// <summary>拉模型列表填进下拉框。列不出来不报错退出，而是把原因写进日志并保留手填能力。</summary>
+    private async Task RefreshModelsAsync()
+    {
+        var settings = Collect();
+        WriteLine($"拉取 {settings.Endpoint} 的模型列表…");
+        var (ids, error) = await OllamaVisionClient.ListModelsAsync(settings);
+        if (error is not null)
+        {
+            WriteLine($"没拉到：{error}");
+            return;
+        }
+        var typed = _model.Text;
+        _model.Items.Clear();
+        foreach (var id in ids.OrderBy(x => x, StringComparer.OrdinalIgnoreCase)) _model.Items.Add(id);
+        if (!string.IsNullOrWhiteSpace(typed)) _model.Text = typed;
+        WriteLine($"共 {ids.Count} 个模型，已在下面列出来（选一个就会自动判它吃不吃图）：{string.Join(", ", ids.Take(12))}{(ids.Count > 12 ? " …" : "")}");
+        if (!ids.Any(x => string.Equals(x, settings.Model, StringComparison.OrdinalIgnoreCase)))
+            WriteLine($"注意：当前填的「{settings.Model}」不在这个列表里，可能是名字写错了或这个账号没开通。");
     }
 
     private void RefreshNotice()

@@ -86,20 +86,40 @@ public sealed class RecognitionSettings
         return string.IsNullOrWhiteSpace(ApiKey) ? null : ApiKey.Trim();
     }
 
-    /// <summary>两个常用云端的现成参数，省得用户手填地址填错。</summary>
+    /// <summary>
+    /// 几家的现成入口。注意：<strong>这里只锁地址不锁模型</strong>——
+    /// 百炼背后一堆型号（qwen3 系列、qwen-vl 系列、flash/max 各档），写死一个就等于替用户做了错决定。
+    /// 模型名靠拉列表选（<c>OllamaVisionClient.ListModelsAsync</c>），这里的 Model 只是拉到列表前的默认值。</summary>
     public static readonly CloudPreset[] CloudPresets =
     {
-        new("阿里云百炼（qwen-vl-max，看图）", "https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen-vl-max", true),
-        new("DeepSeek（deepseek-chat，只看文字）", "https://api.deepseek.com", "deepseek-chat", false),
+        new("阿里云百炼（DashScope，模型从列表里选）", "https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen-vl-max", null),
+        new("DeepSeek（模型从列表里选）", "https://api.deepseek.com", "deepseek-chat", null),
     };
 
-    /// <summary>把设置切到某个云端预设。</summary>
+    /// <summary>
+    /// 根据模型名猜它吃不吃图。OpenAI 兼容协议的 <c>/models</c> 一般只回 id，不吃图信息只能靠名字推。
+    /// <para>认得出的几种：带 <c>vl</c> / <c>vision</c> / <c>omni</c> / <c>audio</c> 的多模态吃图；
+    /// DeepSeek 的 <c>deepseek-chat</c>、<c>reasoner</c> 不吃。猜不出来时默认吃图（宁可在发图时报错，
+    /// 也不要默默把图丢了只靠文字猜）。</para>
+    /// </summary>
+    public static bool GuessAcceptsImages(string? modelId)
+    {
+        var id = (modelId ?? string.Empty).ToLowerInvariant();
+        if (id.Length == 0) return true;
+        if (id.Contains("vl") || id.Contains("vision") || id.Contains("omni")
+            || id.Contains("image") || id.Contains("multimodal") || id.Contains("qwen3.5")) return true;
+        if (id.Contains("deepseek") || id.Contains("reasoner") || id.Contains("r1")) return false;
+        return true;
+    }
+
+    /// <summary>把设置切到某个云端入口：地址与协议定下，模型名仍由用户从列表里挑。</summary>
     public void ApplyPreset(CloudPreset preset)
     {
         Endpoint = preset.Endpoint;
         Model = preset.Model;
         Provider = Providers.OpenAi;
-        ModelAcceptsImages = preset.AcceptsImages;
+        // 不再用预设里写死的吃图标记，而是按最终模型名猜：换成 qwen3-max 与 qwen-vl-max 待遇不同
+        ModelAcceptsImages = GuessAcceptsImages(preset.Model);
         // 云端一律把超时拉到 60 秒以上：公网往返 + 排队，180 秒是个不折腾人的上限。
         if (TimeoutSeconds < 60) TimeoutSeconds = 120;
     }
@@ -111,8 +131,11 @@ public sealed class RecognitionSettings
         public const string OpenAi = "openai";
     }
 
-    /// <summary>云端预设（名字、基地址、模型名、吃不吃图）。</summary>
-    public sealed record CloudPreset(string Name, string Endpoint, string Model, bool AcceptsImages);
+    /// <summary>
+    /// 云端入口（名字、基地址、默认模型名）。<see cref="AcceptsImagesOverride"/> 为 null 表示
+    /// “按模型名猜”，因为同一个账号里既有吃图的也有不吃图的型号。
+    /// </summary>
+    public sealed record CloudPreset(string Name, string Endpoint, string Model, bool? AcceptsImagesOverride);
 
     /// <summary>给状态栏/核对窗口用的一行通道说明。</summary>
     public string DescribeChannels()

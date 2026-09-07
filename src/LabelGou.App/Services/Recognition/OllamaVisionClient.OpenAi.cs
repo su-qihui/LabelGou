@@ -33,6 +33,71 @@ public static partial class OllamaVisionClient
         return $"{base0}/v1/{tail}";
     }
 
+    /// <summary>
+    /// 拉这个服务上的模型清单（两家都能列：Ollama 的 <c>/api/tags</c> 与 OpenAI 兼容的 <c>/models</c>）。
+    /// <para>为什么要这个：用户说得很直接——百炼不只有 qwen-vl，qwen3 的 flash / max 各档都能用，
+    /// 该做的是把列表拉下来让他选，而不是我们替他锁一个型号。列不出来时返回原因，
+    /// 界面上仍可以手填模型名（有些网关不实现 /models）。</para>
+    /// </summary>
+    public static async Task<(IReadOnlyList<string> Ids, string? Error)> ListModelsAsync(
+        RecognitionSettings settings,
+        CancellationToken cancel = default,
+        HttpMessageHandler? handler = null)
+    {
+        var empty = Array.Empty<string>();
+        var openAi = settings.Provider == RecognitionSettings.Providers.OpenAi;
+        if (string.IsNullOrWhiteSpace(settings.Endpoint)) return (empty, "没有填服务地址。");
+        string? key = null;
+        if (openAi)
+        {
+            key = settings.ResolveApiKey();
+            if (key is null)
+                return (empty, $"云端需要密钥（填设置里的 apiKey，或设环境变量 {settings.ApiKeyEnvVar}）。");
+        }
+
+        try
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancel);
+            timeout.CancelAfter(TimeSpan.FromSeconds(Math.Clamp(settings.TimeoutSeconds, 5, 30)));
+            var url = openAi ? OpenAiUrl(settings.Endpoint, "models") : settings.Endpoint.TrimEnd('/') + "/api/tags";
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            if (key is not null) request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
+
+            using var response = await ClientFor(handler).SendAsync(request, timeout.Token).ConfigureAwait(false);
+            var body = await response.Content.ReadAsStringAsync(timeout.Token).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+                return (empty, $"服务返回 {(int)response.StatusCode}：{Brief(body)}");
+
+            var ids = new List<string>();
+            using var doc = JsonDocument.Parse(body);
+            var root = doc.RootElement;
+            if (openAi && root.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var m in data.EnumerateArray())
+                    if (m.TryGetProperty("id", out var id) && id.ValueKind == JsonValueKind.String && id.GetString() is { } s)
+                        ids.Add(s);
+            }
+            else if (!openAi && root.TryGetProperty("models", out var models) && models.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var m in models.EnumerateArray())
+                    if (m.TryGetProperty("name", out var name) && name.ValueKind == JsonValueKind.String && name.GetString() is { } s)
+                        ids.Add(s);
+            }
+
+            return ids.Count > 0
+                ? (ids, null)
+                : (empty, "服务返回了空清单（可能这个端点不支持列模型），在模型名里手填即可。");
+        }
+        catch (OperationCanceledException) when (!cancel.IsCancellationRequested)
+        {
+            return (empty, "拉模型列表超时。");
+        }
+        catch (Exception ex)
+        {
+            return (empty, $"拉模型列表失败：{ex.Message}");
+        }
+    }
+
     /// <summary>把 OCR 文字行拼成给纯文本模型的证据块（定案 D11：OCR 行当证据池，模型只做整理）。</summary>
     public static string OcrLinesPrompt(RecognizedText text)
     {

@@ -150,7 +150,7 @@ public class CloudChannelTests : IDisposable
         var settings = new RecognitionSettings();
         Assert.True(settings.StaysOnThisMachine);   // 默认指向 127.0.0.1
 
-        var bailian = RecognitionSettings.CloudPresets.First(p => p.Name.Contains("qwen-vl"));
+        var bailian = RecognitionSettings.CloudPresets.First(p => p.Name.Contains("DashScope"));
         settings.ApplyPreset(bailian);
 
         Assert.Equal(RecognitionSettings.Providers.OpenAi, settings.Provider);
@@ -158,10 +158,69 @@ public class CloudChannelTests : IDisposable
         Assert.Contains("数据会离开这台电脑", settings.DescribeChannels());
         Assert.True(settings.ModelAcceptsImages);   // 百炼这个预设是看图的
 
-        var deepseek = RecognitionSettings.CloudPresets.First(p => p.Name.Contains("deepseek"));
+        var deepseek = RecognitionSettings.CloudPresets.First(p => p.Name.Contains("DeepSeek"));
         settings.ApplyPreset(deepseek);
         Assert.False(settings.ModelAcceptsImages);  // DeepSeek 只能整理 OCR 文字
         Assert.Contains("不看图", settings.DescribeChannels());
+    }
+
+    [Theory]
+    [InlineData("qwen-vl-max", true)]
+    [InlineData("qwen3.5:2b", true)]        // 本机这个就带 vision 能力
+    [InlineData("qwen3-max", true)]          // 认不出吃不吃图时默认吃图：发图只会换来一句可见的接口错误，比默默丢图好
+    [InlineData("deepseek-chat", false)]
+    [InlineData("deepseek-reasoner", false)]
+    [InlineData("", true)]                  // 猜不出来时默认吃图：宁可在发图时报错，也不要默默丢图
+    public void 按模型名猜吃不吃图(string modelId, bool expected)
+        => Assert.Equal(expected, RecognitionSettings.GuessAcceptsImages(modelId));
+
+    [Fact]
+    public async Task 拉云端模型列表取data里的id()
+    {
+        var handler = new StubHandler
+        {
+            Responder = _ => """{"data":[{"id":"qwen-vl-max"},{"id":"qwen3-max"},{"id":"deepseek-chat"}]}""",
+        };
+
+        var (ids, error) = await OllamaVisionClient.ListModelsAsync(Cloud(), default, handler);
+
+        Assert.Null(error);
+        Assert.Equal(3, ids.Count);
+        Assert.Contains("qwen3-max", ids);   // 用户要点名的那种型号必须在列表里能选到
+        Assert.EndsWith("/v1/models", handler.RequestUris[0]);
+        Assert.Equal("Bearer sk-test-key", handler.AuthHeaders[0]);
+    }
+
+    [Fact]
+    public async Task 拉本机ollama模型列表走apitags不需要密钥()
+    {
+        var handler = new StubHandler
+        {
+            Responder = _ => """{"models":[{"name":"qwen3.5:2b"},{"name":"qwen3-vl:4b"}]}""",
+        };
+        var settings = new RecognitionSettings();   // 默认就是本机 ollama
+
+        var (ids, error) = await OllamaVisionClient.ListModelsAsync(settings, default, handler);
+
+        Assert.Null(error);
+        Assert.Equal(new[] { "qwen3.5:2b", "qwen3-vl:4b" }, ids);
+        Assert.EndsWith("/api/tags", handler.RequestUris[0]);
+        Assert.Null(handler.AuthHeaders[0]);
+    }
+
+    [Fact]
+    public async Task 云端没密钥时不拉列表并说清怎么填()
+    {
+        var handler = new StubHandler();
+        var settings = Cloud();
+        settings.ApiKey = null;
+
+        var (ids, error) = await OllamaVisionClient.ListModelsAsync(settings, default, handler);
+
+        Assert.Empty(ids);
+        Assert.NotNull(error);
+        Assert.Contains("密钥", error);
+        Assert.Empty(handler.RequestUris);
     }
 
     [Fact]
