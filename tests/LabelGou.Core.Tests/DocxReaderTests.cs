@@ -119,6 +119,50 @@ public class DocxReaderTests
         Assert.Equal(new[] { "抬头:MACYS", "G.W. 25.5 KGS", "N.W. 22.1 KGS", "备注:轻放" }, lines);
     }
 
+    [Fact]
+    public void 格子里套的小表不会被静默丢掉()
+    {
+        var body = """
+            <w:tbl><w:tr>
+              <w:tc><w:p><w:r><w:t>MEAS:</w:t></w:r></w:p></w:tc>
+              <w:tc>
+                <w:tbl><w:tr>
+                  <w:tc><w:p><w:r><w:t>60x40x30</w:t></w:r></w:p></w:tc>
+                  <w:tc><w:p><w:r><w:t>CM</w:t></w:r></w:p></w:tc>
+                </w:tr></w:tbl>
+              </w:tc>
+            </w:tr></w:tbl>
+            """;
+
+        // 上一版把「嵌在子表里的段落」筛掉了却不递归，结果小表里的字一格不剩地静默丢了
+        Assert.Equal(new[] { "MEAS: 60x40x30 CM" }, Read(body));
+    }
+
+    [Fact]
+    public void 格子里的文本框不会被静默丢掉()
+    {
+        var body = """
+            <w:tbl><w:tr>
+              <w:tc><w:p><w:r><w:t>ORIGIN:</w:t></w:r>
+                <mc:AlternateContent><mc:Choice Requires="wps"><w:drawing><wp:anchor><a:graphic>
+                  <a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+                    <wps:wsp><wps:txbx><w:txbxContent>
+                      <w:p><w:r><w:t>MADE IN CHINA</w:t></w:r></w:p>
+                    </w:txbxContent></wps:txbx></wps:wsp>
+                  </a:graphicData></a:graphic></wp:anchor></w:drawing></mc:Choice>
+                <mc:Fallback><w:pict><v:shape><v:textbox><w:txbxContent>
+                  <w:p><w:r><w:t>MADE IN CHINA</w:t></w:r></w:p>
+                </w:txbxContent></v:textbox></v:shape></w:pict></mc:Fallback>
+              </mc:AlternateContent></w:p></w:tc>
+              <w:tc><w:p><w:r><w:t>CN</w:t></w:r></w:p></w:tc>
+            </w:tr></w:tbl>
+            """;
+
+        // 一条规则贯穿正文与表格：一个段落一行。文本框里的字单独成线，
+        // 既不会被宿主段落吞掉或丢在格里不读，也不会因为 Fallback 副本重复。
+        Assert.Equal(new[] { "ORIGIN: CN", "MADE IN CHINA" }, Read(body));
+    }
+
     // ---------- 文本框：一份内容只能有一条线 ----------
 
     /// <summary>Word 存文本框的真实形状：Choice 走 wps，Fallback 走 v:textbox，两份内容一字不差。</summary>

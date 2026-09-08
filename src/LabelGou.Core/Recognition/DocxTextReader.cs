@@ -69,7 +69,7 @@ public static class DocxTextReader
             if (node.Name == w + "tr")
             {
                 if (node.Ancestors(w + "tr").Any()) continue;         // 嵌套表的行由外层那一行一起算
-                lines = RowLines(node, w);
+                lines = RowLines(node, w, mc);
             }
             else if (node.Name == w + "p")
             {
@@ -108,15 +108,10 @@ public static class DocxTextReader
     /// <summary>把一行的各列拼成行：列与列之间一个空格；单元格里有几段，就按段序对齐成几行（段数不够的补空）。
     /// <para>为什么按行拼而不是逐格摊平：两列表格（左列标签、右列值）摊平后标签与值分家，
     /// <see cref="RuleFieldExtractor"/> 是靠「同一行里锚住标签取后面的值」干活的，分家等于抽不出。</para></summary>
-    private static IReadOnlyList<string> RowLines(XElement row, XNamespace w)
+    private static IReadOnlyList<string> RowLines(XElement row, XNamespace w, XNamespace mc)
     {
-        var cells = row.Elements(w + "tc").ToList();
-        var cellLines = cells
-            .Select(tc => tc.Descendants(w + "p")
-                .Where(p => p.Ancestors(w + "tr").All(tr => tr == row))   // 嵌套表的段落不算这一格
-                .Select(p => ParagraphText(p, w))
-                .Where(s => s.Length > 0)
-                .ToList())
+        var cellLines = row.Elements(w + "tc")
+            .Select(tc => CellLines(tc, w, mc))
             .Where(list => list.Count > 0)
             .ToList();
         if (cellLines.Count == 0) return Array.Empty<string>();
@@ -130,6 +125,51 @@ public static class DocxTextReader
             if (joined.Length > 0) lines.Add(joined);
         }
         return lines;
+    }
+
+    /// <summary>一个单元格里有几行：段落各一行（段落里嵌的文本框也各算自己那一行），单格套小表则递归把那些行接进来。
+    /// <para>上一版拿 <c>Descendants("w:p")</c> 收段落、再把「嵌在子表里的」筛掉，结果是嵌套表里的字
+    /// 一格的也不剩地静默丢了——递归下去才算真读完，也不重复。</para>
+    /// <para>文本框不能只取宿主段落：宿主段落只算自己的 <c>w:t</c>（见 <see cref="ParagraphText"/>），
+    /// 正文侧靠外层文档序遍历补上嵌套段落，格子里那些轮不到遍历，就得在这里自己收。</para></summary>
+    private static List<string> CellLines(XElement cell, XNamespace w, XNamespace mc)
+    {
+        var lines = new List<string>();
+        foreach (var child in cell.Elements())
+        {
+            if (child.Name == w + "p")
+            {
+                AddParagraphWithTextBoxes(child, lines, w, mc);
+            }
+            else if (child.Name == w + "tbl")
+            {
+                foreach (var nested in TableLines(child, w, mc)) lines.Add(nested);
+            }
+        }
+        return lines;
+    }
+
+    /// <summary>宿主段落自己一行，其后紧跟它携带的文本框段落（每个一段一行），与正文侧「一段一条」同口径。</summary>
+    private static void AddParagraphWithTextBoxes(XElement paragraph, List<string> lines, XNamespace w, XNamespace mc)
+    {
+        var own = ParagraphText(paragraph, w);
+        if (own.Length > 0) lines.Add(own);
+
+        foreach (var nested in paragraph.Descendants(w + "p"))
+        {
+            if (IsInFallback(nested, mc)) continue;         // 回退副本是同一份内容的第二遍
+            var text = ParagraphText(nested, w);
+            if (text.Length > 0) lines.Add(text);
+        }
+    }
+
+    /// <summary>一张表（可能是格里的嵌套小表）按行出行。</summary>
+    private static IEnumerable<string> TableLines(XElement table, XNamespace w, XNamespace mc)
+    {
+        foreach (var row in table.Elements(w + "tr"))
+        {
+            foreach (var line in RowLines(row, w, mc)) yield return line;
+        }
     }
 
     /// <summary>
