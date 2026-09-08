@@ -12,6 +12,8 @@ using LabelGou.Core.Layout;
 using LabelGou.Core.Mapping;
 using LabelGou.Core.Marks;
 using LabelGou.Core.Templates;
+using ColumnPortrait = LabelGou.Core.Recognition.ColumnPortrait;
+using TablePortrait = LabelGou.Core.Recognition.TablePortrait;
 
 namespace LabelGou.App.ViewModels;
 
@@ -827,6 +829,20 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         StatusMessage = filled == 0
             ? "整批固定值已清空，表里没有的列回到不印。"
             : $"已记下 {filled} 个整批固定值（表里没这些列，整批共用，改方案才会变）。";
+    }
+
+    /// <summary>
+    /// 整张表的画像（<strong>含没连上字段的列</strong>），给 AI 排版当第一份材料。
+    /// <para>以前只把「已连上的字段」递给模型，于是 ① 自动绑定猜错了它无从纠正
+    /// ② 流水号 / 每箱品名这类没连上的列对它干脆不存在 ③ 一张全没连上的表（TOP 那种）直接把它挡在门外
+    /// （用户 2026-09-08：「即使我把正确的排版给它，它也按表格的来」）。这里只摊事实，不替模型裁决。</para>
+    /// </summary>
+    public (IReadOnlyList<ColumnPortrait> Columns, string Portrait)? BuildTablePortrait()
+    {
+        var data = _data;
+        if (data is null) return null;
+        var columns = TablePortrait.Build(data, _working);
+        return (columns, TablePortrait.Describe(columns, data.RowCount));
     }
 
     private void AutoSuggest()

@@ -273,7 +273,10 @@ public partial class MainWindow : Window
             if (template is null) return null;
             var fields = _viewModel.FieldRows.Where(r => r.Mapped)
                 .Select(r => (r.FieldKey, r.DisplayName, r.SampleValue)).ToList();
-            return new Services.AiLayoutContext(fields, template.WidthMm, template.HeightMm, _viewModel.StatusMessage);
+            // 已连字段只是一半：没连上的列也要摊给模型看，否则它只能按我们的猜测排（用户 2026-09-08 圈的 TOP/郑小姐两条）。
+            var portrait = _viewModel.BuildTablePortrait();
+            return new Services.AiLayoutContext(fields, template.WidthMm, template.HeightMm, _viewModel.StatusMessage,
+                portrait?.Columns, portrait?.Portrait);
         };
         panel.ApplyLayout = ApplyAiLayout;
         panel.GoPrint = PrintFromAi;

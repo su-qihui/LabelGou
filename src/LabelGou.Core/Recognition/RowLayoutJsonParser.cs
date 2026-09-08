@@ -68,7 +68,13 @@ public static class RowLayoutJsonParser
     /// <summary>
     /// 解析模型原文。<b>从不抛</b>：任何形状问题都变成 <see cref="RowLayoutProposal.Errors"/> 里的一句人话。
     /// </summary>
-    public static RowLayoutProposal Parse(string? modelText)
+    /// <param name="modelText">模型回的那一段（带不带围栏都收）。</param>
+    /// <param name="columns">
+    /// 这张表的列画像（<see cref="TablePortrait.Build"/> 的产物）。给了它，<c>{{col:列名}}</c>
+    /// 才会被折算成<strong>真表头原样</strong>（表头带换行时模型抄不回原样，只能靠这一步）；
+    /// 不给则行为与以前一样（不拒也不对，照原样收下）。
+    /// </param>
+    public static RowLayoutProposal Parse(string? modelText, IReadOnlyList<ColumnPortrait>? columns = null)
     {
         var notes = new List<string>();
         var errors = new List<string>();
@@ -96,14 +102,15 @@ public static class RowLayoutJsonParser
             if (doc.RootElement.ValueKind != JsonValueKind.Object)
                 return new RowLayoutProposal(null, notes, new[] { "JSON 的根不是对象，没法当排版方案用。" });
 
-            var spec = ReadSpec(doc.RootElement, notes, errors);
+            var spec = ReadSpec(doc.RootElement, notes, errors, columns);
             return errors.Count > 0
                 ? new RowLayoutProposal(null, notes, errors)
                 : new RowLayoutProposal(spec, notes, errors);
         }
     }
 
-    private static RowLayoutSpec? ReadSpec(JsonElement root, List<string> notes, List<string> errors)
+    private static RowLayoutSpec? ReadSpec(JsonElement root, List<string> notes, List<string> errors,
+        IReadOnlyList<ColumnPortrait>? columns)
     {
         var fields = Normalize(root, SpecAliases);
 
@@ -141,7 +148,7 @@ public static class RowLayoutJsonParser
 
             var cells = Normalize(item, RowAliases);
             var raw = TextField(cells, "content");
-            var content = SanitizeTokens(raw, notes);
+            var content = SanitizeTokens(raw, notes, columns);
             if (string.IsNullOrWhiteSpace(content))
             {
                 notes.Add("有一行去掉不认识的东西后空了，已丢掉这一行。");
@@ -173,8 +180,10 @@ public static class RowLayoutJsonParser
     /// <summary>
     /// 只留白名单字段与固定文字：模型造的 <c>{{Foo}}</c> 会被 <see cref="TemplateValidator"/> 判 Error 拒入库，
     /// 与其让用户对着一条看不懂的红字，不如在这里剥掉并写明剥了谁。
+    /// <para><c>{{col:列名}}</c> 多一步：先把它对上真表头（<see cref="TablePortrait.ResolveHeader"/>），
+    /// 对不上就剥掉——放行一个表里根本没有的列名，等于让模型编造数据。</para>
     /// </summary>
-    private static string SanitizeTokens(string? raw, List<string> notes)
+    private static string SanitizeTokens(string? raw, List<string> notes, IReadOnlyList<ColumnPortrait>? columns)
     {
         var text = (raw ?? string.Empty).Trim();
         if (text.Length > MaxContentChars)
@@ -195,8 +204,29 @@ public static class RowLayoutJsonParser
                     continue;
                 }
                 var token = text[(i + 2)..end].Trim();
-                if (MarkFieldCatalog.IsKnownKey(token) || TemplateTokenizer.IsBuiltInToken(token)
-                    || token.StartsWith("col:", StringComparison.OrdinalIgnoreCase))
+                if (token.StartsWith("col:", StringComparison.OrdinalIgnoreCase))
+                {
+                    var name = token[4..].Trim();
+                    var header = TablePortrait.ResolveHeader(columns, name);
+                    if (header is not null)
+                    {
+                        // 写成表头原样（可能带换行）：渲染端查的就是 col: + 原样表头。
+                        sb.Append("{{col:").Append(header).Append("}}");
+                        if (!string.Equals(header, name, StringComparison.Ordinal))
+                            notes.Add($"它写的列名「{name}」已按表头原样补全（折平的显示名 ↔ 带换行的真表头）。");
+                    }
+                    else if (columns is null)
+                    {
+                        sb.Append("{{").Append(token).Append("}}");   // 没给表画像 = 无从对证，照旧收下
+                    }
+                    else
+                    {
+                        notes.Add($"它要用的列「{name}」在这张表里找不到（表里没有这一列），已从这一行去掉（其余文字保留）。");
+                    }
+                    i = end + 1;
+                    continue;
+                }
+                if (MarkFieldCatalog.IsKnownKey(token) || TemplateTokenizer.IsBuiltInToken(token))
                 {
                     sb.Append("{{").Append(token).Append("}}");
                 }
@@ -332,28 +362,47 @@ public static class RowLayoutJsonParser
 public static class RowLayoutPrompt
 {
     /// <summary>
-    /// <paramref name="fields"/> 是「这个客户这张表里真有的列」：键、中文名、一个样例值。
-    /// 只给目录全量清单会让模型去用表里根本没有的字段，印出来就是空格子。
+    /// <paramref name="fields"/> 是「已经连上字段的那几列」：键、中文名、一个样例值。
+    /// <paramref name="tablePortrait"/> 是整张表的画像（含<strong>没连上字段的列</strong>，见 <see cref="TablePortrait"/>）。
+    /// <para>两者分开是用户 2026-09-08 点出的根因：只给已连字段，那么自动绑定猜错了它无从纠正，
+    /// 表里那些「流水号 / 每箱品名 / 厂商手写的成品文字」对它干脆不存在——「即使把正确排版给它，它也按表格的来」。</para>
+    /// <para>只给目录全量清单也不行：那会让模型去用表里根本没有的字段，印出来就是空格子。</para>
     /// </summary>
     public static string Build(
         IReadOnlyList<(string Key, string Name, string Sample)> fields,
-        double widthMm, double heightMm, string? userNote)
+        double widthMm, double heightMm, string? userNote,
+        string? tablePortrait = null)
     {
         var sb = new System.Text.StringBuilder();
         sb.Append("你是外贸纸箱唛头排版助手。请给这张标签出行式版式：唛头 = 自上而下若干行文字，")
           .Append("每行可以是固定文字与 {{字段键}} 混排（例如 \"QTY：{{Quantity}} pcs\"）。\n")
-          .Append($"标签尺寸 {widthMm:0.#} × {heightMm:0.#} 毫米。\n")
-          .Append("这张表里真实可用的字段只有下面这些（键：中文名，样例值）：\n");
+          .Append($"标签尺寸 {widthMm:0.#} × {heightMm:0.#} 毫米。\n");
+        var hasPortrait = !string.IsNullOrWhiteSpace(tablePortrait);
+        sb.Append(hasPortrait
+            ? "【我们目前连上的字段】（可以直接用键名）：\n"
+            : "这张表里真实可用的字段只有下面这些（键：中文名，样例值）：\n");
+        if (fields.Count == 0)
+            sb.Append("  - （一个都没连上，只能走下面整张表里的列）\n");
         foreach (var f in fields)
             sb.Append("  - ").Append(f.Key).Append("：").Append(f.Name)
               .Append("，样例 ").Append(string.IsNullOrWhiteSpace(f.Sample) ? "（空）" : f.Sample).Append('\n');
+        if (hasPortrait)
+        {
+            sb.Append("\n【整张表原样摊开（含没连上的列）】：\n").Append(tablePortrait!.TrimEnd()).Append('\n');
+            sb.Append("\n没连上的列也能用：写 {{col:列名}} 就能直取那一列（列名照上面那一行里的字原样抄，")
+              .Append("包括大小写与冒号，不要自己翻译或改字）。\n");
+            sb.Append("【取舍】样张（图）里有的行就要排；表里那些不像唛头内容的列（整列只填了一两行、")
+              .Append("看着像厂商批注或纸规备注的）不要拿来印；上面没列出的列也一律不许凭空造。\n");
+        }
         sb.Append("\n只回一个 JSON 对象，不要任何解释文字、不要 Markdown 围栏。形状：\n")
           .Append("{\"name\":\"...\",\"widthMm\":").Append(widthMm.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture))
           .Append(",\"heightMm\":").Append(heightMm.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture))
           .Append(",\"paddingMm\":5,\"gapMm\":2,\"drawBorder\":false,")
           .Append("\"rows\":[{\"content\":\"BOLAROM\",\"weight\":1.6,\"align\":\"center\",\"stretch\":true,\"bold\":true},")
           .Append("{\"content\":\"Item no：{{ItemNo}}\",\"weight\":1,\"align\":\"left\",\"sizePt\":14,\"stretch\":false}]}\n")
-          .Append("硬要求：rows 最多 6 行；content 里只能用上面列出的字段键，别的字段一律不要写；")
+          .Append(hasPortrait
+              ? "硬要求：rows 最多 6 行；content 里只能用上面列出的字段键，或 {{col:列名}}，别的字段一律不要写；"
+              : "硬要求：rows 最多 6 行；content 里只能用上面列出的字段键，别的字段一律不要写；")
           .Append("大字行用 stretch:true（字号由行高反算，别自己填字号）；明细行 stretch:false 并给 sizePt（3~130）；")
           .Append("不要输出任何毫米坐标、元素位置、字体名——那些由软件算，不由你算。\n");
         if (!string.IsNullOrWhiteSpace(userNote))

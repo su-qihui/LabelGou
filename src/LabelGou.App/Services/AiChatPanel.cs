@@ -12,12 +12,22 @@ using Microsoft.Win32;
 
 namespace LabelGou.App.Services;
 
-/// <summary>要 AI 排版时得先知道「这张表里真有什么、标签多大」——这些只有主界面知道，所以由它端过来。</summary>
+/// <summary>
+/// 要 AI 排版时得先知道「这张表里真有什么、标签多大」——这些只有主界面知道，所以由它端过来。
+/// <para><paramref name="Columns"/> 与 <paramref name="Portrait"/> 是第 15 棒加的：<strong>整张表</strong>的画像（含没连上字段的列）。
+/// 只递已连字段会让「先做了自动绑定」把 AI 的视野锁死在绑对的那几列上（用户 2026-09-08 点出的根因）。</para>
+/// </summary>
 public sealed record AiLayoutContext(
     IReadOnlyList<(string Key, string Name, string Sample)> Fields,
     double WidthMm,
     double HeightMm,
-    string? Note);
+    string? Note,
+    IReadOnlyList<ColumnPortrait>? Columns = null,
+    string? Portrait = null)
+{
+    /// <summary>能问的东西有没有：已连字段与整表画像一个都没才算真的没得可给（第 15 棒：不能再把「没连上字段」当门槛）。</summary>
+    public bool HasAnythingToAsk => (Fields is { Count: > 0 }) || !string.IsNullOrWhiteSpace(Portrait);
+}
 
 /// <summary>
 /// 「AI 助手」面板：和模型聊 + 让 AI 出一版排版 + 按这版去打印。
@@ -68,6 +78,9 @@ public sealed class AiChatPanel : UserControl
 
     /// <summary>AI 刚出的那版方案，等人点头。没点「用这个」之前它不落盘、不进模板库、不进预览。</summary>
     private RowLayoutSpec? _pending;
+
+    /// <summary>上一次问出去时递了哪份表画像：解析回来时要拿它对 <c>{{col:列名}}</c> 折算真表头。</summary>
+    private IReadOnlyList<ColumnPortrait>? _lastColumns;
 
     private CancellationTokenSource? _running;
     private RecognitionSettings _settings = RecognitionSettings.Load();
@@ -366,16 +379,19 @@ public sealed class AiChatPanel : UserControl
             Append("现在问不了：先走到 ① 导入数据、② 连上字段，AI 才知道这张表里真有什么。");
             return;
         }
-        if (ctx.Fields.Count == 0)
+        if (!ctx.HasAnythingToAsk)
         {
-            AppendNotice("一个字段都没连上，AI 排出来的版会是空格子。先回 ② 连接字段（可以点「自动推荐」）；如果点了推荐还是这句，那张表很可能根本没有表头行。");
+            AppendNotice("一个字段都没连上，这张表我也拿不到原样（没得可给），AI 排出来的版会是空格子。先回 ② 连接字段（可以点「自动推荐」）；如果点了推荐还是这句，那张表很可能根本没有表头行。");
             return;
         }
+        if (ctx.Fields.Count == 0)
+            AppendNotice("一个字段都没连上，那就把整张表原样交给它（含没连上的列），让它照样张排——软件不替你猜哪列是什么。");
         RefreshChannel();
         _pending = null;
         _applyLayout.IsEnabled = false;
 
-        var prompt = RowLayoutPrompt.Build(ctx.Fields, ctx.WidthMm, ctx.HeightMm, ctx.Note);
+        var prompt = RowLayoutPrompt.Build(ctx.Fields, ctx.WidthMm, ctx.HeightMm, ctx.Note, ctx.Portrait);
+        _lastColumns = ctx.Columns;
         var payload = new List<AiChatTurn>
         {
             new(AiChatTurn.System, "你是唛头行式版式生成器。只输出一个 JSON 对象，不要解释文字、不要 Markdown 围栏、不要毫米坐标。"),
@@ -385,8 +401,12 @@ public sealed class AiChatPanel : UserControl
         _image = null;
         ShowAttachment();
 
-        Append($"让 AI 出一版：{ctx.Fields.Count} 个已连字段、标签 {ctx.WidthMm:0.#}×{ctx.HeightMm:0.#} mm" +
-               (image is null ? "（没附图，它只能按字段名排）" : "（附上样张给它看）") + "…");
+        Append($"让 AI 出一版：{ctx.Fields.Count} 个已连字段"
+               + (ctx.Columns is { Count: > 0 } cols
+                   ? $"、整张表 {cols.Count} 列全给了它（含没连上的）"
+                   : "（没拿到整张表，只给了已连字段）")
+               + $"、标签 {ctx.WidthMm:0.#}×{ctx.HeightMm:0.#} mm" +
+               (image is null ? "（没附图，它只能按表里的东西排）" : "（附上样张给它看）") + "…");
 
         _running = new CancellationTokenSource();
         SetBusy(true);
@@ -425,7 +445,7 @@ public sealed class AiChatPanel : UserControl
         _pending = null;
         _applyLayout.IsEnabled = false;
 
-        var proposal = RowLayoutJsonParser.Parse(modelText);
+        var proposal = RowLayoutJsonParser.Parse(modelText, _lastColumns);
         foreach (var note in proposal.Notes) Append($"（已修正：{note}）");
         if (!proposal.HasSpec)
         {
