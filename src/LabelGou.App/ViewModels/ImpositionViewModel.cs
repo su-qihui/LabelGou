@@ -111,11 +111,11 @@ public sealed class ImpositionViewModel : ObservableObject
         ResetSheetCommand = new RelayCommand(ResetSheet, () => SelectedSheetOption is not null);
 
         ReloadSheetOptions();
-        // 先接上次用的那张纸（一开四这类纸规选过一次就不该每次重选），没记过才退回 A4。
+        // 先接上次用的那张纸（一开四这类纸规选过一次就不该每次重选），没记过才退回一页一枚 / A4。
         var rememberedId = _uiState?.Load().SheetSpecId;
-        // 「一开四」是上一版按错误理解设的默认（五家真样张全部一页一枚，一开四只是裁切指令），
-        // 被记下来不等于用户主动选过，所以当一次陈旧值处理，直接落到新的一页一枚档。
-        if (rememberedId == BuiltInSheetSpecs.IdCut4_280x200) rememberedId = null;
+        // 上一棒这里把记着的「一开四」当陈旧值强制让位给一页一枚，理由是「那只是裁切指令」。
+        // 用户 2026-09-08 拿红框否掉了这个理解（「开四就是一张排 4 个一模一样的」），于是它不再是一次迁移，
+        // 而是静默改掉用户选的纸 —— 直接拿用户记下的那张。
         SelectedSheetOption = SheetOptions.FirstOrDefault(s => s.Spec.Id == rememberedId)
                               ?? SheetOptions.FirstOrDefault(s => s.Spec.Id == BuiltInSheetSpecs.IdOnePerLabel)
                               ?? SheetOptions.FirstOrDefault(s => s.Spec.Id == BuiltInSheetSpecs.IdA4)

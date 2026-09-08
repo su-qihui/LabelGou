@@ -46,11 +46,12 @@ public sealed class RememberedLayoutTests : IDisposable
     }
 
     /// <summary>
-    /// 「一开四」当默认是上一版把裁切指令当成拼版的错误理解（五家真样张全部一页一枚）。
-    /// 它被记下来只是因为我把它设成了默认，不等于用户主动选过，所以启动时要让位给一页一枚。
+    /// 用户 2026-09-08 拿红框定案「开四就是一张排 4 个一模一样的」，所以「一开四」是一个正常选项，
+    /// 不再当陈旧值处理：记过它就启动还用它（静默把用户选的纸换成别的纸，就是他一直骂的「改了没反应」那一类）。
+    /// 真要把纸换回一页一枚，他自己在 ④ 步下拉里选。
     /// </summary>
     [Fact]
-    public void 记着一开四时让位给一页一枚()
+    public void 记着一开四时启动就用一开四()
     {
         var store = new UiStateStore(_dir);
         store.Save(new UiState
@@ -61,7 +62,7 @@ public sealed class RememberedLayoutTests : IDisposable
 
         var sheet = OnSta(() => new MainViewModel(store).Sheet.SelectedSheetOption?.Spec.Id);
 
-        Assert.Equal(BuiltInSheetSpecs.IdOnePerLabel, sheet);
+        Assert.Equal(BuiltInSheetSpecs.IdCut4_280x200, sheet);
     }
 
     [Fact]
