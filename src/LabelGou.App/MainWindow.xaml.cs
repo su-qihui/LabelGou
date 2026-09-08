@@ -32,14 +32,19 @@ public partial class MainWindow : Window
         // 整版控件靠回调取标签版面（Func 没法在 XAML 里绑），按页临时算，不预先展开几百页
         SheetView.LayoutProvider = index => _viewModel.Sheet.LayoutFor(index);
 
-        // AI 助手搬进右侧常驻页签（第 11 棒）：面板自己不知道模板库与打印在哪，三件事由这里递给它。
-        WireAi(AiPanel);
+        // AI 面板在代码里建、放进右侧宿主 AiHost（第 11 棒把它从菜单搬进来常驻）。
+        // 为什么不在 XAML 里直接挂：拆窗要把同一个实例在宿主与浮动窗之间搬，写在页签里就得先摘干净，
+        // 交给 DetachablePanel 统一做这件事更清楚（也绝不会变成第二套 AI 面板）。
+        var ai = new Services.AiChatPanel { Margin = new Thickness(0, 4, 0, 0) };
+        AiPanel = ai;
+        // 面板自己不知道模板库与打印在哪，三件事由这里递给它。
+        WireAi(ai);
 
-        // 右侧那一整块拆得下来也拼得回去（用户 2026-09-08：「AI 这个窗口做出来后要切换回去才能再看到效果」）。
-        // 拆开后 AI 在窗外、预览在窗内同时可见，"切页签"这一步就没必要了。
-        _rightPanel = new Services.DetachablePanel(RightHost, RightTabs, "LabelGou · 预览与 AI 助手");
-        _rightPanel.StateChanged += SyncRightPanelState;
-        SyncRightPanelState();
+        // 只拆 AI 这一块（用户 2026-09-08 的第二版要求：「我把 AI 窗口拆下来和排版拿来对照」）：
+        // 预览留在主窗，AI 在窗外，两边同时看得见——上一版把整块（预览 + AI）一起搬走是理解错了。
+        _aiPanel = new Services.DetachablePanel(AiHost, ai, "LabelGou · AI 助手");
+        _aiPanel.StateChanged += SyncAiPanelState;
+        SyncAiPanelState();
 
         Loaded += (_, _) =>
         {
@@ -56,19 +61,27 @@ public partial class MainWindow : Window
     private void OnErrorRaised(string message)
         => MessageBox.Show(this, message, "LabelGou", MessageBoxButton.OK, MessageBoxImage.Warning);
 
-    private Services.DetachablePanel? _rightPanel;
+    private Services.DetachablePanel? _aiPanel;
 
-    /// <summary>右侧那块现在的宿主（测试与菜单都走这里，不开第二个入口）。</summary>
-    internal Services.DetachablePanel? RightPanel => _rightPanel;
+    /// <summary>AI 面板本体（通道设置窗关回来要刷新它那一行）。</summary>
+    internal Services.AiChatPanel AiPanel { get; private set; }
 
-    private void OnDetachRightClick(object sender, RoutedEventArgs e) => _rightPanel?.Toggle();
+    /// <summary>AI 那块的搬移器（标题栏按钮、原位提示、菜单都走这里，不开第二个入口）。</summary>
+    internal Services.DetachablePanel? AiPanelHost => _aiPanel;
 
-    /// <summary>拆/收之后把按钮文字与原位提示改过来（拆出去时不能空成一块白板）。</summary>
-    private void SyncRightPanelState()
+    /// <summary>AI 挂在主窗里时的默认高度：拆走时这一行让给预览，收回来按这个数复原。</summary>
+    internal const double DockedAiHeight = 330;
+
+    private void OnDetachAiClick(object sender, RoutedEventArgs e) => _aiPanel?.Toggle();
+
+    /// <summary>拆/收之后同步：按钮文字、原位提示，以及把 AI 那一行的高度让给预览。</summary>
+    private void SyncAiPanelState()
     {
-        var detached = _rightPanel is { IsDetached: true };
+        var detached = _aiPanel is { IsDetached: true };
+        AiBox.Visibility = detached ? Visibility.Collapsed : Visibility.Visible;
         DetachedHint.Visibility = detached ? Visibility.Visible : Visibility.Collapsed;
-        DetachRightButton.Content = detached ? "收回主窗口 ⇤" : "拆成独立窗口 ⇱";
+        AiRow.Height = detached ? GridLength.Auto : new GridLength(DockedAiHeight);
+        DetachAiButton.Content = detached ? "收回主窗口 ⇤" : "把 AI 拆成独立窗口 ⇱";
     }
 
     private void OnExitClick(object sender, RoutedEventArgs e) => Close();

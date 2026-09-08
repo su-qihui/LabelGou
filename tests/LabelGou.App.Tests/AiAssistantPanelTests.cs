@@ -13,8 +13,11 @@ namespace LabelGou.App.Tests;
 
 /// <summary>
 /// 「AI 助手」面板的钉子（M7 第 11 棒）。用户原话：<b>「这个 AI 界面不应该藏起来，应该显示出来」</b>。
-/// <para>所以第一条测试钉的不是行为而是<strong>拓扑</strong>：AI 必须在主窗口的常驻页签里。
+/// <para>所以第一条测试钉的不是行为而是<strong>拓扑</strong>：AI 必须在主窗口里常驻、有自己的那块地方。
 /// 上一棒的教训就是「能力藏在代码里等于没有」——<c>ChatAsync</c> 早就写好了，界面上没入口，用户照样用不了。</para>
+/// <para><strong>2026-09-08 第 16 棒第二版</strong>：AI 不再是预览的一个页签。用户原话
+/// 「<strong>我把 AI 窗口拆下来和排版拿来对照</strong>」——只拆 AI 那一块，预览留在主窗；
+/// 所以这里多钉一条反向：XAML 里不得再出现 <c>&lt;TabItem Header="AI 助手"&gt;</c>。</para>
 /// <para>其余几条钉住那条确认路的红线：<b>AI 给的方案没经人点头前一个字都不落地</b>，脏方案连递都不递，
 /// 落地只递一次。这里不联网（真网络证据在 <c>_probe\b10-net\</c>），走 <see cref="AiChatPanel.FeedLayoutAnswer"/>
 /// 把「解析 → 骨架 → 校验 → 等点头」整条跑完——只测 HTTP 那一层等于没测用户真正会碰的东西。</para>
@@ -51,14 +54,20 @@ public class AiAssistantPanelTests
     }
 
     [Fact]
-    public void AI助手是主窗口里的常驻页签不是只藏在菜单()
+    public void AI助手常驻主窗口自己的那块不再当预览的页签()
     {
         var xaml = RepoFile("src", "LabelGou.App", "MainWindow.xaml");
+        var code = RepoFile("src", "LabelGou.App", "MainWindow.xaml.cs");
 
-        Assert.Contains("Header=\"AI 助手\"", xaml);
-        Assert.Contains("x:Name=\"AiPanel\"", xaml);
-        Assert.Contains("services:AiChatPanel", xaml);
-        Assert.Contains("WireAi(AiPanel)", RepoFile("src", "LabelGou.App", "MainWindow.xaml.cs"));   // 页签那份真接上了能力，不是摆了个空壳
+        // 常驻：有自己的宿主与标题，不是藏在菜单里
+        Assert.Contains("Text=\"AI 助手\"", xaml);
+        Assert.Contains("x:Name=\"AiHost\"", xaml);
+        // 拆窗只搬这一块：预览留在主窗，两边才能对照
+        Assert.Contains("x:Name=\"DetachAiButton\"", xaml);
+        Assert.Contains("new Services.DetachablePanel(AiHost, ai", code);
+        Assert.Contains("WireAi(ai)", code);                                              // 接上了能力，不是摆个空壳
+        // 反向：AI 当页签就永远需要切回去看效果，而这正是用户要消除的那一步
+        Assert.DoesNotContain("<TabItem Header=\"AI 助手\">", xaml);
     }
 
     [Fact]

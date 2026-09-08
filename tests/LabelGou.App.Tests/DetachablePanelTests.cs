@@ -25,10 +25,11 @@ public class DetachablePanelTests
 
     private static (ContentControl Home, TabControl Tabs) Pair()
     {
+        // 拿 TabControl 当被搬的对象只为了验「搬的是同一个实例」（它带选中项这种状态）；
+        // 两页 = 主窗口现在预览那块的形状（AI 已经拆出去了，不再挤在一个页签组里）。
         var tabs = new TabControl();
         tabs.Items.Add(new TabItem { Header = "单标签" });
         tabs.Items.Add(new TabItem { Header = "整版拼版" });
-        tabs.Items.Add(new TabItem { Header = "AI 助手" });
         return (new ContentControl { Content = tabs }, tabs);
     }
 
@@ -137,14 +138,14 @@ public class DetachablePanelTests
         {
             var (home, tabs) = Pair();
             var panel = new DetachablePanel(home, tabs, "测试");
-            tabs.SelectedIndex = 2;                          // 用户正停在「AI 助手」那一页
+            tabs.SelectedIndex = 1;                          // 用户正停在「整版拼版」那一页
 
             panel.Float();
             Assert.Same(tabs, panel.FloatingWindow!.Content);
             panel.Dock();
 
             Assert.Same(tabs, home.Content);
-            Assert.Equal(2, tabs.SelectedIndex);             // 复制一份就会在这里变成 0
+            Assert.Equal(1, tabs.SelectedIndex);             // 复制一份就会在这里变成 0
             return true;
         });
     }

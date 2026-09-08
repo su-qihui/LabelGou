@@ -37,8 +37,8 @@
                 <MenuItem Header="退出(_X)" Click="OnExitClick" />
             </MenuItem>
             <MenuItem Header="视图(_V)">
-                <MenuItem Header="拆下 / 收回右侧预览与 AI 面板(_D)" Click="OnDetachRightClick"
-                          ToolTip="把右侧那一整块拆成独立窗口（AI 与预览同时看见，不用切页签）；再点一下收回原位" />
+                <MenuItem Header="拆下 / 收回 AI 助手窗口(_D)" Click="OnDetachAiClick"
+                          ToolTip="只把 AI 那一块拆成独立窗口（AI 在窗外、排版在窗内，摆在一起对照）；再点一下收回原位" />
                 <Separator />
                 <MenuItem Header="放大" Command="{Binding ZoomInCommand}" />
                 <MenuItem Header="缩小" Command="{Binding ZoomOutCommand}" />
@@ -620,25 +620,21 @@
                 </Grid>
             </Grid>
 
-            <!-- ==================== 右侧：预览（单标签 / 整版）+ 常驻 AI 助手 ==================== -->
+            <!-- ==================== 右侧：上=预览（单标签 / 整版），下=AI 助手（只有 AI 能拆走） ==================== -->
             <!-- AI 从菜单里搬到这里（第 11 棒）：用户原话「不应该藏起来，应该显示出来」。 -->
-            <GroupBox Grid.Column="2">
-                <GroupBox.Header>
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Text="预览（按真实毫米尺寸绘制）与 AI 助手" Style="{StaticResource StepTitle}" />
-                        <Button Grid.Column="1" x:Name="DetachRightButton" Content="拆成独立窗口 ⇱"
-                                Click="OnDetachRightClick" Padding="9,1" MinWidth="126"
-                                ToolTip="把这一整块（单标签 / 整版拼版 / AI 助手）拆成一个独立窗口，AI 与预览就能同时看着，不用切页签；再点一下收回原位" />
-                    </Grid>
-                </GroupBox.Header>
+            <!-- 第 16 棒改第二版：用户要的是「把 AI 窗口拆下来，和排版拿来对照」——只拆 AI 那一块，预览留在主窗。 -->
+            <Grid Grid.Column="2">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*" MinHeight="200" />
+                    <RowDefinition Height="6" />
+                    <RowDefinition x:Name="AiRow" Height="330" MinHeight="90" />
+                </Grid.RowDefinitions>
 
-                <Grid>
-                <!-- 拆出去时这块内容整体搬到浮动窗口里（同一个实例，不复制第二套预览与第二套 AI 面板） -->
-                <ContentControl x:Name="RightHost">
+                <GroupBox Grid.Row="0">
+                    <GroupBox.Header>
+                        <TextBlock Text="预览（按真实毫米尺寸绘制）" Style="{StaticResource StepTitle}" />
+                    </GroupBox.Header>
+
                 <TabControl x:Name="RightTabs">
                     <TabItem Header="单标签">
                         <Grid>
@@ -739,22 +735,40 @@
                         </Grid>
                     </TabItem>
 
-                    <!-- 一套实现两处用：这个面板与「和模型对话」窗里的是同一个类（第 11 棒）。 -->
-                    <TabItem Header="AI 助手">
-                        <services:AiChatPanel x:Name="AiPanel" Margin="0,4,0,0" />
-                    </TabItem>
                 </TabControl>
-                </ContentControl>
+                </GroupBox>
+
+                <!-- 预览与 AI 之间可拖：AI 那块想高一点就往下拽这条 -->
+                <GridSplitter Grid.Row="1" Height="6" HorizontalAlignment="Stretch"
+                              Background="#EDF0F4" ResizeBehavior="PreviousAndNext" />
+
+                <GroupBox Grid.Row="2" x:Name="AiBox">
+                    <GroupBox.Header>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="AI 助手" Style="{StaticResource StepTitle}" />
+                            <Button Grid.Column="1" x:Name="DetachAiButton" Content="把 AI 拆成独立窗口 ⇱"
+                                    Click="OnDetachAiClick" Padding="9,1" MinWidth="152"
+                                    ToolTip="只把 AI 这一块拆成独立窗口：AI 在窗外、排版在窗内，摆在一起对照着改；再点一下收回原位" />
+                        </Grid>
+                    </GroupBox.Header>
+                    <!-- AI 面板由代码建好放进这个宿主（同一个实例在宿主与浮动窗之间搬，不复制第二套面板） -->
+                    <ContentControl x:Name="AiHost" />
+                </GroupBox>
 
                 <!-- 拆出去之后原位不能空成一块白板让人以为程序炸了：说实话 + 给一个收回入口 -->
-                <StackPanel x:Name="DetachedHint" Visibility="Collapsed"
-                            VerticalAlignment="Center" HorizontalAlignment="Center">
-                    <TextBlock Text="预览与 AI 助手已拆成独立窗口（在桌面上，标题「LabelGou · 预览与 AI 助手」）。&#10;拖到显示器另一边就能 AI 在窗外、效果在窗内同时看见；关掉那个窗口也会自动收回这里。"
-                               TextWrapping="Wrap" MaxWidth="420" TextAlignment="Center" />
-                    <Button Content="收回这里" Click="OnDetachRightClick" Margin="0,10,0,0" HorizontalAlignment="Center" />
-                </StackPanel>
-                </Grid>
-            </GroupBox>
+                <Border Grid.Row="2" x:Name="DetachedHint" Visibility="Collapsed"
+                        Background="#F5F7FA" BorderBrush="#CDD3DA" BorderThickness="1" Padding="10,8">
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="AI 助手已拆成独立窗口（标题「LabelGou · AI 助手」），这一行的高度还给预览。&#10;把那个窗口拖到显示器另一边，就能 AI 在窗外、排版在窗内对照着看；关掉它也会自动收回这里。"
+                                   Style="{StaticResource Hint}" TextWrapping="Wrap" />
+                        <Button Content="收回这里" Click="OnDetachAiClick" Margin="0,8,0,0" HorizontalAlignment="Left" />
+                    </StackPanel>
+                </Border>
+            </Grid>
         </Grid>
     </DockPanel>
 </Window>
