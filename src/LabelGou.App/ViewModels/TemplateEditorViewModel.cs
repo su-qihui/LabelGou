@@ -934,6 +934,7 @@ public sealed class ElementRow
     public string KindText => Element.Kind switch
     {
         ElementKind.Text => "文本",
+        ElementKind.Barcode => "条码",
         ElementKind.Line => "线条",
         ElementKind.Rect => "矩形框",
         ElementKind.Image => "图片",
@@ -1002,6 +1003,7 @@ public sealed class EditableElement : ObservableObject
     public string KindText => _element.Kind switch
     {
         ElementKind.Text => "文本",
+        ElementKind.Barcode => "条码",
         ElementKind.Line => "线条",
         ElementKind.Rect => "矩形框",
         ElementKind.Image => "图片",

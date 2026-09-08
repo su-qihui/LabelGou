@@ -34,12 +34,22 @@ public static class BuiltInSheetSpecs
     /// </summary>
     public const string IdCut4_280x200 = "sheet.cut4-280x200";
 
+    /// <summary>28×20 纸上一开八：单枚 100×70，一张 8 枚（用户 2026-09-09 给的四档开法之一）。</summary>
+    public const string IdCut8_280x200 = "sheet.cut8-280x200";
+
+    /// <summary>28×20 纸上大开二：单枚 200×140，一张 2 枚。</summary>
+    public const string IdBig2_280x200 = "sheet.big2-280x200";
+
+    /// <summary>16×24 纸上小开二：单枚 160×120，一张 2 枚（竖着叠两枚，不用旋转）。</summary>
+    public const string IdSmall2_160x240 = "sheet.small2-160x240";
+
     public const string IdCustom = "sheet.custom";
 
-    /// <summary>全部内置纸规（每次调用都是新实例）。</summary>
+    /// <summary>全部内置纸规（每次调用都是新实例）。四档开法排在最前：那是店里天天用的那几张。</summary>
     public static IReadOnlyList<SheetSpec> All() => new List<SheetSpec>
     {
-        OnePerLabel(), A4(), A4Landscape(), A3(), A4Dense(), A4Small60x40(), Cut4_280x200(), Custom(),
+        Cut4_280x200(), Cut8_280x200(), Big2_280x200(), Small2_160x240(),
+        OnePerLabel(), A4(), A4Landscape(), A3(), A4Dense(), A4Small60x40(), Custom(),
     };
 
     /// <summary>按 id 取一份新副本；未知 id 返回 null。</summary>
@@ -51,6 +61,9 @@ public static class BuiltInSheetSpecs
         IdA4Dense => A4Dense(),
         IdA4Small => A4Small60x40(),
         IdCut4_280x200 => Cut4_280x200(),
+        IdCut8_280x200 => Cut8_280x200(),
+        IdBig2_280x200 => Big2_280x200(),
+        IdSmall2_160x240 => Small2_160x240(),
         IdOnePerLabel => OnePerLabel(),
         IdCustom => Custom(),
         _ => null,
@@ -118,12 +131,62 @@ public static class BuiltInSheetSpecs
     /// </summary>
     public static SheetSpec Cut4_280x200()
     {
-        var spec = New(IdCut4_280x200, "28×20 一开四（2 × 2 = 4 枚 140×100）",
+        var spec = New(IdCut4_280x200, "一开四・28×20 纸 140×100（2 × 2 = 4 枚）",
             "整张铺满 4 枚 140×100，页边与间距 0；铺满就没有地方画角线与套准十字（会提示你），中间那一刀沿两枚标签的公共边。", 280, 200, 0, 0);
         spec.LabelWidthMm = 140;
         spec.LabelHeightMm = 100;
         spec.Columns = 2;
         spec.Rows = 2;
+        spec.AllowRotate = false;
+        spec.CropMarks = CropMarkMode.SheetCorners;
+        return spec;
+    }
+
+    /// <summary>
+    /// 280×200 纸上一开八：单枚 100×70。用户 2026-09-09 定案的四档开法之一：
+    /// 「<strong>一开八 28*20 的 10*7 的 8 个标签</strong>」。
+    /// <para>几何上只有一种排法能拿到 8 枚：正着放（100 横 70 竖）只能 2×2 = 4 枚，
+    /// 转 90°（70 横 100 竖）才能 4×2 = 8 枚，而 8×7000 mm² = 56000 mm² = 整张纸面积，一分不剩。
+    /// 所以这一档必须开着「允许旋转」：标签在纸面上是横过来的，但裁下来贴到箱子上时字是正的
+    /// （旋转的是摆位，不是内容）。行列故意不写死（=0 自动密排），交给引擎自己算出 4×2。</para>
+    /// </summary>
+    public static SheetSpec Cut8_280x200()
+    {
+        var spec = New(IdCut8_280x200, "一开八・28×20 纸 100×70（转 90° 摆满 8 枚）",
+            "整张铺满 8 枚 100×70（4 列 × 2 行，标签转 90° 摆位；裁下来贴箱上字是正的），页边与间距 0。", 280, 200, 0, 0);
+        spec.LabelWidthMm = 100;
+        spec.LabelHeightMm = 70;
+        spec.AllowRotate = true;
+        spec.CropMarks = CropMarkMode.SheetCorners;
+        return spec;
+    }
+
+    /// <summary>
+    /// 280×200 纸上大开二：单枚 200×140（「<strong>大开二 28*20 的 20*14 的 2 标签</strong>」）。
+    /// <para>跟一开八同一个道理：200×140 正着放一张只能塞 1 枚，转 90°（140 横 200 竖）才能左右两枚
+    /// （2×140 = 280 整宽，200 整高），所以这一档也开着允许旋转。</para>
+    /// </summary>
+    public static SheetSpec Big2_280x200()
+    {
+        var spec = New(IdBig2_280x200, "大开二・28×20 纸 200×140（转 90° 摆 2 枚）",
+            "整张铺满 2 枚 200×140（转 90° 后左右各一枚，刚好铺满），页边与间距 0；大箱唛用。", 280, 200, 0, 0);
+        spec.LabelWidthMm = 200;
+        spec.LabelHeightMm = 140;
+        spec.AllowRotate = true;
+        spec.CropMarks = CropMarkMode.SheetCorners;
+        return spec;
+    }
+
+    /// <summary>
+    /// 160×240 纸上小开二：单枚 160×120（「<strong>小开二 16*24 的 16*12 的 2 个标签</strong>」）。
+    /// <para>这一档不用旋转：纸宽 160 = 标签宽 160，纸高 240 = 两枚 120 竖着叠，1×2 刚好铺满。</para>
+    /// </summary>
+    public static SheetSpec Small2_160x240()
+    {
+        var spec = New(IdSmall2_160x240, "小开二・16×24 纸 160×120（1 列 × 2 行 = 2 枚）",
+            "整张铺满 2 枚 160×120（竖着叠两枚，不旋转），页边与间距 0；小箱/内箱唛用。", 160, 240, 0, 0);
+        spec.LabelWidthMm = 160;
+        spec.LabelHeightMm = 120;
         spec.AllowRotate = false;
         spec.CropMarks = CropMarkMode.SheetCorners;
         return spec;

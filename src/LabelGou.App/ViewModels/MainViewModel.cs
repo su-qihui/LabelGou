@@ -181,6 +181,9 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         // （先建好再选模板，因为 SelectedTemplate 的 setter 会通知它重算）
         Sheet = new ImpositionViewModel(this, _uiState);
         Sheet.NumberingApplied += OnNumberedLabelsChanged;
+        // 纸规一换，③/④ 步那句「模板尺寸与这张纸配不配」就得重算（四档开法同名同尺寸，配不上就是选错了档）。
+        Sheet.SheetSelectionChanged += () => Raise(nameof(TemplateSheetHint));
+        UseMatchingTemplateCommand = new RelayCommand(UseMatchingTemplate, () => MatchingTemplateOption is not null);
         SheetZoomInCommand = new RelayCommand(() => Sheet.SheetZoom = Math.Min(8, Sheet.SheetZoom * 1.25));
         SheetZoomOutCommand = new RelayCommand(() => Sheet.SheetZoom = Math.Max(0.1, Sheet.SheetZoom / 1.25));
         PrevStepCommand = new RelayCommand(() => StepIndex--, () => !IsFirstStep);
@@ -188,6 +191,9 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
 
         // M3：输出与打印（靠上面的拼版结果吃饭，所以必须建在 Sheet 之后）
         Export = new ExportViewModel(this);
+
+        // 第 17 棒：③ 步的「条码」栏目。它只读表与模板，落盘仍走下面这条 _templateStore 那一路（不开第二个写入口）。
+        Barcode = new BarcodePanelViewModel(this, AddBarcodeElement);
 
         foreach (var template in _templateStore.ListAll()) TemplateOptions.Add(new TemplateOption(template));
         // 先接上次用的那套（内置模板每加一批都退回标准模板，会让新版式在界面上等于不存在），
@@ -210,8 +216,71 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
     /// <summary>M2：整版拼版 + 件号自动编号。</summary>
     public ImpositionViewModel Sheet { get; }
 
+    /// <summary>
+    /// ③/④ 步的那句配套提示：当前模板的尺寸与选中的那张纸的刀模尺寸对不上时才非空。
+    /// <para>为什么需要它：用户 2026-09-09 把四档开法（一开四/一开八/大开二/小开二）定成常用档，
+    /// 那么「纸选了一开八、模板还是 140×100」就是最常见的一次错配；以前只有拼版 issue 里那句
+    /// 「与模板不一致」，不告诉他该换成哪一份。</para>
+    /// </summary>
+    public string TemplateSheetHint
+    {
+        get
+        {
+            var template = SelectedTemplate?.Template;
+            var spec = Sheet.SelectedSheetOption?.Spec;
+            if (template is null || spec is null) return string.Empty;
+            // 纸面跟着标签走 / 刀模尺寸没填（跟随模板）的两档天生不会错配，不该拿这句话去烦用户
+            if (spec.FollowsLabel || spec.FollowTemplateSize) return string.Empty;
+            var (w, h) = (spec.LabelWidthMm, spec.LabelHeightMm);
+            if (w <= 0 || h <= 0) return string.Empty;
+            if (MatchesLabelSize(template, w, h)) return string.Empty;
+
+            var match = MatchingTemplateOption;
+            return $"纸规「{spec.Name}」的单枚是 {w:0.#}×{h:0.#} mm，当前模板是 {template.WidthMm:0.#}×{template.HeightMm:0.#} mm，对不上"
+                   + (match is null ? "：表里没有这个尺寸的模板，要么换纸、要么把这份模板的尺寸改成它。"
+                                     : $"；点这里换成「{match.Name}」。") + "\n" +
+                   "（旋转 90° 摆位不算错配：裁下来贴到箱子上字仍是正的。）";
+        }
+    }
+
+    /// <summary>模板尺寸与纸规刀模尺寸是否同一张（两个轴向都算，转 90° 是正常开料）。</summary>
+    private static bool MatchesLabelSize(LabelTemplate template, double w, double h)
+        => (Nearly(template.WidthMm, w) && Nearly(template.HeightMm, h))
+           || (Nearly(template.WidthMm, h) && Nearly(template.HeightMm, w));
+
+    private static bool Nearly(double a, double b) => Math.Abs(a - b) < 0.6;
+
+    /// <summary>与当前纸规的刀模尺寸同尺寸的那份模板（没得配返 null，按钮就灰着，不猜一个给用户）。</summary>
+    private TemplateOption? MatchingTemplateOption
+    {
+        get
+        {
+            var spec = Sheet.SelectedSheetOption?.Spec;
+            if (spec is null || spec.FollowsLabel || spec.FollowTemplateSize) return null;
+            var (w, h) = (spec.LabelWidthMm, spec.LabelHeightMm);
+            if (w <= 0 || h <= 0) return null;
+            return TemplateOptions.FirstOrDefault(t => !ReferenceEquals(t, SelectedTemplate) && MatchesLabelSize(t.Template, w, h));
+        }
+    }
+
+    /// <summary>「换成配套模板」：只换下拉里真的存着的那一份，不替用户新建或改尺寸。</summary>
+    private void UseMatchingTemplate()
+    {
+        var match = MatchingTemplateOption;
+        if (match is null) return;
+        SelectedTemplate = match;
+        StatusMessage = $"已换成与「{Sheet.SelectedSheetOption?.Spec.Name}」同尺寸的模板：{match.Name}（{match.SizeText}）。";
+        Raise(nameof(TemplateSheetHint));
+    }
+
     /// <summary>M3：打印与导出（PDF / PNG / TIFF）。</summary>
     public ExportViewModel Export { get; }
+
+    /// <summary>③ 步的条码栏目（第 17 棒）：选制式、选它读哪一列、摆哪儿。</summary>
+    public BarcodePanelViewModel Barcode { get; }
+
+    /// <summary>③/④ 步那句错配提示旁边的「换成配套模板」：只有下拉里真存着同尺寸那份才可点。</summary>
+    public RelayCommand UseMatchingTemplateCommand { get; }
 
     /// <summary>
     /// M3：需要用户点头的闸门（比如“有 N 张标签带未核对标记，还要印吗”）。
@@ -252,6 +321,40 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         SelectedTemplate = TemplateOptions.FirstOrDefault(t => t.Id == keepId)
             ?? TemplateOptions.FirstOrDefault(t => t.Id == BuiltInTemplates.IdRowsFour)
             ?? TemplateOptions.FirstOrDefault();
+    }
+
+    /// <summary>
+    /// ③ 步「条码」栏目点「加到当前模板」那一下：把一条条码元素装进当前模板并存盘。
+    /// <para>内置模板不能直接改（改了下次启动会被种子覆盖），所以先另存成用户副本再动——
+    /// 与「编辑模板…」同一条路，不开第二个写模板的入口。<see cref="TemplateStore.Save"/> 自己还会再过一道校验，
+    /// 这里不放宽。</para>
+    /// </summary>
+    private (bool Ok, string Message) AddBarcodeElement(TemplateElement element, string description)
+    {
+        var current = SelectedTemplate?.Template;
+        if (current is null) return (false, "还没选模板。");
+
+        // 深拷统一走 CloneAsUserCopy（内置那份改不得，下次启动会被种子覆盖）；
+        // 已经是用户模板就把 Id 改回来 → 原地覆盖那一份（文件名按名字算，名字没变就是同一个文件），不产副本。
+        var target = current.BuiltIn
+            ? current.CloneAsUserCopy(current.Name + "（带条码）")
+            : current.CloneAsUserCopy(current.Name);
+        if (!current.BuiltIn) target.Id = current.Id;
+        // 一份模板只放一条码：重复点不该叠出三根来（要两条就再另存一份副本）。
+        target.Elements.RemoveAll(e => e.Kind == ElementKind.Barcode);
+        target.Elements.Add(element);
+
+        var issues = TemplateValidator.Validate(target);
+        if (issues.HasError())
+            return (false, "校验拦下了（没存）：" + string.Join("；", issues.ErrorMessages()));
+
+        var saved = _templateStore.Save(target);
+        if (!saved.Saved)
+            return (false, "没存进去：" + string.Join("；", saved.Issues.ErrorMessages()));
+
+        ReloadTemplates(target.Id);
+        Services.AppLog.Info($"③ 步加条码到模板「{target.Name}」：{description}");
+        return (true, description + "；已存为模板「" + target.Name + "」并选中。要挪位置或改大小，去「编辑模板…」拖。");
     }
 
     /// <summary>拼版 VM 算完编号后回贴：记录集换成「一箱一张」的标签集。</summary>
@@ -447,6 +550,7 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
                 Sheet.RebuildPlan();
                 RebuildIssueLines();
                 RememberTemplateId(value?.Id);
+                Raise(nameof(TemplateSheetHint));
             }
         }
     }
@@ -569,6 +673,29 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         if (Math.Abs(state.PreviewTableHeight - height) < 1) return;
         state.PreviewTableHeight = height;
         _uiState.Save(state);
+    }
+
+    /// <summary>
+    /// 拆出来的 AI 浮动窗口上次摆在哪、多大（全 0 = 没记过，<see cref="Services.DetachablePanel"/> 会退回默认摆位）。
+    /// <para>状态窗只存在这里：面板与搬移器都不该拿到整个 <see cref="UiStateStore"/>，那等于开后门改别的字段。</para>
+    /// </summary>
+    public (double Left, double Top, double Width, double Height)? LoadAiFloatGeometry()
+    {
+        var s = _uiState.Load();
+        return s.AiFloatWidth > 0 && s.AiFloatHeight > 0 ? (s.AiFloatLeft, s.AiFloatTop, s.AiFloatWidth, s.AiFloatHeight) : null;
+    }
+
+    /// <summary>记下浮动窗口的位置与大小（只在收回/关窗那一次调，不跟着拖动写盘）。</summary>
+    public void SaveAiFloatGeometry(double left, double top, double width, double height)
+    {
+        var s = _uiState.Load();
+        if (Math.Abs(s.AiFloatLeft - left) < 1 && Math.Abs(s.AiFloatTop - top) < 1
+            && Math.Abs(s.AiFloatWidth - width) < 1 && Math.Abs(s.AiFloatHeight - height) < 1) return;
+        s.AiFloatLeft = left;
+        s.AiFloatTop = top;
+        s.AiFloatWidth = width;
+        s.AiFloatHeight = height;
+        _uiState.Save(s);
     }
 
     /// <summary><see cref="ILabelSource"/>：拼版 VM 用它拿当前模板。</summary>
@@ -717,6 +844,8 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
                 ColumnOptions.Add(new ColumnOption(c, $"{HeaderRowDetector.ColumnLetter(c)} · {data.Headers[c]}"));
             }
             Raise(nameof(ColumnOptions));
+            // ③ 步那个条码栏目列的是「这张表真有的列」，所以换表之后必须重列一次。
+            Barcode.RefreshSources();
 
             // 优先套用已保存的同格式方案，其次自动猜
             ProfileName = Path.GetFileNameWithoutExtension(data.SourceFile);
@@ -977,14 +1106,16 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         return _records.Any(r => (r.GetCustom(key)?.Text ?? string.Empty).Trim().Length > 0);
     }
 
-    /// <summary>这份模板的文字里用到哪些字段（<c>{{col:…}}</c> 那种直取列的另算，见 <see cref="ColumnsUsedBy"/>）。</summary>
+    /// <summary>这份模板的文字里用到哪些字段（<c>{{col:…}}</c> 那种直取列的另算，见 <see cref="ColumnsUsedBy"/>）。
+    /// <para>条码也算：它的数据同样是从某一列取的（第 17 棒），不把它算进来，
+    /// 「还差哪几项」就会漏说「条码那一列没值」。</para></summary>
     private static List<MarkFieldKey> FieldsUsedBy(LabelTemplate? template)
     {
         var used = new List<MarkFieldKey>();
         if (template is null) return used;
         foreach (var element in template.Elements)
         {
-            if (element.Kind != ElementKind.Text || string.IsNullOrEmpty(element.Text)) continue;
+            if (!CarriesTokens(element) || string.IsNullOrEmpty(element.Text)) continue;
             foreach (System.Text.RegularExpressions.Match m in FieldTokenPattern.Matches(element.Text))
             {
                 if (!MarkFieldCatalog.TryParseKey(m.Groups[1].Value, out var key)) continue;
@@ -994,6 +1125,10 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         return used;
     }
 
+    /// <summary>文本与条码共用同一套占位符，所以「这份元素吃不吃字段」也是一句判据，不在两处各写一遍。</summary>
+    private static bool CarriesTokens(TemplateElement element)
+        => element.Kind is ElementKind.Text or ElementKind.Barcode;
+
     /// <summary>这份模板直取了哪几个列标题（去重）。</summary>
     private static List<string> ColumnsUsedBy(LabelTemplate? template)
     {
@@ -1001,7 +1136,7 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         if (template is null) return used;
         foreach (var element in template.Elements)
         {
-            if (element.Kind != ElementKind.Text || string.IsNullOrEmpty(element.Text)) continue;
+            if (!CarriesTokens(element) || string.IsNullOrEmpty(element.Text)) continue;
             foreach (System.Text.RegularExpressions.Match m in ColTokenPattern.Matches(element.Text))
             {
                 var name = m.Groups[1].Value.Trim();

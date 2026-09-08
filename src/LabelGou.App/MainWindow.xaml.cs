@@ -42,7 +42,12 @@ public partial class MainWindow : Window
 
         // 只拆 AI 这一块（用户 2026-09-08 的第二版要求：「我把 AI 窗口拆下来和排版拿来对照」）：
         // 预览留在主窗，AI 在窗外，两边同时看得见——上一版把整块（预览 + AI）一起搬走是理解错了。
-        _aiPanel = new Services.DetachablePanel(AiHost, ai, "LabelGou · AI 助手");
+        _aiPanel = new Services.DetachablePanel(AiHost, ai, "LabelGou · AI 助手")
+        {
+            // 用户 2026-09-09：拆出来的窗永远从 900×700 贴着主窗开，拉到多大、摆在哪下次又没了——现在记住。
+            ReadGeometry = _viewModel.LoadAiFloatGeometry,
+            WriteGeometry = (l, t, w, h) => _viewModel.SaveAiFloatGeometry(l, t, w, h),
+        };
         _aiPanel.StateChanged += SyncAiPanelState;
         SyncAiPanelState();
 
@@ -69,8 +74,15 @@ public partial class MainWindow : Window
     /// <summary>AI 那块的搬移器（标题栏按钮、原位提示、菜单都走这里，不开第二个入口）。</summary>
     internal Services.DetachablePanel? AiPanelHost => _aiPanel;
 
-    /// <summary>AI 挂在主窗里时的默认高度：拆走时这一行让给预览，收回来按这个数复原。</summary>
-    internal const double DockedAiHeight = 330;
+    /// <summary>
+    /// AI 挂在主窗里时的默认高度：拆走时这一行让给预览，收回来按这个数复原。
+    /// <para>2026-09-09 从 330 抬到 420：面板自己的硬需求（对话区 MinHeight 160 + 通道行 + 按钮一排 +
+    /// 输入框 + 两行说明）就超过 330，于是被挤掉的是对话区——那就是用户圈的「AI 回复出来的窗口这么小」。</para>
+    /// </summary>
+    internal const double DockedAiHeight = 420;
+
+    /// <summary>AI 挂在主窗里时那一行的下限：低于这个数对话区又开始被压，所以不许拖那么矮。</summary>
+    internal const double DockedAiMinHeight = 260;
 
     private void OnDetachAiClick(object sender, RoutedEventArgs e) => _aiPanel?.Toggle();
 
@@ -81,6 +93,8 @@ public partial class MainWindow : Window
         AiBox.Visibility = detached ? Visibility.Collapsed : Visibility.Visible;
         DetachedHint.Visibility = detached ? Visibility.Visible : Visibility.Collapsed;
         AiRow.Height = detached ? GridLength.Auto : new GridLength(DockedAiHeight);
+        // 拆走后只剩一行提示，那一行不能再撑 260 高（否则「把高度让给预览」是句空话）。
+        AiRow.MinHeight = detached ? 0 : DockedAiMinHeight;
         DetachAiButton.Content = detached ? "收回主窗口 ⇤" : "把 AI 拆成独立窗口 ⇱";
     }
 

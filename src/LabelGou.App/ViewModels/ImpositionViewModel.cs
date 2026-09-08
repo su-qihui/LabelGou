@@ -214,8 +214,13 @@ public sealed class ImpositionViewModel : ObservableObject
             LoadWorkingFromSelection();
             RebuildPlan();
             RememberSheetSpecId(value?.Spec.Id);
+            // 第 17 棒：主 VM 要在纸规换了之后重算「模板尺寸与这张纸配不配」那句提示。
+            SheetSelectionChanged?.Invoke();
         }
     }
+
+    /// <summary>纸规选项换了（不是改数值）时喊一声。只有选错一张纸才会让模板与刀模对不上，改页边不会。</summary>
+    public event Action? SheetSelectionChanged;
 
     /// <summary>把纸规 id 写进界面状态；与已记的相同就不写盘（启动那一次赋值不该产生 IO）。</summary>
     private void RememberSheetSpecId(string? specId)

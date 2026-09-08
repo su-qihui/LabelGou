@@ -20,6 +20,19 @@ public sealed class InverseBooleanToVisibilityConverter : System.Windows.Data.IV
 }
 
 /// <summary>
+/// 字符串非空才显示（空串与 null 都Collapsed）。给「只在真的对不上时才插一句」这类提示用：
+/// 把一个派生文本直接绑到 TextBlock 上，空的时候会在面板里留一行空白，看上去像个坏了的控件。
+/// </summary>
+public sealed class StringNotEmptyToVisibilityConverter : System.Windows.Data.IValueConverter
+{
+    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+        => string.IsNullOrWhiteSpace(value as string) ? Visibility.Collapsed : Visibility.Visible;
+
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+        => throw new NotSupportedException();
+}
+
+/// <summary>
 /// 步骤号 → 只显示当前那一步的面板。向导一次只露一块，所以每个面板都要问一句“现在轮到我了吗”；
 /// <paramref name="parameter"/> 传本面板负责的步骤号（0 基）。用转换器而不是给每步派生一个带 DataTrigger 的样式，
 /// 是为了让 XAML 里每个面板只多一个属性，不至于为五步写五套样式。

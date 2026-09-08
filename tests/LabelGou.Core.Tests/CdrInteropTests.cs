@@ -469,8 +469,10 @@ public class CdrInteropTests
         {
             Kind = ElementKind.Text, Text = "{{ContractNo}}", X = 5, Y = 5, Width = 60, Height = 8, FontSizePt = 10,
         });
+        // 当前版本号从 CurrentSchemaVersion 取，不写死一个数：上一版写死了 2，schema 涨到 v3（条码元素）后
+        // 这个 Replace 静默不命中，下面那句断言跟着红——一个测“老文件还能读”的测试自己变得不兼容。
         var json = TemplateStore.ToJson(original)
-            .Replace("\"schemaVersion\": 2", "\"schemaVersion\": 1", StringComparison.Ordinal);
+            .Replace($"\"schemaVersion\": {LabelTemplate.CurrentSchemaVersion}", "\"schemaVersion\": 1", StringComparison.Ordinal);
         Assert.Contains("\"schemaVersion\": 1", json, StringComparison.Ordinal);
 
         var path = Path.Combine(dir, "legacy.json");

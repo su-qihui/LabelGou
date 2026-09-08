@@ -4,6 +4,7 @@ using System.Windows;
 using System.Xml.Linq;
 using LabelGou.App.Export;
 using LabelGou.App.Rendering;
+using LabelGou.Core.Barcodes;
 using LabelGou.Core.Export;
 using LabelGou.Core.Impos;
 using LabelGou.Core.Interop.Svg;
@@ -90,6 +91,10 @@ public class SvgInterchangeTests
 
     private static XElement Layer(XDocument doc, string id)
         => doc.Root!.Descendants(Svg + "g").Single(g => (string?)g.Attribute("id") == id);
+
+    /// <summary>取一个数值属性并按 double 返回（带精度那重载只吃 double，不吃 double?）。</summary>
+    private static double Num(XElement element, string attribute)
+        => (double?)element.Attribute(attribute) ?? throw new InvalidOperationException($"{element.Name.LocalName} 上没有 {attribute} 这个属性");
 
     // ---------- 底稿上屏 ----------
 
@@ -758,6 +763,97 @@ public class SvgInterchangeTests
         {
             try { Directory.Delete(directory, recursive: true); } catch (IOException) { }
         }
+        return true;
+    });
+
+    // ---------- 条码（第 17 棒）：矢量口与绘制口拿的是同一份毫米 ----------
+
+    private static MarkRecord RecordWithBarcodeColumn(string value) => MarkRecord.Builder()
+        .SetRow(1, "样例.xlsx")
+        .Set(MarkFieldKey.DestinationPort, "LOS ANGELES")
+        .SetCustom("col:条码", value)
+        .Build();
+
+    private static LabelTemplate BarcodeTemplate(BarcodeSymbology symbology, bool showText)
+        => FrameTemplate(new TemplateElement
+        {
+            Kind = ElementKind.Barcode,
+            Text = "{{col:条码}}",
+            Symbology = symbology,
+            ShowBarcodeText = showText,
+            FontSizePt = 7,
+            X = 4, Y = 52, Width = 92, Height = 22,
+        });
+
+    [Fact]
+    public void 条码的每一根条都是一个落在毫米坐标上的矩形() => OnStaThread(() =>
+    {
+        var template = BarcodeTemplate(BarcodeSymbology.Code128, showText: true);
+        var record = RecordWithBarcodeColumn("BOX-000123");
+        var bar = Assert.Single(LayoutEngine.Build(template, record, new LayoutContext(1, 1))
+            .Items.OfType<BarcodeItem>());
+        Assert.True(bar.Bars.Count > 20, "这份夹具得真的够密，否则下面比的是两个都没被考验过的分支");
+
+        var plan = ImpositionEngine.Build(Spec(), LabelW, LabelH, 1);
+        var file = Assert.Single(SheetSvgWriter.WritePage(
+            Request(plan, new PageContentSource(template, new List<MarkRecord> { record }, "样例.xlsx")), 0, SvgExportOptions.Default));
+        var doc = XDocument.Parse(file.Xml);
+
+        // 标签层里那些黑填充矩形 == Core 算出来的条数：渲染端一根不多、一根不少（预览能扫印出来也能扫）
+        var rects = Layer(doc, "labels").Descendants(Svg + "rect")
+            .Where(r => (string?)r.Attribute("fill") == "#000000")
+            .ToList();
+        Assert.Equal(bar.Bars.Count, rects.Count);
+        Assert.Equal(bar.Bars[0].X, Num(rects[0], "x"), 3);
+        Assert.Equal(bar.Bars[0].Width, Num(rects[0], "width"), 3);
+        Assert.Equal(bar.BarsY, Num(rects[0], "y"), 3);
+        Assert.Equal(bar.BarsHeight, Num(rects[0], "height"), 3);
+
+        // 可读那串数字也不能少：它是轮廓 path（不是矩形），所以上面那条计数不会把它算进去
+        Assert.Contains(Layer(doc, "labels").Descendants(Svg + "path"),
+            p => ((string?)p.Attribute("fill")) == "#000000");
+        return true;
+    });
+
+    [Fact]
+    public void 条码画到屏幕上不出元素框也不越标签() => OnStaThread(() =>
+    {
+        var template = BarcodeTemplate(BarcodeSymbology.Ean13, showText: true);
+        template.BorderMm = 0;                                  // 只要条码那一个元素，边界才是干净的
+        var record = RecordWithBarcodeColumn("400638133393");   // 12 位 → 自动补校验位
+        var layout = LayoutEngine.Build(template, record, new LayoutContext(1, 1));
+        var bar = Assert.Single(layout.Items.OfType<BarcodeItem>());
+        Assert.Equal("4006381333931", bar.Data);
+
+        var group = new System.Windows.Media.DrawingGroup();
+        using (var dc = group.Open())
+        {
+            LabelRenderer.Draw(dc, layout, scale: 1.0, offsetX: 0, offsetY: 0,
+                showGuides: false, pixelsPerDip: 1.0, drawBackground: false);
+        }
+
+        var ink = group.Bounds;
+        var epsilon = 0.5;      // 半个像素：抗锯齿外沿
+        Assert.True(ink.Left >= Mm.ToDiu(4) - epsilon, "条推出元素框左边了");
+        Assert.True(ink.Right <= Mm.ToDiu(4 + 92) + epsilon, $"静区没算进框内：右沿 {ink.Right} DIU");
+        Assert.True(ink.Top >= Mm.ToDiu(52) - epsilon);
+        Assert.True(ink.Bottom <= Mm.ToDiu(52 + 22) + epsilon, "可读数字那一刀算重了，字掉到框外");
+        return true;
+    });
+
+    [Fact]
+    public void 编不出来的码在SVG里占一个红框而不是一片空白() => OnStaThread(() =>
+    {
+        var template = BarcodeTemplate(BarcodeSymbology.Ean13, showText: true);
+        var record = RecordWithBarcodeColumn("6901234567890");      // 13 位但末位校验不对
+        var file = Assert.Single(SheetSvgWriter.WritePage(
+            Request(ImpositionEngine.Build(Spec(), LabelW, LabelH, 1),
+                new PageContentSource(template, new List<MarkRecord> { record }, "样例.xlsx")), 0, SvgExportOptions.Default));
+
+        Assert.Contains("条码编不出来", file.Xml, StringComparison.Ordinal);
+        // 半成品码绝对不能出现：宁可占一个红框让人去改数据
+        var doc = XDocument.Parse(file.Xml);                       // 同时这也是「仍是一份合法 SVG」
+        Assert.DoesNotContain(Layer(doc, "labels").Descendants(Svg + "rect"), r => (string?)r.Attribute("fill") == "#000000");
         return true;
     });
 

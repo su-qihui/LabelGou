@@ -15,6 +15,8 @@
         <!-- 标题栏不带版本号：构造里由 AppInfo.WindowTitle 从程序集版本填（XAML 属性之间不能放注释，故说明落在内容区） -->
         <!-- 一步只露一块：每个步骤面板拿自己的步骤号去问转换器（见 Mvvm.StepIndexToVisibilityConverter） -->
         <mvvm:StepIndexToVisibilityConverter x:Key="StepEq" />
+        <!--  「只在纸与模板对不上时才插一句」的提示与按钮用（空串就整块收起，不留一行空白） -->
+        <mvvm:StringNotEmptyToVisibilityConverter x:Key="HasText" />
     </Window.Resources>
 
     <DockPanel>
@@ -266,15 +268,91 @@
                             <ComboBox ItemsSource="{Binding TemplateOptions}"
                                       SelectedItem="{Binding SelectedTemplate}"
                                       DisplayMemberPath="DisplayName" />
-                            <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
-                                <Button Content="新建模板…" Click="OnNewTemplateClick" MinWidth="86"
+                            <WrapPanel Orientation="Horizontal" Margin="0,6,0,0">
+                                <Button Content="新建模板…" Click="OnNewTemplateClick" MinWidth="86" Margin="0,0,6,0"
                                         ToolTip="从空白开始拖一套自己的唛头" />
-                                <Button Content="编辑模板…" Click="OnEditTemplateClick" MinWidth="86"
+                                <Button Content="编辑模板…" Click="OnEditTemplateClick" MinWidth="86" Margin="0,0,6,0"
                                         ToolTip="把上面选中的模板拖改一下（内置模板会先自动存一份副本）" />
-                                <Button Content="从底稿导入…" Click="OnImportBackgroundClick" MinWidth="96"
+                                <Button Content="从底稿导入…" Click="OnImportBackgroundClick" MinWidth="96" Margin="0,0,6,0"
                                         ToolTip="拿 CorelDRAW/AI 导出的 SVG 当底图，对得上样例数据的文字可以直接绑字段（Ctrl+I）" />
-                            </StackPanel>
+                                <!--  删除以前只藏在「模板(T)」菜单里，用户找不到（2026-09-09：「模板删除的UI调到模板栏目」）。
+                                      菜单那一行仍留着：同一个 OnDeleteTemplateClick，不开第二套删除逻辑。  -->
+                                <Button Content="删除这份模板…" Click="OnDeleteTemplateClick" MinWidth="106"
+                                        ToolTip="只删自己存的用户模板（内置模板删不了也不占磁盘）；删前会弹一次确认" />
+                            </WrapPanel>
                             <TextBlock Text="{Binding TemplateInfoText}" Style="{StaticResource Hint}" Margin="0,6,0,0" />
+                            <!--  纸与模板对不上时说一句该换哪一份，而不是让用户去拼版告警里自己找  -->
+                            <TextBlock Text="{Binding TemplateSheetHint}" Style="{StaticResource Hint}" Margin="0,6,0,0"
+                                       Foreground="#B25A00" TextWrapping="Wrap">
+                                <TextBlock.Visibility>
+                                    <Binding Path="TemplateSheetHint" Converter="{StaticResource HasText}" />
+                                </TextBlock.Visibility>
+                            </TextBlock>
+                            <Button Content="换成这张纸配套的模板" Command="{Binding UseMatchingTemplateCommand}"
+                                    HorizontalAlignment="Left" Margin="0,4,0,0">
+                                <Button.Visibility>
+                                    <Binding Path="TemplateSheetHint" Converter="{StaticResource HasText}" />
+                                </Button.Visibility>
+                            </Button>
+                        </StackPanel>
+                    </GroupBox>
+
+                    <!-- ===== 条码栏目（第 17 棒，用户 2026-09-09：「加入条码栏目—条码一般是不同的表格里会有数字要对应填入」）===== -->
+                    <!-- 列的下拉直接拿这张表真有的列名，不让人猜占位符怎么写；下面那句实时预览拿第一行真值试编一次。 -->
+                    <GroupBox Margin="0,8,0,0">
+                        <GroupBox.Header>
+                            <TextBlock Text="条码（可选：让它读表里的某一列）" Style="{StaticResource StepTitle}" />
+                        </GroupBox.Header>
+                        <StackPanel>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="110" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="制式：" VerticalAlignment="Center" />
+                                <ComboBox Grid.Column="1" ItemsSource="{Binding Barcode.SymbologyOptions}"
+                                          SelectedItem="{Binding Barcode.SelectedSymbology}"
+                                          DisplayMemberPath="Label" />
+                                <TextBlock Grid.Column="2" Text="位置：" VerticalAlignment="Center" Margin="10,0,2,0" />
+                                <ComboBox Grid.Column="3" ItemsSource="{Binding Barcode.PlacementOptions}"
+                                          SelectedItem="{Binding Barcode.SelectedPlacement}"
+                                          DisplayMemberPath="Label" />
+                            </Grid>
+
+                            <Grid Margin="0,6,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="读哪一列：" VerticalAlignment="Center" />
+                                <ComboBox Grid.Column="1" ItemsSource="{Binding Barcode.SourceOptions}"
+                                          SelectedItem="{Binding Barcode.SelectedSource}"
+                                          ToolTip="列名直接来自刚打开的那张表。已连到内置字段的那一列会用字段取值，没连上的按列名直取。" />
+                            </Grid>
+
+                            <!--  手填框只在「读哪一列 = 手填固定数字」时可输入。绑到真的业务判据上（不绑一个占位的 x:Name），
+                                 否则用户会以为填了这格也能让整批共码，而实际起作用的是上面那个下拉。  -->
+                            <TextBox Text="{Binding Barcode.FixedText, UpdateSourceTrigger=PropertyChanged}"
+                                     Margin="0,6,0,0"
+                                     IsEnabled="{Binding Barcode.IsFixedTextEntry}"
+                                     ToolTip="只有整批共用一个码时才手填；正常情况请选上面那一列" />
+
+                            <WrapPanel Margin="0,6,0,0">
+                                <TextBlock Text="高(mm)：" VerticalAlignment="Center" />
+                                <TextBox Text="{Binding Barcode.HeightMm, UpdateSourceTrigger=PropertyChanged}"
+                                         Width="46" VerticalAlignment="Center" Margin="0,0,12,0"
+                                         ToolTip="条码带的高（含下面那行可读数字）。常用 12~18 mm" />
+                                <CheckBox Content="条码下方印那串数字" IsChecked="{Binding Barcode.ShowText}"
+                                          VerticalAlignment="Center" Margin="0,0,12,0"
+                                          ToolTip="默认要：扫不出时人还能报号" />
+                                <Button Content="加到当前模板" Command="{Binding Barcode.AddBarcodeCommand}" FontWeight="Bold"
+                                        ToolTip="内置模板会先另存成一份自己的副本再改；改完在预览里就能看见，拖位置去「编辑模板…」" />
+                            </WrapPanel>
+
+                            <TextBlock Text="{Binding Barcode.Preview}" Foreground="{Binding Barcode.PreviewBrush}"
+                                       Style="{StaticResource Hint}" TextWrapping="Wrap" Margin="0,6,0,0" />
                         </StackPanel>
                     </GroupBox>
                     </StackPanel>
@@ -296,6 +374,14 @@
                                           SelectedItem="{Binding Sheet.SelectedSheetOption}"
                                           DisplayMemberPath="DisplayName" />
                             </Grid>
+
+                            <!--  同一条 ③ 步那句提示：选完纸就地告诉他模板配不上（四档开法的名字与模板是一一对应的）  -->
+                            <TextBlock Text="{Binding TemplateSheetHint}" Style="{StaticResource Hint}" Margin="0,4,0,0"
+                                       Foreground="#B25A00" TextWrapping="Wrap">
+                                <TextBlock.Visibility>
+                                    <Binding Path="TemplateSheetHint" Converter="{StaticResource HasText}" />
+                                </TextBlock.Visibility>
+                            </TextBlock>
 
                             <UniformGrid Columns="4" Margin="0,6,0,0">
                                 <TextBlock Text="纸宽" Style="{StaticResource Hint}" />
@@ -627,7 +713,7 @@
                 <Grid.RowDefinitions>
                     <RowDefinition Height="*" MinHeight="200" />
                     <RowDefinition Height="6" />
-                    <RowDefinition x:Name="AiRow" Height="330" MinHeight="90" />
+                    <RowDefinition x:Name="AiRow" Height="420" MinHeight="260" />
                 </Grid.RowDefinitions>
 
                 <GroupBox Grid.Row="0">

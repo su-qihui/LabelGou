@@ -1,25 +1,34 @@
 namespace LabelGou.Core.Templates;
 
 /// <summary>
-/// A 类内置标准唛头模板（M1 交付：选模板 + 填数据即可用）。
+/// A 类内置标准唛头模板。
 /// <para>
-/// 三套版式覆盖打印店最常见的三种不干胶规格：100×80 标准箱唛、60×40 精简小唛、
-/// 120×90 中英对照全字段。坐标全部按毫米手工标定，且必须通过
-/// <see cref="TemplateValidator.Validate"/>（有单元测试守住这条线）。
+/// <strong>2026-09-09 重列：清单只留「跟店里那四档开法配得上」的那几份。</strong>
+/// 用户原话「<strong>现在的内置模版几乎全都不符逻辑（而且一般用的是一开四：28*20 的 14*10 的 4 个标签，
+/// 一开八 28*20 的 10*7 的 8 个，大开二 28*20 的 20*14 的 2 个，小开二 16*24 的 16*12 的 2 个）</strong>」。
+/// 所以下拉里的名字直接拿开法打头（③ 步选模板与 ④ 步选纸规能一眼对上），版式一律是真样张那一套四行：
+/// 顶部客户名一大条 + Item no / QTY pcs / Ctns 件 三行明细。
+/// </para>
+/// <para>
+/// M1 那三套「框线分格」式（标准箱唛 / 精简小唛 / 中英对照）一家真样张都对不上，已退出下拉；
+/// 方法本身留着（<c>GetById</c> 仍可解析，老方案与单测还要用），其中九字段那套留着当
+/// 「自动挑模板按命中率而不是按命中数」那条回归测试的对手（它引用 9 个字段，行式四行只引用 4 个）。
 /// </para>
 /// </summary>
 public static class BuiltInTemplates
 {
-    /// <summary>全部内置模板。</summary>
+    /// <summary>全部内置模板（按店里常用的四档开法排在前）。</summary>
     public static IReadOnlyList<LabelTemplate> All { get; } = new[]
     {
-        Standard100x80(),
-        Compact60x40(),
-        Bilingual120x90(),
-        RowsFour140x100(),
+        RowsFour140x100(),      // 一开四・28×20 纸上 4 枚
+        RowsFour100x70(),       // 一开八・28×20 纸上 8 枚
+        RowsFour200x140(),      // 大开二・28×20 纸上 2 枚
+        RowsFour160x120(),      // 小开二・16×24 纸上 2 枚
         RowsBigTwo160x120(),
+        Standard100x80(),
         // 邱总 / OLU / TOP 三套故意不列在这里：用户给的那批样张是「让 AI 去学的训练素材」，
         // 不是让我抄成五个内置选项。它们的定义留在本文件里当评测基准（见下面三个方法的注）。
+        // 精简小唛 60×40 与中英对照 120×90 也退出了清单：labelgou-CL 里五家没一家是这个形状。
     };
 
     /// <summary>每次调用返回新实例，避免界面编辑时污染内置定义。</summary>
@@ -29,6 +38,9 @@ public static class BuiltInTemplates
         IdCompact => Compact60x40(),
         IdBilingual => Bilingual120x90(),
         IdRowsFour => RowsFour140x100(),
+        IdRowsEight => RowsFour100x70(),
+        IdRowsBig2Four => RowsFour200x140(),
+        IdRowsSmall2Four => RowsFour160x120(),
         IdRowsBigTwo => RowsBigTwo160x120(),
         _ => null,
     };
@@ -38,6 +50,15 @@ public static class BuiltInTemplates
     public const string IdBilingual = "builtin.bilingual-120x90";
     public const string IdRowsFour = "builtin.rows-140x100-4line";
     public const string IdRowsBigTwo = "builtin.rows-160x120-2line";
+
+    /// <summary>一开八配套：100×70 四行。</summary>
+    public const string IdRowsEight = "builtin.rows-100x70-4line";
+
+    /// <summary>大开二配套：200×140 四行。</summary>
+    public const string IdRowsBig2Four = "builtin.rows-200x140-4line";
+
+    /// <summary>小开二配套：160×120 四行。</summary>
+    public const string IdRowsSmall2Four = "builtin.rows-160x120-4line";
 
     /// <summary>以下三个 id 不在内置清单里（不进下拉），只服务 AI 认版式的评测基准。</summary>
     public const string IdQiuRows = "builtin.qiu-140x100-4line";
@@ -144,30 +165,59 @@ public static class BuiltInTemplates
     }
 
     /// <summary>
-    /// 行式四行 140×100（无框）：客户名撑满一大条 + 三行明细。
+    /// 行式四行 140×100（无框）：客户名撑满一大条 + 三行明细。<strong>一开四配套那一档</strong>。
     /// <para>形状直接抄自 <c>labelgou-CL\7.8 金沐 唛头</c> 的 CDR 真样张与导出 SVG
     /// （BOLAROM / Item no：… / QTY：… pcs / Ctns：…件）。客户名走 <c>{{Consignee}}</c>，
     /// 不写死厂牌——同一个模板要能给下一家厂用。件数那一行走 <c>{{col:本行箱数}}</c> 而不是
     /// <c>{{CartonTotal}}</c>：展开后后者是整批总数（155），厂商要的是本货号的 5 件。</para>
+    /// <para>三行明细的 41.4pt 是从真件 SVG 量出来的（字高 14.602mm）。其余三档开法拿同一套四行，
+    /// 只是按各自的行带高同比缩字号（见 <see cref="FourRows"/>）。</para>
     /// </summary>
-    public static LabelTemplate RowsFour140x100()
+    public static LabelTemplate RowsFour140x100() => FourRows(
+        IdRowsFour, "一开四・四行 140×100（金沐样张）",
+        "抄自 7.8 金沐 唛头 CDR+SVG：顶部客户名一大条居中 + 货号/数量/件数三行同字号明细左对齐，无框线。配 28×20 一开四那张纸。",
+        140, 100, paddingMm: 4, gapMm: 1.5, detailPt: 41.4);
+
+    /// <summary>行式四行 100×70：<strong>一开八配套</strong>（28×20 纸上一张 8 枚）。</summary>
+    public static LabelTemplate RowsFour100x70() => FourRows(
+        IdRowsEight, "一开八・四行 100×70",
+        "与一开四同一套四行，只是按 100×70 的行带同比缩了字号。配 28×20 一开八那张纸（一张 8 枚）。",
+        100, 70, paddingMm: 3, gapMm: 1.2, detailPt: 28.6);
+
+    /// <summary>行式四行 200×140：<strong>大开二配套</strong>（28×20 纸上一张 2 枚）。</summary>
+    public static LabelTemplate RowsFour200x140() => FourRows(
+        IdRowsBig2Four, "大开二・四行 200×140",
+        "与一开四同一套四行，行带更宽所以字号更大。配 28×20 大开二那张纸（一张 2 枚，大箱唛）。",
+        200, 140, paddingMm: 6, gapMm: 2, detailPt: 57.7);
+
+    /// <summary>行式四行 160×120：<strong>小开二配套</strong>（16×24 纸上一张 2 枚）。</summary>
+    public static LabelTemplate RowsFour160x120() => FourRows(
+        IdRowsSmall2Four, "小开二・四行 160×120",
+        "与一开四同一套四行。配 16×24 小开二那张纸（一张 2 枚，小箱/内箱唛）。",
+        160, 120, paddingMm: 5, gapMm: 1.8, detailPt: 49.5);
+
+    /// <summary>
+    /// 四行骨架的唯一实现：顶部客户名撑满（权重 1.4）+ 三行同字号明细。
+    /// <para><paramref name="detailPt"/> 怎么来的：金沐真件量到「明细行带 19.9mm ↔ 41.4pt」，
+    /// 即每毫米行带约 2.08pt；其余三档拿同一个比例算出自己的行带高再乘上它。
+    /// 为什么写定数而不是让三行也 Stretch：真件上三行是同一个字号，而 Stretch 会按各自内容长度
+    /// 反算，哪一行值长一点就被缩字，于是 QTY/Ctns 反而比 Item no 大——那就是用户圈过的「字体大小不统一」。</para>
+    /// </summary>
+    private static LabelTemplate FourRows(string id, string name, string note,
+        double widthMm, double heightMm, double paddingMm, double gapMm, double detailPt)
     {
         var spec = new RowLayoutSpec
         {
-            Id = IdRowsFour,
-            Name = "金沐・行式四行 140×100",
-            Note = "抄自 7.8 金沐 唛头 CDR+SVG：顶部客户名一大条居中 + 货号/数量/件数三行同字号明细左对齐，无框线。",
-            WidthMm = 140,
-            HeightMm = 100,
-            PaddingMm = 4,
-            GapMm = 1.5,
+            Id = id,
+            Name = name,
+            Note = note,
+            WidthMm = widthMm,
+            HeightMm = heightMm,
+            PaddingMm = paddingMm,
+            GapMm = gapMm,
             DrawBorder = false,
         };
         spec.Rows.Add(new RowSpec { Content = "{{Consignee}}", Weight = 1.4, Stretch = true, Align = HorizontalAlign.Center });
-        // 三行明细在真样张里是同一个字号（SVG 14.602mm ≈ 41.4pt）。以前这里写 Stretch=true，
-        // 三行各自反算字号，只要哪一行值长一点就被缩字号，于是 QTY/Ctns 反而比 Item no 大——
-        // 用户圈出来的“字体大小不统一”就是这个。明细一律固定字号、左对齐。
-        const double detailPt = 41.4;
         spec.Rows.Add(new RowSpec { Content = "Item no：{{ItemNo}}", Weight = 1, SizePt = detailPt });
         spec.Rows.Add(new RowSpec { Content = "QTY：{{Quantity}} pcs", Weight = 1, SizePt = detailPt });
         spec.Rows.Add(new RowSpec { Content = "Ctns：{{col:本行箱数}}件", Weight = 1, SizePt = detailPt });

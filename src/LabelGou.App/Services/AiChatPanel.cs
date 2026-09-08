@@ -45,6 +45,11 @@ public sealed class AiChatPanel : UserControl
     private static readonly Brush OkBrush = new SolidColorBrush(Color.FromRgb(0x1D, 0x4E, 0xD8));
 
     private readonly TextBlock _channelLine = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 6) };
+
+    // 用户 2026-09-09 拿截图圈这里：「<strong>AI 回复出来的窗口这么小？</strong>」。
+    // 真相不是没地方放，而是这一块的 chrome（通道行 + 红字警告 + 两排按钮 + 输入框 + 脚注）
+    // 全占固定高度，而对话区是唯一那个 Star 行 —— 面板一矮，被挤到只剩一条缝的就是它。
+    // 所以：① 对话区给了 MinHeight，再矮也不许它变成一条缝；② 上面那些零碎从 7 行压到 4 行。
     private readonly TextBox _transcript = new()
     {
         IsReadOnly = true,
@@ -52,15 +57,19 @@ public sealed class AiChatPanel : UserControl
         TextWrapping = TextWrapping.Wrap,
         VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
         FontSize = 13,
-        Margin = new Thickness(0, 0, 0, 8),
+        MinHeight = 160,
+        Margin = new Thickness(0, 0, 0, 6),
     };
     private readonly TextBox _input = new()
     {
         AcceptsReturn = true,
         TextWrapping = TextWrapping.Wrap,
         VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-        Height = 60,
-        Margin = new Thickness(0, 0, 0, 6),
+        Height = 52,
+        Margin = new Thickness(0, 4, 0, 4),
+        ToolTip = "Ctrl+Enter 发送；Enter 换行。聊天上下文最多带最近 " + AiChatHistory.MaxTurns +
+                  " 轮（更早的会省略并在对话里说明），单条最长 " + AiChatHistory.MaxCharsPerTurn +
+                  " 字。「让 AI 出一版排版」用的是同一条通道，不另设密钥。",
     };
     private readonly TextBlock _attachment = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 6) };
     private readonly Button _send = new() { Content = "发送（Ctrl+Enter）", Padding = new Thickness(12, 6, 12, 6), Margin = new Thickness(0, 0, 8, 0) };
@@ -104,13 +113,11 @@ public sealed class AiChatPanel : UserControl
     public AiChatPanel()
     {
         var root = new Grid();
-        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });   // 5：排版三按钮
-        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });   // 6：输入框与脚注
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });                        // 0：通道行
+        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });    // 1：对话区（唯一可变的那块）
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });                        // 2：附图状态
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });                        // 3：一排按钮（聊天 + 排版）
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });                        // 4：输入框与一行脚注
 
         var openSettings = new Button { Content = "打开通道设置…", Padding = new Thickness(10, 4, 10, 4) };
         openSettings.Click += (_, _) =>
@@ -125,61 +132,60 @@ public sealed class AiChatPanel : UserControl
         Grid.SetRow(header, 0);
         root.Children.Add(header);
 
+        // 红线那句话从两行压成一行 + ToolTip：它是本面板最不该被误删的一句实话（聊与问不会自动改唛头），
+        // 但用户圈的是「回复区太小」——那就不该拿两句加粗红字去占对话区的位置。
         var notice = new TextBlock
         {
-            Text = "聊与问都不会自动改唛头。AI 排的版要你先点「用这个」才会进模板库，" +
-                   "中间还有一道校验拦着；没经你核对的值一律不进打印。",
+            Text = "聊与问都不会自动改唛头：AI 排的版要点「用这个」才进模板库，没经你核对的值不进打印。",
             TextWrapping = TextWrapping.Wrap,
             FontWeight = FontWeights.SemiBold,
             Foreground = WarnBrush,
-            Margin = new Thickness(0, 0, 0, 8),
+            ToolTip = "AI 排的版要你先点「用这个」才会进模板库，中间还有一道校验拦着；" +
+                      "没经你核对的值一律不进打印。打印走的还是 ⑤ 那一条命令与复核闸门。",
         };
-        Grid.SetRow(notice, 1);
-        root.Children.Add(notice);
 
-        Grid.SetRow(_transcript, 2);
+        Grid.SetRow(_transcript, 1);
         root.Children.Add(_transcript);
 
-        Grid.SetRow(_attachment, 3);
+        Grid.SetRow(_attachment, 2);
         root.Children.Add(_attachment);
 
-        var chat = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 4) };
+        // 两排按钮合成一排 WrapPanel：窄的时候自己换行，不再固定吃掉两行高。
+        var buttons = new WrapPanel { Margin = new Thickness(0, 0, 0, 2) };
         _send.Click += async (_, _) => await SendAsync();
         _stop.Click += (_, _) => _running?.Cancel();
         _attach.Click += (_, _) => PickImage();
         _detach.Click += (_, _) => { _image = null; ShowAttachment(); };
         var clear = new Button { Content = "清空会话", Padding = new Thickness(12, 6, 12, 6), Margin = new Thickness(0, 0, 8, 0) };
         clear.Click += (_, _) => { _turns.Clear(); _transcript.Clear(); Append("会话已清空。"); };
-        var copy = new Button { Content = "复制全部", Padding = new Thickness(12, 6, 12, 6) };
+        var copy = new Button { Content = "复制全部", Padding = new Thickness(12, 6, 12, 6), Margin = new Thickness(0, 0, 8, 0) };
         copy.Click += (_, _) => { if (_transcript.Text.Length > 0) Clipboard.SetText(_transcript.Text); };
-        chat.Children.Add(_send);
-        chat.Children.Add(_stop);
-        chat.Children.Add(_attach);
-        chat.Children.Add(_detach);
-        chat.Children.Add(clear);
-        chat.Children.Add(copy);
-        Grid.SetRow(chat, 4);
-        root.Children.Add(chat);
-
-        var layout = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 6) };
         _askLayout.Click += async (_, _) => await AskLayoutAsync();
         _applyLayout.Click += (_, _) => ApplyPending();
         _print.Click += (_, _) => PrintNow();
-        layout.Children.Add(_askLayout);
-        layout.Children.Add(_applyLayout);
-        layout.Children.Add(_print);
-        Grid.SetRow(layout, 5);
-        root.Children.Add(layout);
+        // 排版那三件与聊天那六件之间插一条竖线：它们不是一类动作（一个是问，一个是拿结果落地）。
+        buttons.Children.Add(_send);
+        buttons.Children.Add(_stop);
+        buttons.Children.Add(_attach);
+        buttons.Children.Add(_detach);
+        buttons.Children.Add(clear);
+        buttons.Children.Add(copy);
+        buttons.Children.Add(new Border { Width = 1, Background = Brushes.LightGray, Margin = new Thickness(0, 4, 8, 4) });
+        buttons.Children.Add(_askLayout);
+        buttons.Children.Add(_applyLayout);
+        buttons.Children.Add(_print);
+        Grid.SetRow(buttons, 3);
+        root.Children.Add(buttons);
 
         var bottom = new StackPanel();
-        Grid.SetRow(bottom, 6);
+        Grid.SetRow(bottom, 4);
+        bottom.Children.Add(notice);
         bottom.Children.Add(_input);
         bottom.Children.Add(new TextBlock
         {
-            Text = "Ctrl+Enter 发送；Enter 换行。聊天上下文最多带最近 " + AiChatHistory.MaxTurns +
-                   " 轮（更早的会省略并在对话里说明），单条最长 " + AiChatHistory.MaxCharsPerTurn +
-                   " 字。「让 AI 出一版排版」用的是同一条通道，不另设密钥。",
-            TextWrapping = TextWrapping.Wrap,
+            // 长的那段说明已经进了输入框的 ToolTip，这里只留一行真正需要抬头看一眼的。
+            Text = "Ctrl+Enter 发送，Enter 换行（悬停在输入框上有完整口径）。",
+            TextWrapping = TextWrapping.NoWrap,
             FontSize = 11,
             Foreground = Brushes.Gray,
         });

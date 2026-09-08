@@ -1,3 +1,4 @@
+using LabelGou.Core.Barcodes;
 using LabelGou.Core.Marks;
 using LabelGou.Core.Templates;
 
@@ -44,6 +45,34 @@ public sealed record ImageItem(string AbsolutePath, double X, double Y, double W
 public sealed record VectorItem(string AbsolutePath, double X, double Y, double Width, double Height, bool ReferenceOnly = false) : LayoutItem;
 
 /// <summary>
+/// 条码项（第 17 棒）。<strong>矩形已经在 Core 算成毫米</strong>，渲染端只负责画，不重算条宽——
+/// 这是「预览能扫、印出来也能扫」的唯一保证。
+/// </summary>
+/// <param name="Bars">黑条（绝对毫米坐标）。<see cref="Error"/> 非空时为空表。</param>
+/// <param name="Data">真正编进去的那一串（可能与表里的原值差一个自动补的校验位）。</param>
+/// <param name="SymbologyName">制式短名，给提示与 SVG 注记用。</param>
+/// <param name="Error">编不出来：数据里有这个制式装不下的字符、或校验位不对。
+/// 非空时这一项被标成待核，打印闸门拦得住它——<strong>宁可不出纸也不出一张错码</strong>。</param>
+public sealed record BarcodeItem(
+    IReadOnlyList<BarStrip> Bars,
+    double X,
+    double Y,
+    double Width,
+    double Height,
+    double BarsY,
+    double BarsHeight,
+    double ModuleMm,
+    string Data,
+    string SymbologyName,
+    bool ShowText,
+    string FontFamily,
+    double FontSizePt,
+    bool Flagged = false,
+    string? FlagReason = null,
+    string? Warning = null,
+    string? Error = null) : LayoutItem;
+
+/// <summary>
 /// 一条记录套一个模板得到的<strong>最终版面</strong>（纯数据、毫米单位、与渲染技术无关）。
 /// WPF 预览、PDF 导出、整版图片导出共用它，是"所见即所得"能成立的前提。
 /// </summary>
@@ -66,8 +95,10 @@ public sealed class LabelLayout
     /// <summary>对应的记录行号，0 表示示意预览。</summary>
     public int RecordRowIndex { get; init; }
 
-    /// <summary>是否有需要人工核对的字段（M6 消费；M3 打印前闸门读它）。</summary>
-    public bool HasUnconfirmed => Items.OfType<TextItem>().Any(t => t.Flagged);
+    /// <summary>是否有需要人工核对的字段（M6 消费；M3 打印前闸门读它）。
+    /// <para>条码也算：编不出来的码与待核的字段同级别——一张错码上纸比少印一张更贵。</para></summary>
+    public bool HasUnconfirmed => Items.OfType<TextItem>().Any(t => t.Flagged)
+                                 || Items.OfType<BarcodeItem>().Any(b => b.Flagged);
 }
 
 /// <summary>
@@ -167,6 +198,35 @@ public static class LayoutEngine
                     if (path is not null) items.Add(new ImageItem(path, element.X, element.Y, element.Width, element.Height, element.ReferenceOnly));
                     else hidden++;
                     break;
+
+                case ElementKind.Barcode:
+                {
+                    // 数据走与文本完全同一条占位符解析路：这样 {{col:条码列}}、待核标记、大小写口径都不需要第二套代码。
+                    var data = ResolveText(element.Text, template, record, context, unresolved, out var barFlag);
+                    if (string.IsNullOrWhiteSpace(data))
+                    {
+                        // 那一列本行没值 → 不画（与文本同口径），缺值提醒会说「表里没有这一列/这一格空的」。
+                        hidden++;
+                        break;
+                    }
+
+                    var encoding = BarcodeEncoder.Encode(data, element.Symbology);
+                    // 可读数字那一条占底部 22%（最少 3 mm）：这一刀只在这里算一次。
+                    var textBand = element.ShowBarcodeText ? Math.Max(3, element.Height * 0.22) : 0;
+                    var barsHeight = Math.Max(1, element.Height - textBand);
+                    var geometry = BarcodeBars.Build(encoding, element.X, element.Y, element.Width, element.Y, barsHeight);
+                    items.Add(new BarcodeItem(
+                        geometry.Bars, element.X, element.Y, element.Width, element.Height,
+                        geometry.BarsY, geometry.BarsHeight, geometry.ModuleMm,
+                        encoding.Data, element.Symbology.ShortName(), element.ShowBarcodeText,
+                        string.IsNullOrWhiteSpace(element.FontFamily) ? TemplateElement.DefaultFont : element.FontFamily,
+                        element.FontSizePt,
+                        Flagged: barFlag is not null || !encoding.Ok,
+                        FlagReason: barFlag ?? (encoding.Ok ? null : encoding.Error),
+                        Warning: encoding.Ok ? geometry.Warning : null,
+                        Error: encoding.Ok ? null : encoding.Error));
+                    break;
+                }
 
                 case ElementKind.Text:
                 default:

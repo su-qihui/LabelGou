@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using LabelGou.Core.Barcodes;
 using LabelGou.Core.Marks;
 
 namespace LabelGou.Core.Templates;
@@ -21,6 +22,15 @@ public enum ElementKind
     /// </para>
     /// </summary>
     Vector = 4,
+
+    /// <summary>
+    /// 条码（一维码，本软件自己编，不引第三方库）。
+    /// <para>用户 2026-09-09：「<strong>加入条码栏目——条码一般是不同的表格里会有数字要对应填入调成正确的</strong>」。
+    /// 所以数据不写死：与 Text 同一套占位符（<c>{{ItemNo}}</c> / <c>{{col:条码列}}</c>），
+    /// 每一张表把那一列指给它对就行。</para>
+    /// <para>数据表达式仍放在 <see cref="TemplateElement.Text"/>；制式与显不显数字用下面两个字段。</para>
+    /// </summary>
+    Barcode = 5,
 }
 
 public enum HorizontalAlign
@@ -90,6 +100,19 @@ public sealed class TemplateElement
     /// <summary>最多几行，超出后截断加省略号。0 表示不限。</summary>
     public int MaxLines { get; set; } = 3;
 
+    /// <summary>
+    /// 条码制式（只有 <see cref="ElementKind.Barcode"/> 用）。默认 Code 128：
+    /// 它是唯一字母与数字都能编、又不要求定长的常用档，店里拿不准时选它不会错。
+    /// </summary>
+    public BarcodeSymbology Symbology { get; set; } = BarcodeSymbology.Code128;
+
+    /// <summary>
+    /// 条码下方要不要印那串可读数字（<see cref="ElementKind.Barcode"/> 专用）。
+    /// <para>默认要：扫不出时人还能报号。占掉元素框底部约 22% 的高（最少 3 mm），条占剩下的——
+    /// 这一刀在 <c>LayoutEngine</c> 里算，只算一处，五出口才能一致。</para>
+    /// </summary>
+    public bool ShowBarcodeText { get; set; } = true;
+
     public bool Visible { get; set; } = true;
 
     /// <summary>默认字体：微软雅黑，Win10/11 自带，中英混排都不会掉字。</summary>
@@ -110,8 +133,10 @@ public sealed class TemplateElement
 public sealed class LabelTemplate
 {
     /// <summary>当前 schema 版本。改结构必须递增，并让 <see cref="TemplateValidator"/> 兼容旧版。</summary>
-    /// <remarks>v2 = M5 新增 <see cref="ElementKind.Vector"/> 与 <see cref="TemplateElement.ReferenceOnly"/>；v1 文件仍能读。</remarks>
-    public const int CurrentSchemaVersion = 2;
+    /// <remarks>v2 = M5 新增 <see cref="ElementKind.Vector"/> 与 <see cref="TemplateElement.ReferenceOnly"/>；v1 文件仍能读。
+    /// v3 = 第 17 棒新增 <see cref="ElementKind.Barcode"/> 与 <see cref="TemplateElement.Symbology"/> /
+    /// <see cref="TemplateElement.ShowBarcodeText"/>；新字段都有默认值，所以 v2 文件照旧能读，只是里面不会出现条码。</remarks>
+    public const int CurrentSchemaVersion = 3;
 
     /// <summary>稳定标识，如 <c>builtin.standard-100x80</c>。用户模板用 <c>user.xxx</c>。</summary>
     public string Id { get; set; } = "user." + Guid.NewGuid().ToString("N")[..8];
@@ -270,7 +295,7 @@ public static class TemplateValidator
                     issues.Add(new TemplateIssue(IssueLevel.Error, $"{tag} 线段端点超出标签范围。", i));
             }
 
-            if (e.Kind == ElementKind.Text)
+            if (e.Kind is ElementKind.Text or ElementKind.Barcode)
             {
                 if (e.FontSizePt is < MinFontPt or > MaxFontPt)
                     issues.Add(new TemplateIssue(IssueLevel.Error,
@@ -286,6 +311,21 @@ public static class TemplateValidator
                             $"{tag} 引用了未知字段「{token}」，可用字段见字段清单。", i));
                     }
                 }
+            }
+
+            // 条码自己的两条：没绑数据 = 一个永远不画的空位；制式越界 = 旧文件/手改 JSON 拿来的坏值。
+            // 字段名与 {{col:…}} 的检查上面那段已经做了（条码与文本共用同一套占位符，不开第二套）。
+            if (e.Kind == ElementKind.Barcode)
+            {
+                if (string.IsNullOrWhiteSpace(e.Text))
+                    issues.Add(new TemplateIssue(IssueLevel.Error,
+                        $"{tag} 是条码但没绑数据：在 ③ 步「条码」那一栏里选它读哪一列（或先填一串固定数字）。", i));
+                if (!Enum.IsDefined(e.Symbology))
+                    issues.Add(new TemplateIssue(IssueLevel.Error,
+                        $"{tag} 的条码制式不认识：{e.Symbology}。请重选一个。", i));
+                if (e.ShowBarcodeText && e.FontSizePt < 5)
+                    issues.Add(new TemplateIssue(IssueLevel.Warning,
+                        $"{tag} 的可读数字只 {e.FontSizePt:0.#}pt：扫不出时人也读不了那串号。建议 6pt 以上。", i));
             }
 
             if (e.Kind is ElementKind.Image or ElementKind.Vector && string.IsNullOrWhiteSpace(e.ImagePath))

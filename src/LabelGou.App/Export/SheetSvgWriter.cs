@@ -49,6 +49,9 @@ public static class SheetSvgWriter
 
     private static readonly SvgPaint NoteFill = new() { Color = "#999999" };
 
+    /// <summary>条码编不出来时那个红框的线（与预览/打印同一个红）。</summary>
+    private static readonly SvgPaint FlagStroke = new() { Color = RenderRules.HexOf(RenderRules.FlagColor), WidthMm = 0.2 };
+
     /// <summary>三种标记的颜色从 <see cref="RenderRules"/> 取，与预览/打印/位图那三条出口同一份。</summary>
     private static readonly SvgPaint CropPaint = new() { Color = RenderRules.HexOf(RenderRules.CropMarkColor) };
 
@@ -237,6 +240,10 @@ public static class SheetSvgWriter
                 case VectorItem vector:
                     WriteVectorAsset(builder, vector, ++assetIndex, notes);
                     break;
+
+                case BarcodeItem barcode:
+                    WriteBarcode(builder, barcode, options, notes);
+                    break;
             }
         }
     }
@@ -295,6 +302,32 @@ public static class SheetSvgWriter
         var geometry = fit.Formatted.BuildGeometry(new Point(fit.BoxDiu.Left, fit.TextTopDiu));
         var commands = SvgGeometryConverter.ToCommands(geometry, UnitToMm, out var evenOdd, notes);
         builder.Path(commands, fill, null, evenOdd);
+    }
+
+    /// <summary>
+    /// 条码的矢量出口：一根条一个 <c>&lt;rect&gt;</c>，坐标就是 Core 算好的毫米（1 用户单位 = 1 mm）。
+    /// <para>为什么不用 <c>&lt;path&gt;</c> 合一条：CorelDRAW 里一堆独立矩形比一条超长路径好编，
+    /// 而且拼版/裁切软件对矩形最不容易出错。</para>
+    /// </summary>
+    private static void WriteBarcode(SvgBuilder builder, BarcodeItem barcode, SvgExportOptions options, List<string> notes)
+    {
+        if (barcode.Error is { Length: > 0 } error)
+        {
+            // 编不出来：写一个红框 + 一句原因，不静默留空（这一项同时被复核闸门拦着）。
+            builder.Rect(barcode.X, barcode.Y, barcode.Width, barcode.Height, null, FlagStroke);
+            builder.Text("条码编不出来：" + error, barcode.X + 1, barcode.Y + 3.2, 6,
+                TemplateElement.DefaultFont, true, SvgTextAnchor.Start, FlagFill);
+            notes.Add("有一处条码编不出来，已按红框占位写出：" + error);
+            return;
+        }
+
+        foreach (var bar in barcode.Bars)
+            builder.Rect(bar.X, barcode.BarsY, bar.Width, barcode.BarsHeight, BlackFill, null);
+
+        if (barcode.ShowText)
+            WriteText(builder, LabelRenderer.ReadableLine(barcode), options, notes);
+
+        if (barcode.Warning is { Length: > 0 } warn) notes.Add("条码能画但可能扫不出：" + warn);
     }
 
     private static void WriteImage(SvgBuilder builder, ImageItem image, SvgExportOptions options, List<string> notes)
@@ -403,7 +436,7 @@ public static class SheetSvgWriter
                     break;
             }
 
-            var label = element.Kind == ElementKind.Text && !string.IsNullOrWhiteSpace(element.Text)
+            var label = element.Kind is ElementKind.Text or ElementKind.Barcode && !string.IsNullOrWhiteSpace(element.Text)
                 ? element.Text
                 : element.Kind.ToString();
             builder.Text(label, element.X, element.Y + 2.6, 6, TemplateElement.DefaultFont, false, SvgTextAnchor.Start, NoteFill);
@@ -419,7 +452,9 @@ public static class SheetSvgWriter
         builder.Metadata("尺寸：1 用户单位 = 1 毫米，画布 " + Num(request.Plan.PageWidthMm) + "×" + Num(request.Plan.PageHeightMm) + " mm");
 
         var fields = new List<string>();
-        foreach (var element in request.Source.Template.Elements.Where(e => e.Kind == ElementKind.Text && !string.IsNullOrWhiteSpace(e.Text)))
+        // 条码也算用了字段：它的表达式与文本同一套占位符，漏掉它会让拿这份 SVG 去接数据的同事少对一列。
+        foreach (var element in request.Source.Template.Elements.Where(e =>
+                     e.Kind is ElementKind.Text or ElementKind.Barcode && !string.IsNullOrWhiteSpace(e.Text)))
         {
             foreach (var token in TemplateTokenizer.EnumerateTokens(element.Text!))
             {

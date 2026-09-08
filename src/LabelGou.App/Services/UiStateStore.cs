@@ -26,6 +26,20 @@ public sealed class UiState
     /// <para><strong>0 = 没记过 = 用默认那一档</strong>（170），所以旧状态文件缺这个字段时行为零变化。</para>
     /// </summary>
     public double PreviewTableHeight { get; set; }
+
+    /// <summary>
+    /// 拆出来的 AI 浮动窗口上次摆在哪、多大（用户 2026-09-09 原话「你这个窗口很膈应」，
+    /// 上一棒问「要不要把位置与大小也记住」，他今天回了要）。
+    /// <para><strong>Width/Height 为 0 = 没记过</strong>，那时贴着主窗右侧开默认尺寸；
+    /// 旧状态文件缺这四个字段时行为零变化。</para>
+    /// </summary>
+    public double AiFloatLeft { get; set; }
+
+    public double AiFloatTop { get; set; }
+
+    public double AiFloatWidth { get; set; }
+
+    public double AiFloatHeight { get; set; }
 }
 
 /// <summary>

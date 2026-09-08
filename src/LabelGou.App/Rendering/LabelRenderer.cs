@@ -94,6 +94,9 @@ public static class LabelRenderer
                     case VectorItem vector:
                         DrawVector(dc, vector, scale, pixelsPerDip);
                         break;
+                    case BarcodeItem barcode:
+                        DrawBarcode(dc, barcode, scale, showGuides, pixelsPerDip, target);
+                        break;
                 }
             }
         }
@@ -228,6 +231,69 @@ public static class LabelRenderer
         }
 
         if (vector.ReferenceOnly) DrawReferenceBadge(dc, box, pixelsPerDip);
+    }
+
+    /// <summary>
+    /// 条码。条的位置与宽全由 Core 算好了（<c>BarcodeBars</c>），这里只画矩形：
+    /// 预览/打印/PDF/图片四个出口共用这一段，所以上纸的那张与屏幕上那张条宽一模一样。
+    /// </summary>
+    private static void DrawBarcode(DrawingContext dc, BarcodeItem barcode, double scale, bool showGuides, double pixelsPerDip, RenderTarget target)
+    {
+        var box = new Rect(
+            Mm.ToDiu(barcode.X) * scale, Mm.ToDiu(barcode.Y) * scale,
+            Mm.ToDiu(barcode.Width) * scale, Mm.ToDiu(barcode.Height) * scale);
+
+        if (barcode.Error is { Length: > 0 } error)
+        {
+            // 编不出来：画一个红底框 + 一句原因，绝不留一片看着像「本来就没东西」的空白。
+            // 这一项同时带着 Flagged，打印前的复核闸门会拦着它（宁可不出纸也不出一张错码）。
+            dc.DrawRectangle(RenderRules.FlagBackground, null, box);
+            var why = new FormattedText(
+                error,
+                CultureInfo.CurrentCulture,
+                FlowDirection.LeftToRight,
+                new Typeface(RenderRules.SafeFontFamily(barcode.FontFamily), FontStyles.Normal, FontWeights.Bold, FontStretches.Normal),
+                Math.Max(7, Mm.ToDiu(barcode.Height) * scale * 0.32),
+                RenderRules.FlagInk,
+                pixelsPerDip)
+            {
+                MaxTextWidth = Math.Max(20, box.Width),
+                Trimming = TextTrimming.CharacterEllipsis,
+                MaxTextHeight = Math.Max(10, box.Height),
+            };
+            dc.DrawText(why, new Point(box.Left + 2, box.Top + 2));
+            return;
+        }
+
+        var ink = barcode.Flagged ? RenderRules.FlagInk : RenderRules.Ink;
+        var barsTop = Mm.ToDiu(barcode.BarsY) * scale;
+        var barsHeight = Mm.ToDiu(barcode.BarsHeight) * scale;
+        foreach (var bar in barcode.Bars)
+        {
+            dc.DrawRectangle(ink, null, new Rect(
+                Mm.ToDiu(bar.X) * scale, barsTop, Mm.ToDiu(bar.Width) * scale, barsHeight));
+        }
+
+        if (barcode.ShowText)
+        {
+            // 可读数字那一行走与文本完全同一条路（同一个 TextFit）：缩字号、居中、装不下就标红，
+            // 不在条码里再写一套“看着差不多”的画法。
+            DrawText(dc, ReadableLine(barcode), scale, showGuides, pixelsPerDip, target);
+        }
+
+        if (showGuides) dc.DrawRectangle(null, GuidePen, box);
+    }
+
+    /// <summary>条码下方那串可读数字：把它包成一条 <see cref="TextItem"/>，好复用 <see cref="DrawText"/> 与 SVG 那边的同一套规则。</summary>
+    public static TextItem ReadableLine(BarcodeItem barcode)
+    {
+        var textTop = barcode.BarsY + barcode.BarsHeight;
+        return new TextItem(
+            barcode.Data,
+            barcode.X, textTop, barcode.Width, Math.Max(1, barcode.Height - (textTop - barcode.Y)),
+            barcode.FontFamily, barcode.FontSizePt, false, HorizontalAlign.Center,
+            ShrinkToFit: true, MaxLines: 1,
+            Flagged: barcode.Flagged, FlagReason: barcode.FlagReason);
     }
 
     /// <summary>参考底图的角标：淡蓝虚线框 + "参考" 二字，明确告诉人这东西不上纸（定案 D7）。</summary>
