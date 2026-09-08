@@ -32,6 +32,9 @@ public partial class MainWindow : Window
         // 整版控件靠回调取标签版面（Func 没法在 XAML 里绑），按页临时算，不预先展开几百页
         SheetView.LayoutProvider = index => _viewModel.Sheet.LayoutFor(index);
 
+        // AI 助手搬进右侧常驻页签（第 11 棒）：面板自己不知道模板库与打印在哪，三件事由这里递给它。
+        WireAi(AiPanel);
+
         Loaded += (_, _) =>
         {
             FitNow();
@@ -233,7 +236,10 @@ public partial class MainWindow : Window
     /// DeepSeek / 自定义端点）、探测模型在不在、并拿一张真图当场问一次，把模型原话与耗时摊出来。
     /// </summary>
     private void OnAiSettingsClick(object sender, RoutedEventArgs e)
-        => new Services.AiDebugWindow { Owner = this }.ShowDialog();
+    {
+        new Services.AiDebugWindow { Owner = this }.ShowDialog();
+        AiPanel.RefreshChannel();     // 常驻页签上的通道行跟着改，不留旧话
+    }
 
     private Services.AiChatWindow? _chatWindow;
 
@@ -250,8 +256,49 @@ public partial class MainWindow : Window
             return;
         }
         _chatWindow = new Services.AiChatWindow { Owner = this };
+        WireAi(_chatWindow.Panel);        // 同一个面板，能力递法也与页签里那份一致
         _chatWindow.Closed += (_, _) => _chatWindow = null;
         _chatWindow.Show();
+    }
+
+    /// <summary>
+    /// 把主界面的能力递给 AI 面板：排版要问「这张表真连了哪些字段」，落地要过模板库自己的校验，
+    /// 打印复用 ⑤ 那条命令——面板里不建第二份模板库、不开第二套出纸路（§五-22）。
+    /// </summary>
+    private void WireAi(Services.AiChatPanel panel)
+    {
+        panel.GetLayoutContext = () =>
+        {
+            var template = _viewModel.SelectedTemplate?.Template;
+            if (template is null) return null;
+            var fields = _viewModel.FieldRows.Where(r => r.Mapped)
+                .Select(r => (r.FieldKey, r.DisplayName, r.SampleValue)).ToList();
+            return new Services.AiLayoutContext(fields, template.WidthMm, template.HeightMm, _viewModel.StatusMessage);
+        };
+        panel.ApplyLayout = ApplyAiLayout;
+        panel.GoPrint = PrintFromAi;
+    }
+
+    /// <summary>用户点了「用这个」才走到这里。存不存得进模板库仍由 <see cref="TemplateStore"/> 的校验说了算。</summary>
+    private (bool Ok, string Message) ApplyAiLayout(RowLayoutSpec spec)
+    {
+        var template = spec.Build();
+        if (template is null)
+            return (false, "这份方案排不进这块标签（留白与行距把版面吃光了），当前模板没被动过。");
+        var (saved, fileName, issues) = _viewModel.Templates.Save(template);
+        if (!saved)
+            return (false, "校验拦下了，没入库：" + string.Join("；",
+                issues.Where(i => i.Severity == IssueLevel.Error).Select(i => i.Message)));
+        _viewModel.ReloadTemplates(template.Id);
+        Services.AppLog.Info($"AI 出的版式经用户确认存为模板：{template.Name}（{fileName}）");
+        return (true, $"已存成我的模板「{template.Name}」（{fileName}）并选中，预览已跟着换。要改细节走 ③ 编辑模板。");
+    }
+
+    /// <summary>「按这版去打印」：跳到 ⑤ 并触发那条既有命令；未核对字段照样被复核闸门拦着。</summary>
+    private void PrintFromAi()
+    {
+        _viewModel.StepIndex = 4;
+        _viewModel.Export.PrintCommand.Execute(null);
     }
 
     /// <summary>

@@ -2,6 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:render="clr-namespace:LabelGou.App.Rendering"
+        xmlns:services="clr-namespace:LabelGou.App.Services"
         xmlns:mvvm="clr-namespace:LabelGou.App.Mvvm"
         Title="LabelGou · 唛头标签助手"
         Width="1320" Height="860"
@@ -576,13 +577,14 @@
                 </Grid>
             </Grid>
 
-            <!-- ==================== 右侧：所见即所得预览（单标签 / 整版） ==================== -->
+            <!-- ==================== 右侧：预览（单标签 / 整版）+ 常驻 AI 助手 ==================== -->
+            <!-- AI 从菜单里搬到这里（第 11 棒）：用户原话「不应该藏起来，应该显示出来」。 -->
             <GroupBox Grid.Column="2">
                 <GroupBox.Header>
-                    <TextBlock Text="预览（按真实毫米尺寸绘制）" Style="{StaticResource StepTitle}" />
+                    <TextBlock Text="预览（按真实毫米尺寸绘制）与 AI 助手" Style="{StaticResource StepTitle}" />
                 </GroupBox.Header>
 
-                <TabControl>
+                <TabControl x:Name="RightTabs">
                     <TabItem Header="单标签">
                         <Grid>
                             <Grid.RowDefinitions>
@@ -680,6 +682,11 @@
                                            Text="灰色虚线框 = 页边可用区；细灰线 = 裁切角线；蓝色十字 = 套准标记。拼版几何全部由 Core 的 ImpositionEngine 算出，导出与打印（M3）共用同一份结果。" />
                             </StackPanel>
                         </Grid>
+                    </TabItem>
+
+                    <!-- 一套实现两处用：这个面板与「和模型对话」窗里的是同一个类（第 11 棒）。 -->
+                    <TabItem Header="AI 助手">
+                        <services:AiChatPanel x:Name="AiPanel" Margin="0,4,0,0" />
                     </TabItem>
                 </TabControl>
             </GroupBox>

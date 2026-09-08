@@ -1,0 +1,459 @@
+using System.IO;
+using System.Text;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Input;
+using System.Windows.Media;
+using LabelGou.App.Services.Recognition;
+using LabelGou.Core.Marks;
+using LabelGou.Core.Recognition;
+using LabelGou.Core.Templates;
+using Microsoft.Win32;
+
+namespace LabelGou.App.Services;
+
+/// <summary>要 AI 排版时得先知道「这张表里真有什么、标签多大」——这些只有主界面知道，所以由它端过来。</summary>
+public sealed record AiLayoutContext(
+    IReadOnlyList<(string Key, string Name, string Sample)> Fields,
+    double WidthMm,
+    double HeightMm,
+    string? Note);
+
+/// <summary>
+/// 「AI 助手」面板：和模型聊 + 让 AI 出一版排版 + 按这版去打印。
+/// <para>为什么抽成面板（M7 第 11 棒）：第 10 棒把对话做成了独立窗口，用户当天的话是
+/// 「这个 AI 界面不应该藏起来，应该显示出来」——<strong>飘在外面的窗口对主流程来说仍然是藏</strong>。
+/// 现在它是主窗口右侧第三个常驻页签，而独立窗口只是同一个面板换个壳（<see cref="AiChatWindow"/>），
+/// <strong>不开第二份聊天代码</strong>。</para>
+/// <para>红线仍然成立，只是多了一扇有人看着的门：AI 出的版式<strong>必须人点「用这个」</strong>才会存成模板，
+/// 中间还要过 <see cref="RowLayoutSpec.Build"/>（排不出返 null）与 <see cref="TemplateValidator"/>（有 Error 拒入库）；
+/// 打印走既有的 ⑤ 那一条命令与复核闸门，这里不开第二条出纸路（§五-22）。</para>
+/// </summary>
+public sealed class AiChatPanel : UserControl
+{
+    private static readonly Brush WarnBrush = new SolidColorBrush(Color.FromRgb(0xB3, 0x26, 0x1E));
+    private static readonly Brush OkBrush = new SolidColorBrush(Color.FromRgb(0x1D, 0x4E, 0xD8));
+
+    private readonly TextBlock _channelLine = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 6) };
+    private readonly TextBox _transcript = new()
+    {
+        IsReadOnly = true,
+        AcceptsReturn = true,
+        TextWrapping = TextWrapping.Wrap,
+        VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+        FontSize = 13,
+        Margin = new Thickness(0, 0, 0, 8),
+    };
+    private readonly TextBox _input = new()
+    {
+        AcceptsReturn = true,
+        TextWrapping = TextWrapping.Wrap,
+        VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+        Height = 60,
+        Margin = new Thickness(0, 0, 0, 6),
+    };
+    private readonly TextBlock _attachment = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 6) };
+    private readonly Button _send = new() { Content = "发送（Ctrl+Enter）", Padding = new Thickness(12, 6, 12, 6), Margin = new Thickness(0, 0, 8, 0) };
+    private readonly Button _stop = new() { Content = "停止", Padding = new Thickness(12, 6, 12, 6), Margin = new Thickness(0, 0, 8, 0), IsEnabled = false };
+    private readonly Button _attach = new() { Content = "附上图片…", Padding = new Thickness(12, 6, 12, 6), Margin = new Thickness(0, 0, 8, 0) };
+    private readonly Button _detach = new() { Content = "去掉图", Padding = new Thickness(12, 6, 12, 6), Margin = new Thickness(0, 0, 8, 0), IsEnabled = false };
+    private readonly Button _askLayout = new() { Content = "让 AI 出一版排版", Padding = new Thickness(12, 6, 12, 6), Margin = new Thickness(0, 0, 8, 0) };
+    private readonly Button _applyLayout = new() { Content = "用这个（存成我的模板并选中）", Padding = new Thickness(12, 6, 12, 6), Margin = new Thickness(0, 0, 8, 0), IsEnabled = false };
+    private readonly Button _print = new() { Content = "按这版去打印", Padding = new Thickness(12, 6, 12, 6) };
+
+    private readonly List<AiChatTurn> _turns = new();
+
+    /// <summary>本次要附的图（base64 + 真实 MIME）：只随下一条消息发出去，发完就清，不每轮重发。</summary>
+    private (string Base64, string MimeType, string Name)? _image;
+
+    /// <summary>AI 刚出的那版方案，等人点头。没点「用这个」之前它不落盘、不进模板库、不进预览。</summary>
+    private RowLayoutSpec? _pending;
+
+    private CancellationTokenSource? _running;
+    private RecognitionSettings _settings = RecognitionSettings.Load();
+
+    /// <summary>要 AI 排版前问主界面要素材（连好的字段与标签尺寸）。没挂上时按钮会说实话，不假装能排。</summary>
+    public Func<AiLayoutContext?>? GetLayoutContext { get; set; }
+
+    /// <summary>人点了「用这个」才落地：交给主窗口存成用户模板并选中，返回一句结果话。</summary>
+    public Func<RowLayoutSpec, (bool Ok, string Message)>? ApplyLayout { get; set; }
+
+    /// <summary>「按这版去打印」= 跳到 ⑤ 并触发既有打印命令。这里不自己开第二条出纸路。</summary>
+    public Action? GoPrint { get; set; }
+
+    /// <summary>下面三个只读状态给单测与主窗口看：面板能不能发、手上有没有待确认的方案、现在写了什么。</summary>
+    public bool IsBusy => _running is not null;
+
+    public bool HasPendingLayout => _pending is not null;
+
+    public string Transcript => _transcript.Text;
+
+    public AiChatPanel()
+    {
+        var root = new Grid();
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });   // 5：排版三按钮
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });   // 6：输入框与脚注
+
+        var openSettings = new Button { Content = "打开通道设置…", Padding = new Thickness(10, 4, 10, 4) };
+        openSettings.Click += (_, _) =>
+        {
+            new AiDebugWindow { Owner = Window.GetWindow(this) }.ShowDialog();
+            RefreshChannel();     // 设置窗里改了通道/密钥，回来那一行得马上是真的，不能等用户点发送
+        };
+        var header = new DockPanel { LastChildFill = true, Margin = new Thickness(0, 0, 0, 6) };
+        DockPanel.SetDock(openSettings, Dock.Right);
+        header.Children.Add(openSettings);
+        header.Children.Add(_channelLine);
+        Grid.SetRow(header, 0);
+        root.Children.Add(header);
+
+        var notice = new TextBlock
+        {
+            Text = "聊与问都不会自动改唛头。AI 排的版要你先点「用这个」才会进模板库，" +
+                   "中间还有一道校验拦着；没经你核对的值一律不进打印。",
+            TextWrapping = TextWrapping.Wrap,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = WarnBrush,
+            Margin = new Thickness(0, 0, 0, 8),
+        };
+        Grid.SetRow(notice, 1);
+        root.Children.Add(notice);
+
+        Grid.SetRow(_transcript, 2);
+        root.Children.Add(_transcript);
+
+        Grid.SetRow(_attachment, 3);
+        root.Children.Add(_attachment);
+
+        var chat = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 4) };
+        _send.Click += async (_, _) => await SendAsync();
+        _stop.Click += (_, _) => _running?.Cancel();
+        _attach.Click += (_, _) => PickImage();
+        _detach.Click += (_, _) => { _image = null; ShowAttachment(); };
+        var clear = new Button { Content = "清空会话", Padding = new Thickness(12, 6, 12, 6), Margin = new Thickness(0, 0, 8, 0) };
+        clear.Click += (_, _) => { _turns.Clear(); _transcript.Clear(); Append("会话已清空。"); };
+        var copy = new Button { Content = "复制全部", Padding = new Thickness(12, 6, 12, 6) };
+        copy.Click += (_, _) => { if (_transcript.Text.Length > 0) Clipboard.SetText(_transcript.Text); };
+        chat.Children.Add(_send);
+        chat.Children.Add(_stop);
+        chat.Children.Add(_attach);
+        chat.Children.Add(_detach);
+        chat.Children.Add(clear);
+        chat.Children.Add(copy);
+        Grid.SetRow(chat, 4);
+        root.Children.Add(chat);
+
+        var layout = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 6) };
+        _askLayout.Click += async (_, _) => await AskLayoutAsync();
+        _applyLayout.Click += (_, _) => ApplyPending();
+        _print.Click += (_, _) => PrintNow();
+        layout.Children.Add(_askLayout);
+        layout.Children.Add(_applyLayout);
+        layout.Children.Add(_print);
+        Grid.SetRow(layout, 5);
+        root.Children.Add(layout);
+
+        var bottom = new StackPanel();
+        Grid.SetRow(bottom, 6);
+        bottom.Children.Add(_input);
+        bottom.Children.Add(new TextBlock
+        {
+            Text = "Ctrl+Enter 发送；Enter 换行。聊天上下文最多带最近 " + AiChatHistory.MaxTurns +
+                   " 轮（更早的会省略并在对话里说明），单条最长 " + AiChatHistory.MaxCharsPerTurn +
+                   " 字。「让 AI 出一版排版」用的是同一条通道，不另设密钥。",
+            TextWrapping = TextWrapping.Wrap,
+            FontSize = 11,
+            Foreground = Brushes.Gray,
+        });
+        root.Children.Add(bottom);
+
+        _input.PreviewKeyDown += async (_, e) =>
+        {
+            if (e.Key == Key.Enter && (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control)
+            {
+                e.Handled = true;
+                await SendAsync();
+            }
+        };
+
+        Content = root;
+        RefreshChannel();
+    }
+
+    /// <summary>通道那一行：每次要发东西前都重读一次设置，用户在设置窗里改了这里立刻看得见。</summary>
+    public void RefreshChannel()
+    {
+        _settings = RecognitionSettings.Load();
+        var s = _settings;
+        var key = $"{s.ApiKeySource}{(s.SavedKeyStatus == SecretStore.Status.Unreadable ? "（存过但这台机解不开，请重填）" : string.Empty)}";
+        _channelLine.Text = $"通道：{s.Provider}　端点：{s.Endpoint}　模型：{s.Model}（{s.TimeoutSeconds}s）　" +
+                            $"{(s.Provider == RecognitionSettings.Providers.OpenAi ? "订单数据会离开这台电脑" : "本机，不出网")}　{key}";
+        _channelLine.Foreground = s.Provider == RecognitionSettings.Providers.OpenAi ? WarnBrush : OkBrush;
+    }
+
+    private void ShowAttachment() =>
+        _attachment.Text = _image is { } img
+            ? $"已附图：{img.Name}（只随下一条消息发出去）"
+            : "未附图。要让它看唛头样张就点「附上图片…」。";
+
+    private void PickImage()
+    {
+        var dialog = new OpenFileDialog
+        {
+            Title = "选一张要给模型看的图",
+            Filter = "图片|*.png;*.jpg;*.jpeg;*.bmp;*.tif;*.tiff|所有文件|*.*",
+        };
+        if (dialog.ShowDialog(Window.GetWindow(this)) != true) return;
+        try
+        {
+            // 与识别通道同一份降采样口径：长边 2000px 内 + 真实 MIME，手机原图整张 base64 上去就是超时
+            var (b64, mime) = ImageForModel.FromFile(dialog.FileName);
+            _image = (b64, mime, Path.GetFileName(dialog.FileName));
+        }
+        catch (Exception ex)
+        {
+            Append($"读图失败：{ex.Message}");
+        }
+        ShowAttachment();
+    }
+
+    private void Append(string text)
+    {
+        _transcript.AppendText(text + Environment.NewLine);
+        _transcript.ScrollToEnd();
+    }
+
+    private void SetBusy(bool busy)
+    {
+        _send.IsEnabled = !busy;
+        _stop.IsEnabled = busy;
+        _input.IsEnabled = !busy;
+        _askLayout.IsEnabled = !busy;
+    }
+
+    /// <summary>
+    /// 开场给模型的身份说明：把 <see cref="MarkFieldCatalog"/> 的真字段清单与「逐字取值」的规矩带上。
+    /// <para>为什么从目录生成而不是手写一段话：字段清单改了，提示词不能悄悄落后。</para>
+    /// </summary>
+    private static AiChatTurn SystemTurn()
+    {
+        var sb = new StringBuilder();
+        sb.Append("你是外贸纸箱唛头标签助手 LabelGou 的顾问。用户在给纸箱印唛头（箱号、件号、毛净重、体积、")
+          .Append("外箱尺寸、原产地、收货人等），软件里的字段清单如下：\n");
+        foreach (var d in MarkFieldCatalog.Mappable)
+            sb.Append("  - ").Append(d.Key).Append("：").Append(d.ChineseName)
+              .Append("（常见表头写法：").Append(string.Join(" / ", d.Aliases.Take(4))).Append("）\n");
+        sb.Append("回答要求：简短、给可操作的步骤；涉及数值时提醒用户必须以原始单据为准、要人工核对；")
+          .Append("不要编造图上或表里没有的数据，也不要输出毫米坐标。\n")
+          .Append("注意：软件是中文界面，请一律用中文回答。");
+        return new AiChatTurn(AiChatTurn.System, sb.ToString());
+    }
+
+    private async Task SendAsync()
+    {
+        if (_running is not null) return;             // 一轮没结束不接第二轮，避免两条回答交错
+        var question = _input.Text.Trim();
+        if (question.Length == 0)
+        {
+            Append("先说要问什么。");
+            return;
+        }
+        RefreshChannel();
+
+        _input.Clear();
+        _turns.Add(new AiChatTurn(AiChatTurn.User, question));
+        Append($"我：{question}");
+
+        var dropped = AiChatHistory.DroppedTurns(_turns);
+        if (dropped > 0) Append($"（上下文只带最近 {AiChatHistory.MaxTurns} 轮，已省略前 {dropped} 轮）");
+
+        var payload = new List<AiChatTurn> { SystemTurn() };
+        payload.AddRange(AiChatHistory.BuildForRequest(_turns));
+        var image = _image;
+        _image = null;                                // 图只随这一条发，别每轮重发一遍
+        ShowAttachment();
+
+        _running = new CancellationTokenSource();
+        SetBusy(true);
+        try
+        {
+            var outcome = await OllamaVisionClient.ChatAsync(
+                _settings, payload, image is { } shot ? (shot.Base64, shot.MimeType) : null,
+                _running.Token);
+            if (outcome.Ok)
+            {
+                _turns.Add(new AiChatTurn(AiChatTurn.Assistant, outcome.Text!));
+                Append($"模型（{outcome.Elapsed.TotalSeconds:F1} 秒）：{outcome.Text}");
+            }
+            else if (_running.IsCancellationRequested)
+            {
+                // 取消不是失败（§五-27）：不写 ERROR，也不假装模型回了话。
+                Append("已停止这一轮，模型的话没有回来，你的问题还留在上面。");
+            }
+            else
+            {
+                Append($"没问到回答：{outcome.Error}");
+                if (!string.IsNullOrWhiteSpace(outcome.Raw)) Append($"（服务原话：{outcome.Raw}）");
+            }
+        }
+        finally
+        {
+            _running.Dispose();
+            _running = null;
+            SetBusy(false);
+        }
+    }
+
+    /// <summary>
+    /// 「让 AI 出一版排版」：把这张表真连上的字段与标签尺寸发给模型，要它只回一份 <see cref="RowLayoutSpec"/> 的 JSON。
+    /// <para>这条不混进聊天历史：它是一次结构请求，塞进上下文会把后面几轮聊天的口径带偏。</para>
+    /// </summary>
+    public async Task AskLayoutAsync()
+    {
+        if (_running is not null) return;
+        var ctx = GetLayoutContext?.Invoke();
+        if (ctx is null)
+        {
+            Append("现在问不了：先走到 ① 导入数据、② 连上字段，AI 才知道这张表里真有什么。");
+            return;
+        }
+        if (ctx.Fields.Count == 0)
+        {
+            Append("一个字段都没连上，AI 排出来的版会是空格子。先回 ② 连接字段（可以点「自动推荐」）。");
+            return;
+        }
+        RefreshChannel();
+        _pending = null;
+        _applyLayout.IsEnabled = false;
+
+        var prompt = RowLayoutPrompt.Build(ctx.Fields, ctx.WidthMm, ctx.HeightMm, ctx.Note);
+        var payload = new List<AiChatTurn>
+        {
+            new(AiChatTurn.System, "你是唛头行式版式生成器。只输出一个 JSON 对象，不要解释文字、不要 Markdown 围栏、不要毫米坐标。"),
+            new(AiChatTurn.User, prompt),
+        };
+        var image = _image;
+        _image = null;
+        ShowAttachment();
+
+        Append($"让 AI 出一版：{ctx.Fields.Count} 个已连字段、标签 {ctx.WidthMm:0.#}×{ctx.HeightMm:0.#} mm" +
+               (image is null ? "（没附图，它只能按字段名排）" : "（附上样张给它看）") + "…");
+
+        _running = new CancellationTokenSource();
+        SetBusy(true);
+        try
+        {
+            var outcome = await OllamaVisionClient.ChatAsync(
+                _settings, payload, image is { } shot ? (shot.Base64, shot.MimeType) : null, _running.Token);
+            if (!outcome.Ok)
+            {
+                if (_running.IsCancellationRequested) Append("已停止，版式没回来，当前用的模板没被改动。");
+                else
+                {
+                    Append($"没拿到方案：{outcome.Error}");
+                    if (!string.IsNullOrWhiteSpace(outcome.Raw)) Append($"（服务原话：{outcome.Raw}）");
+                }
+                return;
+            }
+
+            FeedLayoutAnswer(outcome.Text, outcome.Elapsed.TotalSeconds);
+        }
+        finally
+        {
+            _running.Dispose();
+            _running = null;
+            SetBusy(false);
+        }
+    }
+
+    /// <summary>
+    /// 把模型原文走一遍「解析 → 骨架 → 校验」，结果摊在面板上等用户点头。
+    /// <para>为什么单独拆一个公开方法：整条确认路（包括「不点头就不落地」这条红线）
+    /// 得能在不联网的情况下测——只测 HTTP 那一层等于没测用户真正会碰到的东西。</para>
+    /// </summary>
+    public void FeedLayoutAnswer(string? modelText, double seconds = 0)
+    {
+        _pending = null;
+        _applyLayout.IsEnabled = false;
+
+        var proposal = RowLayoutJsonParser.Parse(modelText);
+        foreach (var note in proposal.Notes) Append($"（已修正：{note}）");
+        if (!proposal.HasSpec)
+        {
+            Append("这份方案不能用：" + string.Join("；", proposal.Errors));
+            Append("你现在的模板没被改动。可以点「附上图片…」把厂商样张带上再问一次。");
+            return;
+        }
+
+        var spec = proposal.Spec!;
+        var template = spec.Build();
+        if (template is null)
+        {
+            Append($"这份方案排不进 {spec.WidthMm:0.#}×{spec.HeightMm:0.#} mm：留白与行距把版面吃光了。你现在的模板没被改动。");
+            return;
+        }
+        var issues = TemplateValidator.Validate(template);
+        if (issues.HasError())
+        {
+            Append("校验拦下了这份方案（所以它不会进模板库）：" +
+                   string.Join("；", issues.Where(i => i.Severity == IssueLevel.Error).Select(i => i.Message)));
+            return;
+        }
+
+        _pending = spec;
+        Append($"模型给了一版 {spec.Rows.Count} 行的方案（{seconds:F1} 秒），标签 {spec.WidthMm:0.#}×{spec.HeightMm:0.#} mm：");
+        for (var i = 0; i < spec.Rows.Count; i++)
+        {
+            var r = spec.Rows[i];
+            Append($"  第 {i + 1} 行 [{(r.Stretch ? "撑满大字" : $"{r.SizePt:0.#}pt")}][{(r.Align == HorizontalAlign.Center ? "居中" : r.Align == HorizontalAlign.Right ? "右" : "左")}] {r.Content}");
+        }
+        foreach (var warn in issues.Where(i => i.Severity == IssueLevel.Warning))
+            Append($"（提醒：{warn.Message}）");
+        Append("看一眼：字段对不对、哪行该大该小。点「用这个」才会存成你的模板并选中；不点就什么都不变。");
+        _applyLayout.IsEnabled = true;
+    }
+
+    /// <summary>用户点了「用这个」才落地。存不存得进模板库由 <see cref="TemplateStore"/> 的校验说了算，这里不放宽。</summary>
+    public void ApplyPending()
+    {
+        if (_pending is not { } spec)
+        {
+            Append("手上没有待确认的方案，先点「让 AI 出一版排版」。");
+            return;
+        }
+        if (ApplyLayout is not { } apply)
+        {
+            Append("这个面板没接上模板库（只在主窗口的「AI 助手」页签里能用）。");
+            return;
+        }
+        var (ok, message) = apply(spec);
+        if (ok)
+        {
+            // 落地一次就收手：再点一次不该把同一个方案再存一遍（按钮同时置灰，双保险）。
+            _pending = null;
+            _applyLayout.IsEnabled = false;
+        }
+        Append((ok ? "已落地：" : "没落地：") + message);
+    }
+
+    /// <summary>「按这版去打印」= 跳到 ⑤ 并触发那条既有打印命令；未核对的字段照样被复核闸门拦着。</summary>
+    public void PrintNow()
+    {
+        if (GoPrint is not { } go)
+        {
+            Append("这个面板没接上打印（只在主窗口的「AI 助手」页签里能用）。");
+            return;
+        }
+        if (_pending is not null)
+        {
+            Append("先说一声：你点的那版还没落地，现在打印用的是当前选中的模板。");
+            return;
+        }
+        go();
+    }
+}
