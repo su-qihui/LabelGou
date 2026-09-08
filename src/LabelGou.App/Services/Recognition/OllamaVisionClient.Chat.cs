@@ -44,7 +44,7 @@ public static partial class OllamaVisionClient
     {
         var key = settings.ResolveApiKey();
         if (key is null)
-            return new ChatOutcome { Error = $"云端没有 API 密钥（填设置里的 apiKey，或设环境变量 {settings.ApiKeyEnvVar}）。" };
+            return new ChatOutcome { Error = settings.MissingKeyHint };
 
         var lastUser = -1;
         if (image is not null)

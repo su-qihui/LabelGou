@@ -24,7 +24,15 @@ public sealed class AiDebugWindow : Window
     private readonly ComboBox _channel = new() { Margin = new Thickness(0, 2, 0, 10) };
     private readonly TextBox _endpoint = new() { Margin = new Thickness(0, 2, 0, 10) };
     private readonly ComboBox _model = new() { IsEditable = true, Margin = new Thickness(0, 2, 0, 10), IsTextSearchEnabled = false };
-    private readonly PasswordBox _apiKey = new() { Margin = new Thickness(0, 2, 0, 10) };
+    private readonly PasswordBox _apiKey = new() { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 8, 0) };
+    private readonly TextBox _apiKeyPlain = new() { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 8, 0), Visibility = Visibility.Collapsed };
+    private readonly Button _eye = new() { Content = "显示", Padding = new Thickness(10, 4, 10, 4) };
+    private readonly CheckBox _rememberApiKey = new()
+    {
+        Content = "把密钥存在这台电脑上（Windows 加密，只这台机这个登录用户解得开；不勾就只活在这次运行）",
+        Margin = new Thickness(0, 2, 0, 2),
+    };
+    private readonly TextBlock _keyNotice = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 10) };
     private readonly CheckBox _acceptsImages = new()
     {
         Content = "这个模型能看图（拉完列表或改模型名时会按名字自动判：带 vl/vision/omni 的吃图，deepseek-chat 这类不吃；判错了你直接改）",
@@ -32,7 +40,7 @@ public sealed class AiDebugWindow : Window
     };
     private readonly CheckBox _useLocalOcr = new() { Content = "用本机 OCR 先认文字（关掉就只剩模型那一路）", Margin = new Thickness(0, 2, 0, 6) };
     private readonly CheckBox _useVision = new() { Content = "把图真的发给模型（关掉=只把 OCR 认出的文字发过去）", Margin = new Thickness(0, 2, 0, 6) };
-    private readonly CheckBox _clearApiKey = new() { Content = "清掉已存的密钥（连本次也不留）", Margin = new Thickness(0, 2, 0, 6) };
+    private readonly CheckBox _clearApiKey = new() { Content = "清掉已存的密钥（连磁盘上那份加密的一起删，本次也不留）", Margin = new Thickness(0, 2, 0, 6) };
     private readonly TextBox _ocrLanguage = new() { Margin = new Thickness(0, 2, 0, 10) };
     private readonly TextBox _timeout = new() { Margin = new Thickness(0, 2, 0, 10) };
     private readonly TextBlock _networkNotice = new() { TextWrapping = TextWrapping.Wrap, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 10) };
@@ -61,15 +69,11 @@ public sealed class AiDebugWindow : Window
         form.Children.Add(Labeled("服务地址 endpoint（本机 Ollama 填 http://127.0.0.1:11434）", _endpoint));
         form.Children.Add(Labeled("模型名 model（点下面的「拉取模型列表」挑，也可以手填）", _model));
         _model.SelectionChanged += (_, _) => GuessImagesForModel();
-        form.Children.Add(Labeled("API 密钥（留空则读环境变量 LABELGOU_LLM_KEY，推荐这种）", _apiKey));
-        form.Children.Add(new TextBlock
-        {
-            Text = "密钥不会写进磁盘：填了只在这次运行里有效。要长期用，把环境变量 LABELGOU_LLM_KEY 设上——\n" +
-                   "这个目录会被备份脚本扫走，明文存密钥等于把它寄出去。",
-            TextWrapping = TextWrapping.Wrap,
-            Foreground = OkBrush,
-            Margin = new Thickness(0, 0, 0, 10),
-        });
+        form.Children.Add(Labeled("API 密钥（留空则读环境变量 LABELGOU_LLM_KEY）", KeyRow()));
+        _rememberApiKey.Checked += (_, _) => RefreshKeyNotice();
+        _rememberApiKey.Unchecked += (_, _) => RefreshKeyNotice();
+        form.Children.Add(_rememberApiKey);
+        form.Children.Add(_keyNotice);
         form.Children.Add(_acceptsImages);
         form.Children.Add(_useLocalOcr);
         form.Children.Add(_useVision);
@@ -118,6 +122,62 @@ public sealed class AiDebugWindow : Window
         SelectInitialChannel();
         _loading = false;
         RefreshNotice();
+        RefreshKeyNotice();
+    }
+
+    /// <summary>密钥那一行：输入框占满剩下的宽，右边一个「眼睛」按钮。两个框叠在同一格，只显示一个。</summary>
+    private UIElement KeyRow()
+    {
+        var grid = new Grid { Margin = new Thickness(0, 2, 0, 2) };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        Grid.SetColumn(_apiKey, 0);
+        Grid.SetColumn(_apiKeyPlain, 0);
+        grid.Children.Add(_apiKey);
+        grid.Children.Add(_apiKeyPlain);
+        _eye.Click += (_, _) => ToggleKeyVisibility();
+        Grid.SetColumn(_eye, 1);
+        grid.Children.Add(_eye);
+        return grid;
+    }
+
+    /// <summary>眼睛开关：两个框之间互抄内容，保证屏幕上看到的那一串就是发出去的那一串。</summary>
+    private void ToggleKeyVisibility()
+    {
+        if (_apiKeyPlain.Visibility == Visibility.Visible)
+        {
+            _apiKey.Password = _apiKeyPlain.Text;
+            _apiKeyPlain.Visibility = Visibility.Collapsed;
+            _apiKey.Visibility = Visibility.Visible;
+            _eye.Content = "显示";
+        }
+        else
+        {
+            _apiKeyPlain.Text = _apiKey.Password;
+            _apiKey.Visibility = Visibility.Collapsed;
+            _apiKeyPlain.Visibility = Visibility.Visible;
+            _eye.Content = "隐藏";
+        }
+    }
+
+    /// <summary>用户此刻真正填的那一串（不管当前是黑点还是明文）。</summary>
+    private string TypedKey() => _apiKeyPlain.Visibility == Visibility.Visible ? _apiKeyPlain.Text : _apiKey.Password;
+
+    /// <summary>密钥那格下面的人话：解不开就红字，别说「已保存」这种没发生的事。</summary>
+    private void RefreshKeyNotice()
+    {
+        if (_settings.SavedKeyStatus == SecretStore.Status.Unreadable)
+        {
+            _keyNotice.Text = "这台电脑解不开上次存的密钥（换过机器或换过 Windows 登录用户就会这样），请重填一次。"
+                + (_settings.SavedKeyFailure is { } why ? $"（{why}）" : string.Empty);
+            _keyNotice.Foreground = WarnBrush;
+            return;
+        }
+        _keyNotice.Text = _rememberApiKey.IsChecked == true
+            ? "勾了保存：密钥以 Windows 密文单独存进 llm-key.protected（不写进 recognition.json，免得拷设置时把它一起带走）。"
+              + "换机器、换登录用户就解不开；同一个登录用户下的程序仍然读得到——要更强就别让数据进云端，或改用环境变量。"
+            : "没勾保存：密钥只存在这次运行里（本次运行内各个窗口都能用，关掉软件就没了）。要长期用就勾上面那格，或设环境变量 LABELGOU_LLM_KEY（读的时候环境变量优先）。";
+        _keyNotice.Foreground = OkBrush;
     }
 
     private sealed record ChannelItem(string Name, RecognitionSettings Values);
@@ -143,7 +203,7 @@ public sealed class AiDebugWindow : Window
         return items;
     }
 
-    private static StackPanel Labeled(string label, Control input)
+    private static StackPanel Labeled(string label, UIElement input)
     {
         var panel = new StackPanel();
         panel.Children.Add(new TextBlock { Text = label, Margin = new Thickness(0, 0, 0, 2) });
@@ -172,9 +232,11 @@ public sealed class AiDebugWindow : Window
         _useLocalOcr.IsChecked = _settings.UseLocalOcr;
         _useVision.IsChecked = _settings.UseVisionModel;
         _clearApiKey.IsChecked = false;
+        _apiKey.Password = _settings.ApiKey ?? string.Empty;
+        _apiKeyPlain.Text = _settings.ApiKey ?? string.Empty;
+        _rememberApiKey.IsChecked = _settings.RememberApiKey;
         _ocrLanguage.Text = _settings.OcrLanguage ?? string.Empty;
         _timeout.Text = _settings.TimeoutSeconds.ToString(CultureInfo.InvariantCulture);
-        _apiKey.Password = _settings.ApiKey ?? string.Empty;
     }
 
     private void ApplySelection()
@@ -241,8 +303,24 @@ public sealed class AiDebugWindow : Window
         _settings.Provider = values.Provider;
         _settings.Endpoint = _endpoint.Text.Trim();
         _settings.Model = _model.Text.Trim();
-        if (_clearApiKey.IsChecked == true) _settings.ApiKey = null;
-        else if (!string.IsNullOrWhiteSpace(_apiKey.Password)) _settings.ApiKey = _apiKey.Password;
+        if (_clearApiKey.IsChecked == true)
+        {
+            // 清了还留着「记住」，下次保存会把同一个密钥又写回磁盘，那格勾就没意义了。
+            _settings.ApiKey = null;
+            _settings.UsingSessionKey = false;
+            RecognitionSettings.SessionApiKey = null;    // 不清这一格，对话窗还会拿着刚被抹掉的那一串
+            _settings.RememberApiKey = false;
+            _rememberApiKey.IsChecked = false;
+        }
+        else
+        {
+            // 框里被清空就当用户想把它抹掉（从磁盘解出来时框是预填的，不会误伤）。
+            var typed = TypedKey().Trim();
+            _settings.ApiKey = typed.Length == 0 ? null : typed;
+            _settings.UsingSessionKey = typed.Length > 0;
+            RecognitionSettings.SessionApiKey = _settings.ApiKey;
+            _settings.RememberApiKey = _rememberApiKey.IsChecked == true;
+        }
         _settings.ModelAcceptsImages = _acceptsImages.IsChecked == true;
         // 上一版这里硬写 UseVisionModel = true，而且超时/本地 OCR/OCR 语言/密钥清除四个开关连控件都没有：
         // 那份「只关掉一半」的欠账就落在这里。
@@ -263,8 +341,17 @@ public sealed class AiDebugWindow : Window
 
     private void Persist()
     {
-        Collect().Save();
-        WriteLine($"已写入 {RecognitionSettings.FilePath}（密钥不在里面，它只活在这次运行里）");
+        var settings = Collect();
+        settings.Save();
+        var keyLine = settings.SavedKeyFailure is not null
+            ? $"但密钥那件事没成：{settings.SavedKeyFailure}"
+            : settings.RememberApiKey && !string.IsNullOrWhiteSpace(settings.ApiKey)
+                ? $"密钥已加密存进 {SecretStore.DefaultFilePath}（只这台机这个登录用户解得开）"
+                : string.IsNullOrWhiteSpace(settings.ApiKey)
+                    ? "这次没有密钥（磁盘上那份已按开关处理）"
+                    : "密钥没存盘，只活在这次运行";
+        WriteLine($"已写入 {RecognitionSettings.FilePath}；{keyLine}");
+        RefreshKeyNotice();
     }
 
     private async Task ProbeAsync()

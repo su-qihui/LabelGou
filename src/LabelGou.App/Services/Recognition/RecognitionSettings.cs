@@ -49,13 +49,56 @@ public sealed class RecognitionSettings
     public string Provider { get; set; } = Providers.Ollama;
 
     /// <summary>
-    /// 云端密钥。<b>只活在这次运行里</b>：默认不落盘（<c>[JsonIgnore]</c>），长期用请设环境变量
-    /// <see cref="ApiKeyEnvVar"/>。
+    /// 云端密钥。<b>内存里的那一份</b>：不落盘（<c>[JsonIgnore]</c>），要存盘只能走 <see cref="RememberApiKey"/>
+    /// 那条加密通道（<see cref="SecretStore"/>）。
     /// <para>上一版它会被明文写进 <c>%APPDATA%\LabelGou\recognition.json</c>（环境变量只是读时优先），
     /// 而这个目录会被备份脚本扫走、店铺电脑会被人接手——那是 §十-A-1 从第一天就想堵的口子。</para>
+    /// <para>第 11 棒为何不直接删掉这个 <c>[JsonIgnore]</c>：用户报的是「填了就消失」，
+    /// 而不是「请明文存盘」——两者不等价。加密存盘同一次运行内行为一致，仍然优先环境变量。</para>
     /// </summary>
     [JsonIgnore]
     public string? ApiKey { get; set; }
+
+    /// <summary>
+    /// 要不要把密钥存在这台电脑上（<b>DPAPI 密文</b>，单独文件 <c>llm-key.protected</c>，不写进本 JSON）。
+    /// <para>默认 false：老设置文件升上来行为不变。它只在这台机、这个 Windows 登录用户下解得开，
+    /// 拷到另一台机器就是一堆废纸——这是特性不是缺陷，界面上得把这句说出来。</para>
+    /// </summary>
+    public bool RememberApiKey { get; set; }
+
+    /// <summary>本次从磁盘密文里读密钥的结果：<c>Missing</c>=没存过，<c>Unreadable</c>=存过但解不开（界面要红字）。</summary>
+    [JsonIgnore]
+    public SecretStore.Status SavedKeyStatus { get; internal set; } = SecretStore.Status.Missing;
+
+    /// <summary>解不开时的那句人话（给界面直接用）。</summary>
+    [JsonIgnore]
+    public string? SavedKeyFailure { get; internal set; }
+
+    /// <summary>
+    /// 本次运行里用户在设置窗填过、但没勾「存在这台电脑」的那一串。
+    /// <para>为什么要有它：设置窗与 AI 面板各自 <c>Load()</c> 出不同的对象，而 <see cref="ApiKey"/> 不落盘——
+    /// 于是用户亲眼看到「设置窗里探活成功，对话窗里说没有密钥」（截图就是这个）。没有这一格，
+    /// 界面上那句「只活在这次运行」就是假话：它其实只活在那一个窗口。</para>
+    /// <para>只存内存，进程退出就没了；单测走的 <c>LoadFrom</c> 默认不合并它，免得静态字段造成测试串味。</para>
+    /// </summary>
+    public static string? SessionApiKey { get; set; }
+
+    /// <summary>这份对象里的密钥是从 <see cref="SessionApiKey"/> 来的（界面要能说清是哪一路）。</summary>
+    [JsonIgnore]
+    public bool UsingSessionKey { get; internal set; }
+
+    /// <summary>密钥现在从哪来：环境变量 / 本机存过 / 本次填的 / 根本没有。界面拿它写通道行，不再谎说「本次有效」。</summary>
+    [JsonIgnore]
+    public string ApiKeySource
+    {
+        get
+        {
+            if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(ApiKeyEnvVar ?? string.Empty))) return "环境变量";
+            if (UsingSessionKey && !string.IsNullOrWhiteSpace(ApiKey)) return "本次运行填的";
+            if (!string.IsNullOrWhiteSpace(ApiKey)) return SavedKeyStatus == SecretStore.Status.Ok ? "本机存过" : "本次填的";
+            return "没有密钥";
+        }
+    }
 
     /// <summary>密钥的环境变量名。默认先查它，避开把密钥写进磁盘。</summary>
     public string ApiKeyEnvVar { get; set; } = "LABELGOU_LLM_KEY";
@@ -91,6 +134,14 @@ public sealed class RecognitionSettings
         if (!string.IsNullOrWhiteSpace(fromEnv)) return fromEnv.Trim();
         return string.IsNullOrWhiteSpace(ApiKey) ? null : ApiKey.Trim();
     }
+
+    /// <summary>
+    /// 「收不到密钥」时的那句人话。四个出口共用一份：上一版它们是四句手写的近似话，
+    /// 密钥能加密存盘之后全部过时了（还在叫用户去填一个不存在的「设置里的 apiKey」字段）。
+    /// </summary>
+    public string MissingKeyHint =>
+        "没有可用的 API 密钥。到「模型（AI）设置与调试」里填进去（想下次还在就勾上「把密钥存在这台电脑上」），" +
+        $"或设环境变量 {ApiKeyEnvVar}（环境变量优先）。";
 
     /// <summary>
     /// 几家的现成入口。注意：<strong>这里只锁地址不锁模型</strong>——
@@ -158,31 +209,87 @@ public sealed class RecognitionSettings
         return parts.Count == 0 ? "未启用任何识别通道" : string.Join(" + ", parts);
     }
 
-    public static RecognitionSettings Load() => LoadFrom(FilePath);
+    /// <summary>界面走这条：除了读盘，还把本次运行里用户刚填的密钥接上（<see cref="SessionApiKey"/>）。</summary>
+    public static RecognitionSettings Load() => LoadFrom(FilePath, SecretStore.DefaultFilePath, mergeSessionKey: true);
 
-    /// <summary>从指定文件读。<b>单测走这条</b>，不往真用户的 <c>%APPDATA%</c> 里写东西。</summary>
-    public static RecognitionSettings LoadFrom(string path)
+    /// <summary>从指定文件读。<b>单测走这条</b>，不往真用户的 <c>%APPDATA%</c> 里写东西（也不碰密钥文件、不接静态会话密钥）。</summary>
+    public static RecognitionSettings LoadFrom(string path) => LoadFrom(path, keyPath: null);
+
+    /// <summary>
+    /// 读设置，并且（只有给了 <paramref name="keyPath"/> 时）从那个文件里把存过的密钥解回内存。
+    /// <param name="mergeSessionKey">是否把 <see cref="SessionApiKey"/> 接上。只有界面走 true：
+    /// 本次刚填的那一串比磁盘上旧的那一串更贴近用户意图，所以盖过它。</param>
+    /// </summary>
+    public static RecognitionSettings LoadFrom(string path, string? keyPath, bool mergeSessionKey = false)
     {
+        RecognitionSettings settings;
         try
         {
-            if (!File.Exists(path)) return new RecognitionSettings();
-            var loaded = JsonSerializer.Deserialize<RecognitionSettings>(File.ReadAllText(path), JsonOptions);
-            return loaded ?? new RecognitionSettings();
+            if (!File.Exists(path)) settings = new RecognitionSettings();
+            else
+            {
+                var loaded = JsonSerializer.Deserialize<RecognitionSettings>(File.ReadAllText(path), JsonOptions);
+                settings = loaded ?? new RecognitionSettings();
+            }
         }
         catch (Exception)
         {
             // 设置坏了不能拖累主流程：回到默认值，让用户在界面上重设一次。
-            return new RecognitionSettings();
+            settings = new RecognitionSettings();
         }
+
+        if (keyPath is not null) settings.ReadStoredKey(keyPath);
+        if (mergeSessionKey && !string.IsNullOrWhiteSpace(SessionApiKey))
+        {
+            settings.ApiKey = SessionApiKey;
+            settings.UsingSessionKey = true;
+        }
+        return settings;
     }
 
-    public void Save() => SaveTo(FilePath);
+    /// <summary>
+    /// 把磁盘上那份密文读回 <see cref="ApiKey"/>。<b>解不开不静默</b>：记下状态与原因交给界面说，
+    /// 而不是当没存过（上一版就是「静默退回默认」让用户以为软件忘了他的密钥）。
+    /// </summary>
+    private void ReadStoredKey(string keyPath)
+    {
+        if (!RememberApiKey)
+        {
+            // 没勾保存就不去碰那个文件：万一文件是上一轮留下的，用户已经选了不存，再读出来等于替他做主。
+            SavedKeyStatus = SecretStore.Status.Missing;
+            SavedKeyFailure = null;
+            return;
+        }
+        SavedKeyStatus = SecretStore.TryReadFile(keyPath, out var plain, out var failure);
+        SavedKeyFailure = failure;
+        if (SavedKeyStatus == SecretStore.Status.Ok && !string.IsNullOrWhiteSpace(plain)) ApiKey = plain;
+    }
 
-    /// <summary>写到指定文件。目录不存在会自动建。</summary>
-    public void SaveTo(string path)
+    /// <summary>把内存里这份密钥按开关同步到磁盘（写 / 删 / 不动）。</summary>
+    private void SyncStoredKey(string keyPath)
+    {
+        if (!RememberApiKey)
+        {
+            SavedKeyFailure = SecretStore.TryClearFile(keyPath);      // 关了保存 = 磁盘上不留
+            SavedKeyStatus = SecretStore.Status.Missing;
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(ApiKey)) return;                // 没新填的也不拿空值去覆盖存着的那份
+        SavedKeyStatus = SecretStore.TryWriteFile(keyPath, ApiKey!.Trim(), out var failure);
+        SavedKeyFailure = failure;
+    }
+
+    public void Save() => SaveTo(FilePath, SecretStore.DefaultFilePath);
+
+    /// <summary>写到指定文件（只写设置，不碰密钥）。目录不存在会自动建。</summary>
+    public void SaveTo(string path) => SaveTo(path, keyPath: null);
+
+    /// <summary>写设置，并且（只有给了 <paramref name="keyPath"/> 时）按 <see cref="RememberApiKey"/> 同步密钥文件。</summary>
+    public void SaveTo(string path, string? keyPath)
     {
         var dir = Path.GetDirectoryName(path)!;
         Directory.CreateDirectory(dir);
         File.WriteAllText(path, JsonSerializer.Serialize(this, JsonOptions));
+        if (keyPath is not null) SyncStoredKey(keyPath);
     }
 }

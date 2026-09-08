@@ -52,7 +52,7 @@ public static partial class OllamaVisionClient
         {
             key = settings.ResolveApiKey();
             if (key is null)
-                return (empty, $"云端需要密钥（填设置里的 apiKey，或设环境变量 {settings.ApiKeyEnvVar}）。");
+                return (empty, "拉模型列表同样要鉴权。" + settings.MissingKeyHint);
         }
 
         var url = openAi ? OpenAiUrl(settings.Endpoint, "models") : settings.Endpoint.TrimEnd('/') + "/api/tags";
@@ -146,7 +146,7 @@ public static partial class OllamaVisionClient
         HttpMessageHandler? handler)
     {
         if (settings.ResolveApiKey() is null)
-            return (false, $"云端没有 API 密钥（填设置里的 apiKey，或设环境变量 {settings.ApiKeyEnvVar}）。");
+            return (false, settings.MissingKeyHint);
 
         var seconds = Math.Clamp(settings.TimeoutSeconds, 10, 60);
         try
@@ -230,7 +230,7 @@ public static partial class OllamaVisionClient
     {
         var key = settings.ResolveApiKey();
         if (key is null)
-            return new ModelOutcome { Error = $"云端没有 API 密钥（填设置里的 apiKey，或设环境变量 {settings.ApiKeyEnvVar}）。" };
+            return new ModelOutcome { Error = settings.MissingKeyHint };
 
         var content = new List<object?>
         {
