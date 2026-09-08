@@ -5,7 +5,7 @@ using System.Text.Json;
 namespace LabelGou.App.Services;
 
 /// <summary>
-/// 界面状态：上次用的模板与纸规。只有两个 id，刻意不做"什么都能记住"。
+/// 界面状态：上次用的模板、纸规、文字大小写与① 步表格高度。刻意只记这几样，不做"什么都能记住"。
 /// </summary>
 public sealed class UiState
 {
@@ -20,6 +20,12 @@ public sealed class UiState
     /// 旧状态文件没这个字段时反序列化就是 0 = AsSource，等于谁都没被改变。
     /// </summary>
     public LabelGou.Core.Layout.MarkTextCase TextCase { get; set; }
+
+    /// <summary>
+    /// ① 步「打开工厂发来的数据」里那张预览表的高度（用户 2026-09-08：「这个表格显示区太小了可以选择扩大」）。
+    /// <para><strong>0 = 没记过 = 用默认那一档</strong>（170），所以旧状态文件缺这个字段时行为零变化。</para>
+    /// </summary>
+    public double PreviewTableHeight { get; set; }
 }
 
 /// <summary>

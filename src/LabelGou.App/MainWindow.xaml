@@ -37,6 +37,9 @@
                 <MenuItem Header="退出(_X)" Click="OnExitClick" />
             </MenuItem>
             <MenuItem Header="视图(_V)">
+                <MenuItem Header="拆下 / 收回右侧预览与 AI 面板(_D)" Click="OnDetachRightClick"
+                          ToolTip="把右侧那一整块拆成独立窗口（AI 与预览同时看见，不用切页签）；再点一下收回原位" />
+                <Separator />
                 <MenuItem Header="放大" Command="{Binding ZoomInCommand}" />
                 <MenuItem Header="缩小" Command="{Binding ZoomOutCommand}" />
             </MenuItem>
@@ -64,10 +67,14 @@
 
         <Grid Margin="10">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="470" />
-                <ColumnDefinition Width="10" />
-                <ColumnDefinition Width="*" />
+                <!-- 左栏可以拖宽了（用户 2026-09-08：表格显示区太小）：给个下限，免得拖成一条缝再也不会调 -->
+                <ColumnDefinition Width="470" MinWidth="320" />
+                <ColumnDefinition Width="6" />
+                <ColumnDefinition Width="*" MinWidth="360" />
             </Grid.ColumnDefinitions>
+            <GridSplitter Grid.Column="1" Width="6" HorizontalAlignment="Stretch"
+                          Background="#E1E5EA" ShowsPreview="False"
+                          ToolTip="按住左右拖：改左侧向导区的宽度（表格列多看不全时就往右拖）" />
 
             <!-- ==================== 左侧：五步向导（一次只露一步） ====================
                  以前六个 GroupBox 从上到下全摊在一个滚动条里：想改纸规得滚过整屏字段，新加的能力
@@ -135,7 +142,20 @@
 
                             <TextBlock Text="{Binding HeaderInfoText}" Style="{StaticResource Hint}" Margin="0,6,0,4" />
 
-                            <Border BorderBrush="#D8DDE3" BorderThickness="1" Height="170" Background="White">
+                            <Grid Margin="0,0,0,4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="表格显示区：" VerticalAlignment="Center" />
+                                <ComboBox Grid.Column="1" x:Name="PreviewTableSizeBox"
+                                          ItemsSource="{Binding PreviewTableHeightOptions}"
+                                          SelectedItem="{Binding SelectedPreviewTableHeight}"
+                                          DisplayMemberPath="Label"
+                                          ToolTip="嫌小就选中 / 大（这个选择会记住，下次启动还在）；要横向变宽就拖左栏与右边之间那条分隔线" />
+                            </Grid>
+
+                            <Border BorderBrush="#D8DDE3" BorderThickness="1" Height="{Binding PreviewTableHeight}" Background="White">
                                 <DataGrid ItemsSource="{Binding PreviewTable}"
                                           AutoGenerateColumns="True"
                                           IsReadOnly="True"
@@ -604,9 +624,21 @@
             <!-- AI 从菜单里搬到这里（第 11 棒）：用户原话「不应该藏起来，应该显示出来」。 -->
             <GroupBox Grid.Column="2">
                 <GroupBox.Header>
-                    <TextBlock Text="预览（按真实毫米尺寸绘制）与 AI 助手" Style="{StaticResource StepTitle}" />
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="预览（按真实毫米尺寸绘制）与 AI 助手" Style="{StaticResource StepTitle}" />
+                        <Button Grid.Column="1" x:Name="DetachRightButton" Content="拆成独立窗口 ⇱"
+                                Click="OnDetachRightClick" Padding="9,1" MinWidth="126"
+                                ToolTip="把这一整块（单标签 / 整版拼版 / AI 助手）拆成一个独立窗口，AI 与预览就能同时看着，不用切页签；再点一下收回原位" />
+                    </Grid>
                 </GroupBox.Header>
 
+                <Grid>
+                <!-- 拆出去时这块内容整体搬到浮动窗口里（同一个实例，不复制第二套预览与第二套 AI 面板） -->
+                <ContentControl x:Name="RightHost">
                 <TabControl x:Name="RightTabs">
                     <TabItem Header="单标签">
                         <Grid>
@@ -712,6 +744,16 @@
                         <services:AiChatPanel x:Name="AiPanel" Margin="0,4,0,0" />
                     </TabItem>
                 </TabControl>
+                </ContentControl>
+
+                <!-- 拆出去之后原位不能空成一块白板让人以为程序炸了：说实话 + 给一个收回入口 -->
+                <StackPanel x:Name="DetachedHint" Visibility="Collapsed"
+                            VerticalAlignment="Center" HorizontalAlignment="Center">
+                    <TextBlock Text="预览与 AI 助手已拆成独立窗口（在桌面上，标题「LabelGou · 预览与 AI 助手」）。&#10;拖到显示器另一边就能 AI 在窗外、效果在窗内同时看见；关掉那个窗口也会自动收回这里。"
+                               TextWrapping="Wrap" MaxWidth="420" TextAlignment="Center" />
+                    <Button Content="收回这里" Click="OnDetachRightClick" Margin="0,10,0,0" HorizontalAlignment="Center" />
+                </StackPanel>
+                </Grid>
             </GroupBox>
         </Grid>
     </DockPanel>

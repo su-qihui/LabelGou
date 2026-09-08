@@ -35,6 +35,12 @@ public partial class MainWindow : Window
         // AI 助手搬进右侧常驻页签（第 11 棒）：面板自己不知道模板库与打印在哪，三件事由这里递给它。
         WireAi(AiPanel);
 
+        // 右侧那一整块拆得下来也拼得回去（用户 2026-09-08：「AI 这个窗口做出来后要切换回去才能再看到效果」）。
+        // 拆开后 AI 在窗外、预览在窗内同时可见，"切页签"这一步就没必要了。
+        _rightPanel = new Services.DetachablePanel(RightHost, RightTabs, "LabelGou · 预览与 AI 助手");
+        _rightPanel.StateChanged += SyncRightPanelState;
+        SyncRightPanelState();
+
         Loaded += (_, _) =>
         {
             FitNow();
@@ -49,6 +55,21 @@ public partial class MainWindow : Window
 
     private void OnErrorRaised(string message)
         => MessageBox.Show(this, message, "LabelGou", MessageBoxButton.OK, MessageBoxImage.Warning);
+
+    private Services.DetachablePanel? _rightPanel;
+
+    /// <summary>右侧那块现在的宿主（测试与菜单都走这里，不开第二个入口）。</summary>
+    internal Services.DetachablePanel? RightPanel => _rightPanel;
+
+    private void OnDetachRightClick(object sender, RoutedEventArgs e) => _rightPanel?.Toggle();
+
+    /// <summary>拆/收之后把按钮文字与原位提示改过来（拆出去时不能空成一块白板）。</summary>
+    private void SyncRightPanelState()
+    {
+        var detached = _rightPanel is { IsDetached: true };
+        DetachedHint.Visibility = detached ? Visibility.Visible : Visibility.Collapsed;
+        DetachRightButton.Content = detached ? "收回主窗口 ⇤" : "拆成独立窗口 ⇱";
+    }
 
     private void OnExitClick(object sender, RoutedEventArgs e) => Close();
 

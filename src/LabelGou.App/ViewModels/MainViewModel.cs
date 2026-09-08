@@ -196,6 +196,8 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         // 大小写口径接回上次选的。这里直接写字段不走 setter：那时预览与拼版都还没建，
         // 去重算一次只会拿到半成品（而且启动那一次不该产生写盘 IO）。
         _textCase = remembered.TextCase;
+        // ① 步表格高度接回上次选的那档（没记过、或记的不是三档里的数，用默认）。同样直接写字段不走 setter。
+        _previewTableHeight = RememberedPreviewTableHeight(remembered.PreviewTableHeight);
         // 兜底跟 ReloadTemplates 用同一个档（行式四行）：上一版构造兜 IdStandard、刷新兜 IdRowsFour，
         // 冷启动与触发一次刷新后看到的不是同一套模板。
         SelectedTemplate = TemplateOptions.FirstOrDefault(t => t.Id == remembered.TemplateId)
@@ -513,6 +515,60 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         {
             if (value is not null) TextCase = value.Value;
         }
+    }
+
+    /// <summary>默认那一档：就是以前 XAML 里写死的 170，谁都没被改变。</summary>
+    public const double DefaultPreviewTableHeight = 170;
+
+    /// <summary>
+    /// ① 步预览表可选的三档高度（用户 2026-09-08：「这个表格显示区太小了可以选择扩大」）。
+    /// <para>为什么是三档而不是拖拽：那块表格在一个 <c>StackPanel</c> 里，StackPanel 给无限高，
+    /// <c>GridSplitter</c> 放进去不生效；要拖就得先把整个步骤面板改成 Grid，首屏高度会跳。
+    /// 想横向变宽另有左栏与右栏之间的 splitter。</para>
+    /// </summary>
+    public static readonly IReadOnlyList<(double Height, string Name)> PreviewTableHeights = new[]
+    {
+        (170.0, "小（四五行）"),
+        (380.0, "中（一屏十几行）"),
+        (620.0, "大（尽量多看）"),
+    };
+
+    private double _previewTableHeight = DefaultPreviewTableHeight;
+
+    /// <summary>状态文件里那个数只能当候选：认不出（旧文件没这个字段 = 0，或三档被改过）就退回默认。</summary>
+    private static double RememberedPreviewTableHeight(double stored)
+    {
+        foreach (var option in PreviewTableHeights)
+            if (Math.Abs(option.Height - stored) < 1) return option.Height;
+        return DefaultPreviewTableHeight;
+    }
+
+    /// <summary>① 步预览表当前高度（XAML 直接绑这个数）。</summary>
+    public double PreviewTableHeight => _previewTableHeight;
+
+    public IReadOnlyList<ChoiceOption<double>> PreviewTableHeightOptions { get; } =
+        PreviewTableHeights.Select(p => new ChoiceOption<double>(p.Height, p.Name)).ToList();
+
+    public ChoiceOption<double>? SelectedPreviewTableHeight
+    {
+        get => PreviewTableHeightOptions.FirstOrDefault(o => Math.Abs(o.Value - _previewTableHeight) < 1);
+        set
+        {
+            if (value is null || Math.Abs(value.Value - _previewTableHeight) < 1) return;
+            _previewTableHeight = value.Value;
+            Raise(nameof(PreviewTableHeight));
+            Raise(nameof(SelectedPreviewTableHeight));
+            RememberPreviewTableHeight(value.Value);
+            StatusMessage = $"① 步表格已改为「{value.Label}」（高 {value.Value:0} 像素）；嫌窄还可以拖左栏与右边之间那条分隔线。";
+        }
+    }
+
+    private void RememberPreviewTableHeight(double height)
+    {
+        var state = _uiState.Load();
+        if (Math.Abs(state.PreviewTableHeight - height) < 1) return;
+        state.PreviewTableHeight = height;
+        _uiState.Save(state);
     }
 
     /// <summary><see cref="ILabelSource"/>：拼版 VM 用它拿当前模板。</summary>
