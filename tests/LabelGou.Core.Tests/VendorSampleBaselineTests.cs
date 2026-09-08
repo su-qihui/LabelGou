@@ -95,8 +95,33 @@ public class VendorSampleBaselineTests
     }
 
     [Fact]
-    public void 一开四纸规把十五枚标签排成四页()
+    public void 一开四纸规把十五枚标签混排成四页()
     {
+        var (data, profile) = LoadJinMu();
+        var labels = NumberingEngine.Apply(RecordMapper.Map(data, profile).Records, new NumberingRule
+        {
+            Mode = NumberingMode.ExpandByCartonTotal,
+            ExpandCountField = MarkFieldKey.CartonTotal,
+        }).Labels;
+
+        var template = BuiltInTemplates.RowsFour140x100();
+        var mixed = BuiltInSheetSpecs.Cut4_280x200();
+        mixed.RepeatSameLabelPerPage = false;      // 本条守的是真样张量出来的那张几何（一页四枚不同货号）
+        var plan = ImpositionEngine.Build(mixed, template.WidthMm, template.HeightMm, labels.Count);
+
+        Assert.False(plan.Issues.HasError(), string.Join(" | ", plan.Issues.ErrorMessages()));
+        Assert.Equal(4, plan.PerPage);
+        Assert.Equal(15, plan.LabelCount);
+        Assert.Equal(4, plan.PageCount);           // 15 ÷ 4 = 3 页满 + 1 页 3 枚
+        Assert.Equal(3, plan.LabelsLastPage);      // 末页 3 枚，空出 1 个位
+        Assert.Equal(1, plan.EmptySlotsLastPage);
+    }
+
+    [Fact]
+    public void 一开四默认档把每枚唛头铺满一页()
+    {
+        // 用户 2026-09-08：「开四就是一张排 4 个一模一样的」。同样这张 280×200 的刀模纸，
+        // 开着默认档时 15 枚唛头就是 15 张纸，每张 4 份全同（一箱四面），上纸量是混排的 4 倍。
         var (data, profile) = LoadJinMu();
         var labels = NumberingEngine.Apply(RecordMapper.Map(data, profile).Records, new NumberingRule
         {
@@ -107,11 +132,11 @@ public class VendorSampleBaselineTests
         var template = BuiltInTemplates.RowsFour140x100();
         var plan = ImpositionEngine.Build(BuiltInSheetSpecs.Cut4_280x200(), template.WidthMm, template.HeightMm, labels.Count);
 
-        Assert.False(plan.Issues.HasError(), string.Join(" | ", plan.Issues.ErrorMessages()));
-        Assert.Equal(4, plan.PerPage);
-        Assert.Equal(15, plan.LabelCount);
-        Assert.Equal(4, plan.PageCount);           // 15 ÷ 4 = 3 页满 + 1 页 3 枚
-        Assert.Equal(3, plan.LabelsLastPage);      // 末页 3 枚，空出 1 个位
-        Assert.Equal(1, plan.EmptySlotsLastPage);
+        Assert.True(plan.OneLabelPerPage);
+        Assert.Equal(15, plan.PageCount);
+        Assert.Equal(60, plan.PhysicalLabelCount);
+        Assert.Equal(4, plan.MixedPageCount);                      // 与上一条基准接得上：关掉就是 4 页
+        Assert.Equal(100, plan.UtilizationPercent, 1);             // 铺满了，不再报那句 21.2%
+        Assert.All(plan.PlacementsOnPage(1), p => Assert.Equal(1, p.LabelIndex));
     }
 }

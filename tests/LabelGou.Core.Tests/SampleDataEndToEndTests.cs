@@ -146,7 +146,11 @@ public class SampleDataEndToEndTests
         Assert.Equal(1050, expanded.LabelCount);
 
         // —— 拼版：A4 旋转省料后每页 4 枚 → 263 页，末页 2 枚
-        var plan = ImpositionEngine.Build(BuiltInSheetSpecs.A4(), template.WidthMm, template.HeightMm, expanded.LabelCount);
+        // （这里显式关掉「一页只排同一枚」：本条走的是 1050 箱混排成 263 页那条链，
+        //  铺满档下同样 1050 枚唛头会占 1050 页，那是另一件事，由 ExpandCountColumnTests 守。）
+        var a4 = BuiltInSheetSpecs.A4();
+        a4.RepeatSameLabelPerPage = false;
+        var plan = ImpositionEngine.Build(a4, template.WidthMm, template.HeightMm, expanded.LabelCount);
         Assert.Equal(4, plan.PerPage);
         Assert.Equal(263, plan.PageCount);
         Assert.Equal(2, plan.LabelsLastPage);

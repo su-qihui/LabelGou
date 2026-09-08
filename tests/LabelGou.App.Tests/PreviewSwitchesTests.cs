@@ -138,10 +138,58 @@ public class PreviewSwitchesTests
     // ---------- 预览虚线 / 上纸实线 ----------
 
     [Fact]
-    public void 走生产渲染器分组那页确实画了四枚而不是只写在计划里()
+    public void 走生产渲染器一页确实画出四枚全同而不是只有左上角有东西()
     {
-        // §五-70 那条欠账的一小半：几何对了不代表渲染真画出来了，这里拿真的 PageRasterizer 渲一页，
-        // 数四个象限各自的墨点，防止「计划里四枚、纸上只有一枚」这种只算没炸的错。
+        // 用户 2026-09-08 拿红框圈的那三个白框：几何里写「每页 4 枚」不算数，必须拿真的 PageRasterizer 渲出来数墨点。
+        var spec = new SheetSpec
+        {
+            Name = "一开四",
+            PaperWidthMm = 200,
+            PaperHeightMm = 140,
+            MarginLeftMm = 5,
+            MarginTopMm = 5,
+            MarginRightMm = 5,
+            MarginBottomMm = 5,
+            GutterXMm = 2,
+            GutterYMm = 2,
+            AllowRotate = false,
+            RegistrationMarks = false,
+            RepeatSameLabelPerPage = true,
+        };
+        var template = Template("PORT {{DestinationPort}}");
+        template.WidthMm = 90;
+        template.HeightMm = 60;
+        var records = new[] { Record("los angeles"), Record("los angeles"), Record("los angeles"), Record("los angeles"),
+                              Record("shanghai"), Record("shanghai"), Record("shanghai"), Record("shanghai") };
+        var plan = ImpositionEngine.Build(spec, template.WidthMm, template.HeightMm, records.Length);
+        var source = new PageContentSource(template, records, "金沐一开四.csv", MarkTextCase.Upper);
+
+        Assert.True(plan.OneLabelPerPage);
+        Assert.Equal(4, plan.PlacementsOnPage(1).Count);
+        Assert.All(plan.PlacementsOnPage(1), p => Assert.Equal(1, p.LabelIndex));   // 一页就是同一枚铺满
+        Assert.Equal(8, plan.PageCount);
+
+        var darkCounts = OnSta(() =>
+        {
+            var bitmap = PageRasterizer.RenderPage(plan, 1, 150, source.AsProvider(), false, PageRenderPurpose.Image, false);
+            var halfW = bitmap.PixelWidth / 2;
+            var halfH = bitmap.PixelHeight / 2;
+            return new[]
+            {
+                new System.Windows.Int32Rect(0, 0, halfW, halfH),
+                new System.Windows.Int32Rect(halfW, 0, bitmap.PixelWidth - halfW, halfH),
+                new System.Windows.Int32Rect(0, halfH, halfW, bitmap.PixelHeight - halfH),
+                new System.Windows.Int32Rect(halfW, halfH, bitmap.PixelWidth - halfW, bitmap.PixelHeight - halfH),
+            }.Select(q => DarkPixelsIn(bitmap, q)).ToArray();
+        });
+
+        // 四个位置都得有墨 —— 上一版这里右上、左下、右下三格是空的，而那正是用户圈出来的东西。
+        Assert.All(darkCounts, dark => Assert.True(dark > 50, $"有一个位置没画出东西：{dark} 个墨点"));
+    }
+
+    [Fact]
+    public void 后面的标签也一样铺满不是只有第一枚()
+    {
         var spec = new SheetSpec
         {
             Name = "一开四",
@@ -159,33 +207,21 @@ public class PreviewSwitchesTests
         var template = Template("PORT {{DestinationPort}}");
         template.WidthMm = 90;
         template.HeightMm = 60;
-        var records = new[] { Record("los angeles"), Record("los angeles"), Record("los angeles"), Record("los angeles"),
-                              Record("shanghai"), Record("shanghai"), Record("shanghai"), Record("shanghai") };
-        var groups = new[] { 1, 1, 1, 1, 2, 2, 2, 2 };
-        var plan = ImpositionEngine.Build(spec, template.WidthMm, template.HeightMm, records.Length, groups);
-        var source = new PageContentSource(template, records, "金沐一开四.csv", MarkTextCase.Upper);
+        var records = new[] { Record("los angeles"), Record("shanghai"), Record("shanghai"), Record("shanghai") };
+        var plan = ImpositionEngine.Build(spec, template.WidthMm, template.HeightMm, records.Length);
+        var source = new PageContentSource(template, records, "金沐一开四.csv", MarkTextCase.AsSource);
 
-        Assert.Equal(4, plan.PlacementsOnPage(1).Count);
-        Assert.Equal(new[] { 1, 2, 3, 4 }, plan.PlacementsOnPage(1).Select(p => p.LabelIndex).ToArray());
-        Assert.Equal(2, plan.PageCount);
-
-        var darkCounts = OnSta(() =>
+        // 第 4 页 = 第 4 枚独占一页，四格都有墨
+        var page4 = plan.PlacementsOnPage(4);
+        Assert.Equal(4, page4.Count);
+        Assert.All(page4, p => Assert.Equal(4, p.LabelIndex));
+        var dark = OnSta(() =>
         {
-            var bitmap = PageRasterizer.RenderPage(plan, 1, 150, source.AsProvider(), false, PageRenderPurpose.Image, false);
-            var halfW = bitmap.PixelWidth / 2;
-            var halfH = bitmap.PixelHeight / 2;
-            return new[]
-            {
-                new System.Windows.Int32Rect(0, 0, halfW, halfH),
-                new System.Windows.Int32Rect(halfW, 0, bitmap.PixelWidth - halfW, halfH),
-                new System.Windows.Int32Rect(0, halfH, halfW, bitmap.PixelHeight - halfH),
-                new System.Windows.Int32Rect(halfW, halfH, bitmap.PixelWidth - halfW, bitmap.PixelHeight - halfH),
-            }.Select(q => DarkPixelsIn(bitmap, q)).ToArray();
+            var bitmap = PageRasterizer.RenderPage(plan, 4, 150, source.AsProvider(), false, PageRenderPurpose.Image, false);
+            return DarkPixelsIn(bitmap, new System.Windows.Int32Rect(bitmap.PixelWidth / 2, 0,
+                bitmap.PixelWidth - bitmap.PixelWidth / 2, bitmap.PixelHeight / 2));   // 右上那一格
         });
-
-        // 四个位置都得有墨，且都是同一款的大写 PORT LOS ANGELES（不是第二款的 SHANGHAI）。
-        Assert.All(darkCounts, dark => Assert.True(dark > 50, $"有一个位置没画出东西：{dark} 个墨点"));
-        Assert.All(records.Take(4), r => Assert.Equal("los angeles", r.GetText(MarkFieldKey.DestinationPort)));
+        Assert.True(dark > 50, $"第 4 页右上那一格是空的：{dark} 个墨点");
     }
 
     private static int DarkPixelsIn(System.Windows.Media.Imaging.RenderTargetBitmap bmp, System.Windows.Int32Rect area)

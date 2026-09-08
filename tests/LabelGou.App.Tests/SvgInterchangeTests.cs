@@ -49,6 +49,10 @@ public class SvgInterchangeTests
         AllowRotate = allowRotate,
         RegistrationMarks = registration,
         CropMarkThicknessMm = 0.15,
+        // 本套件比的是「一枚唛头在 SVG 里画得对不对」（描字/位图/矢量底/旋转），
+        // 一页只放一枚才拿得住 Single()；「一枚 = 一张纸、页内四份全同」那档由
+        // TextCaseAndSheetRepeatTests 与 PreviewSwitchesTests 守。
+        RepeatSameLabelPerPage = false,
     };
 
     private static LabelTemplate FrameTemplate(params TemplateElement[] extra)

@@ -261,6 +261,20 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
 
     IReadOnlyList<MarkRecord> ILabelSource.RawRecords => _rawRecords;
 
+    /// <summary><see cref="ILabelSource"/>：④ 步「按哪一列数张数」的候选 —— 表头原样，没导数据就是空清单。</summary>
+    IReadOnlyList<string> ILabelSource.ColumnHeaders => _data?.Headers ?? Array.Empty<string>();
+
+    /// <summary>
+    /// <see cref="ILabelSource"/>：这一列连到了哪个内置字段（没连就是 null）。
+    /// <para>因为连上了的那一列不会另存一份 <c>col:</c> 键，按列名取数时必须能退回这个字段，
+    /// 否则金沐那种「件数 CTN 已连总件数」的列会被报成「没有值」。</para>
+    /// </summary>
+    MarkFieldKey? ILabelSource.FieldBoundToColumn(string column)
+        => string.IsNullOrWhiteSpace(column) || _working is null
+            ? null
+            : _working.Mappings.FirstOrDefault(m => m.IsBound
+                && string.Equals(m.ColumnHeader?.Trim(), column.Trim(), StringComparison.Ordinal))?.Field;
+
     LabelLayout? ILabelSource.BuildLayoutAt(int labelIndex) => BuildLayoutFor(labelIndex);
 
     // ---------- 命令 ----------

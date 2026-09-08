@@ -92,33 +92,40 @@ public sealed class SheetPlan
     public int PerPage => Grid.PerPage;
 
     /// <summary>
-    /// 本次是否真按「一页只排同一枚」分组落位（纸规开了、且调用方递了分组键才算真）。
-    /// <para>界面要拿它决定该不该把多耗的纸说清楚，不能靠猜。</para>
+    /// 本次是否按「<strong>一枚唛头 = 一张纸</strong>」落的位（跟着纸规的
+    /// <see cref="SheetSpec.RepeatSameLabelPerPage"/> 走）。界面要拿它决定怎么说那份数，不能靠猜。
     /// </summary>
-    public bool GroupedPerPage { get; init; }
+    public bool OneLabelPerPage { get; init; }
 
-    /// <summary>关掉分组、改按顺序混排会得到几页（对照用：分组多耗纸必须让人看见差多少）。</summary>
+    /// <summary>关掉「一页只排同一枚」、改按顺序混排会得到几页（对照用：多用的纸必须让人看见差多少）。</summary>
     public int MixedPageCount { get; init; }
 
     /// <summary>
+    /// 真要上纸的<strong>物理枚数</strong>（= <see cref="Placements"/> 数）。
+    /// <para>开着「一页只排同一枚」时它是 <see cref="LabelCount"/> × 每页枚数 —— 一开四就是 4 倍料，
+    /// 所以它跟「有几个不同的唛头」必须分开报，不能拿一个数兼两件事。</para>
+    /// </summary>
+    public int PhysicalLabelCount => Placements.Count;
+
+    /// <summary>
     /// 页数。必须按<strong>实际落位</strong>算而不是 <c>ceil(总数/每页枚数)</c>：
-    /// 开了「一页只排同一枚」后同组不足一页会留空位，页数会比那个公式多，公式算就与翻页对不上。
+    /// 开了「一页只排同一枚」后一枚占一页，页数会比那个公式多，公式算就与翻页对不上。
     /// </summary>
     public int PageCount => Placements.Count == 0 ? 0 : Placements.Max(p => p.PageIndex);
 
     public int LabelsLastPage => PageCount == 0 ? 0 : PlacementsOnPage(PageCount).Count;
 
-    /// <summary>末页空出来的枚数位（省料评估要看它）。</summary>
+    /// <summary>末页空出来的枚数位（省料评估要看它）。「一页只排同一枚」开着时恒为 0（每页都铺满）。</summary>
     public int EmptySlotsLastPage => PerPage <= 0 ? 0 : PerPage - LabelsLastPage;
 
-    /// <summary>纸张利用率（%）：标签总面积 ÷ 实际耗用纸张面积，含末页空位。</summary>
+    /// <summary>纸张利用率（%）：<strong>物理枚数</strong>的总面积 ÷ 实际耗用纸张面积。铺满就是 100%，不是按「有几个不同的唛头」算。</summary>
     public double UtilizationPercent
     {
         get
         {
             var paper = Spec.PaperAreaMm2 * Math.Max(1, PageCount);
             if (paper <= 0) return 0;
-            var used = LabelCount * TemplateLabelWidthMm * TemplateLabelHeightMm;
+            var used = PhysicalLabelCount * TemplateLabelWidthMm * TemplateLabelHeightMm;
             return Math.Round(used / paper * 100, 1);
         }
     }
@@ -158,13 +165,15 @@ public sealed class SheetPlan
         var spare = AlternativePerPage > PerPage && AlternativeRotated
             ? $"（若允许旋转可每页 {AlternativePerPage} 枚）"
             : string.Empty;
-        // 分组不粉饰：多用的纸直接写在同一句里，否则用户只会发现「怎么页数变多了」而不知道为什么。
-        var group = !GroupedPerPage ? string.Empty
-            : PageCount > MixedPageCount
-                ? $" · 一页只排同一枚（同组不足一页不混排，因此比混排多 {PageCount - MixedPageCount} 页；要省纸就在 ④ 步关掉它）"
-                : " · 一页只排同一枚";
-        return $"{Grid.Columns} 列 × {Grid.Rows} 行 = 每页 {PerPage} 枚{rotate}{spare} · " +
-               $"{LabelCount} 张标签需 {PageCount} 页（末页 {LabelsLastPage} 枚）· 用纸利用率 {UtilizationPercent:0.#}%{group}";
+        // 不粉饰：物理枚数与页数一起报清。开着「一页只排同一枚」时一页就是同一枚铺满，
+        // 上纸量是唛头数的每页枚数倍，这句话必须把倍数摆到用户眼前。
+        var repeat = !OneLabelPerPage
+            ? $"{LabelCount} 张标签需 {PageCount} 页（末页 {LabelsLastPage} 枚）"
+            : $"{LabelCount} 枚唛头 = {PageCount} 页 × 每页 {PerPage} 份全同 = 上纸 {PhysicalLabelCount} 枚"
+              + (MixedPageCount < PageCount
+                  ? $"（混排只占 {MixedPageCount} 页，但一页会混多款 —— 开关在 ④ 步）"
+                  : string.Empty);
+        return $"{Grid.Columns} 列 × {Grid.Rows} 行 = 每页 {PerPage} 枚{rotate}{spare} · {repeat} · 用纸利用率 {UtilizationPercent:0.#}%";
     }
 }
 
@@ -187,16 +196,9 @@ public static class ImpositionEngine
     /// <param name="spec">纸规。</param>
     /// <param name="labelWidthMm">标签宽（模板尺寸；纸规自带尺寸时由调用方换算好再传）。</param>
     /// <param name="labelHeightMm">标签高。</param>
-    /// <param name="labelCount">要出的标签数。</param>
-    /// <param name="labelGroups">
-    /// 每张标签属于哪个源数据行（长度必须等于 <paramref name="labelCount"/>，取
-    /// <see cref="Marks.MarkRecord.SourceRowIndex"/>）。递了它、且纸规开了
-    /// <see cref="SheetSpec.RepeatSameLabelPerPage"/>，才按「一页只排同一枚」分组落位；
-    /// 没递（或长度对不上）就照原来的顺序混排，不静默假装分了组。
-    /// </param>
+    /// <param name="labelCount">要出的唛头数（<strong>不同的那一枚算一个</strong>，已按「每张几份」展开后的真实张数）。</param>
     public static SheetPlan Build(
-        SheetSpec spec, double labelWidthMm, double labelHeightMm, int labelCount,
-        IReadOnlyList<int>? labelGroups = null)
+        SheetSpec spec, double labelWidthMm, double labelHeightMm, int labelCount)
     {
         ArgumentNullException.ThrowIfNull(spec);
 
@@ -284,9 +286,8 @@ public static class ImpositionEngine
             };
         }
 
-        var grouped = spec.RepeatSameLabelPerPage
-            && labelGroups is not null && labelCount > 0 && labelGroups.Count == labelCount;
-        var placements = Place(grid, spec, labelCount, grouped ? labelGroups : null);
+        var oneLabelPerPage = spec.RepeatSameLabelPerPage;
+        var placements = Place(grid, spec, labelCount, oneLabelPerPage);
 
         var plan = new SheetPlan
         {
@@ -298,8 +299,8 @@ public static class ImpositionEngine
             Placements = placements,
             AlternativePerPage = other.PerPage,
             AlternativeRotated = other.Rotated,
-            GroupedPerPage = grouped,
-            // 混排下的页数：就是原来那个 ceil(总数/每页枚数)，拿它当对照才能把「分组多耗纸」说成一句实话。
+            OneLabelPerPage = oneLabelPerPage,
+            // 混排下的页数：就是原来那个 ceil(总数/每页枚数)，拿它当对照才能把「一枚一纸多耗纸」说成一句实话。
             MixedPageCount = labelCount <= 0 ? 0 : (int)Math.Ceiling(labelCount / (double)grid.PerPage),
             Issues = issues,
         };
@@ -379,55 +380,49 @@ public static class ImpositionEngine
     private static int Count(int value) => Math.Max(0, value);
 
     /// <summary>
-    /// 行优先铺满每一页（先右后下，操作员翻页方向与读书一致）。
-    /// <para><paramref name="groups"/> 递进来（非 null）时按<strong>源数据行连续同键</strong>分组：
-    /// 一页不混两个源标签，同组超过每页枚数就跨页接着排，不足一页的空位留着不填
-    /// （用户 2026-09-08 要的「一整张排同一个」）。没递就是原来的顺序混排。</para>
+    /// 标签序号 → 页/槽。两种排法：<strong>顺序混排</strong>（行优先铺满一页再下一页，先右后下）与
+    /// <strong>一枚唛头一张纸</strong>（<paramref name="oneLabelPerPage"/>：每个标签独占一页，
+    /// 页内铺满 <see cref="GridPlan.PerPage"/> 份全同唛头）。
     /// </summary>
-    private static List<LabelPlacement> Place(GridPlan grid, SheetSpec spec, int labelCount, IReadOnlyList<int>? groups)
+    /// <remarks>
+    /// 后者是用户 2026-09-08 拿红框纠正过来的：「<strong>开四就是一张排 4 个一模一样的，你这效果只排了一个</strong>」。
+    /// 上一棒做成了「同组不足一页时空位留着不填」，于是 2×2 的纸上只有左上角有东西 ——
+    /// 那是把「不浪费纸」排在了「一张纸就该排满同一枚」前面，方向错了。
+    /// <para><strong>代价要说清</strong>：开着它时上纸的物理枚数 = 唛头数 × 每页枚数（一开四就是 4 倍料），
+    /// 所以「这枚唛头出几张纸」必须由数据自己说（④ 步的「按哪一列数张数」，见
+    /// <see cref="Numbering.NumberingRule.ExpandCountColumn"/>），不能由这里替用户乘。
+    /// 页内那几份共享同一个件号 = 一箱贴四面，这正是用户要的「表格写 5 就出 5 张整张纸」。</para>
+    /// </remarks>
+    private static List<LabelPlacement> Place(GridPlan grid, SheetSpec spec, int labelCount, bool oneLabelPerPage)
     {
-        var list = new List<LabelPlacement>(Math.Max(0, labelCount));
+        var list = new List<LabelPlacement>(Math.Max(0, labelCount) * (oneLabelPerPage ? Math.Max(1, grid.PerPage) : 1));
         if (grid.PerPage <= 0 || labelCount <= 0) return list;
 
-        var page = 1;
-        var slot = 0;
-        var runKey = int.MinValue;      // 当前这一组是谁（连续同键算一组，不假定同一个键只会出现在一段）
         for (var i = 0; i < labelCount; i++)
         {
-            if (groups is null)
+            // 一枚一纸：这个标签自己占一页、页内每个槽都放它；混排：它只占自己那一个槽
+            var copies = oneLabelPerPage ? grid.PerPage : 1;
+            var page = oneLabelPerPage ? i + 1 : i / grid.PerPage + 1;
+            for (var copy = 0; copy < copies; copy++)
             {
-                page = i / grid.PerPage + 1;
-                slot = i % grid.PerPage;
+                var slot = oneLabelPerPage ? copy : i % grid.PerPage;
+                var row = slot / grid.Columns;
+                var col = slot % grid.Columns;
+
+                var x = spec.MarginLeftMm + col * (grid.LabelWidthMm + spec.GutterXMm);
+                var y = spec.MarginTopMm + row * (grid.LabelHeightMm + spec.GutterYMm);
+
+                list.Add(new LabelPlacement(
+                    LabelIndex: i + 1,
+                    PageIndex: page,
+                    Row: row,
+                    Column: col,
+                    X: Math.Round(x, 4),
+                    Y: Math.Round(y, 4),
+                    Width: grid.LabelWidthMm,
+                    Height: grid.LabelHeightMm,
+                    Rotated: grid.Rotated));
             }
-            else
-            {
-                var key = groups[i];
-                // 本页排满了 → 换页；换了组且本页已有内容 → 也换页（本页还空着就直接开新组，不白扔一页）
-                if (slot >= grid.PerPage || (key != runKey && slot > 0))
-                {
-                    page++;
-                    slot = 0;
-                }
-                runKey = key;
-            }
-
-            var row = slot / grid.Columns;
-            var col = slot % grid.Columns;
-
-            var x = spec.MarginLeftMm + col * (grid.LabelWidthMm + spec.GutterXMm);
-            var y = spec.MarginTopMm + row * (grid.LabelHeightMm + spec.GutterYMm);
-
-            list.Add(new LabelPlacement(
-                LabelIndex: i + 1,
-                PageIndex: page,
-                Row: row,
-                Column: col,
-                X: Math.Round(x, 4),
-                Y: Math.Round(y, 4),
-                Width: grid.LabelWidthMm,
-                Height: grid.LabelHeightMm,
-                Rotated: grid.Rotated));
-            slot++;
         }
         return list;
     }

@@ -21,6 +21,18 @@ public interface ILabelSource
     /// <summary>当前所选模板。</summary>
     LabelTemplate? Template { get; }
 
+    /// <summary>
+    /// 表里的列名（原样，含空格与中英混排）。④ 步的「按哪一列数张数」要列出它们 ——
+    /// 用户 2026-09-08：「张数一般表格里会有一列写的」，而那些列名不在 <see cref="MarkFieldKey"/> 那 19 个枚举里。
+    /// </summary>
+    IReadOnlyList<string> ColumnHeaders { get; }
+
+    /// <summary>
+    /// 某一列是否已经连到某个内置字段。<see cref="ColumnHeaders"/> 只给列名，而
+    /// <strong>连上了的那一列不会另存一份 <c>col:</c> 键</strong>，展开取数时必须知道这个对应关系。
+    /// </summary>
+    MarkFieldKey? FieldBoundToColumn(string column);
+
     /// <summary>取第 N 张标签（1 起）的版面；整版预览按页临时取用。</summary>
     LabelLayout? BuildLayoutAt(int labelIndex);
 }
@@ -113,7 +125,7 @@ public sealed class ImpositionViewModel : ObservableObject
                  {
                      (NumberingMode.KeepData, "沿用数据里的件号（缺项才补号）"),
                      (NumberingMode.ForceSequence, "强制重排：忽略数据件号，按规则连续编号"),
-                     (NumberingMode.ExpandByCartonTotal, "按箱数展开：一行有几箱就出几张标签"),
+                     (NumberingMode.ExpandByCartonTotal, "按每行的张数展开：一行写几张纸就出几张整张纸"),
                  })
         {
             ModeOptions.Add(new ChoiceOption<NumberingMode>(mode, label));
@@ -332,6 +344,48 @@ public sealed class ImpositionViewModel : ObservableObject
         }
     }
 
+    /// <summary>「按哪一列数张数」的候选：第一项是不选（沿用连接好的字段），其余是表里的列名原样。</summary>
+    public ObservableCollection<ChoiceOption<string?>> ExpandColumnOptions { get; } = new();
+
+    private ChoiceOption<string?>? _selectedExpandColumn;
+    private string? _expandColumn;
+
+    /// <summary>展开时按表里哪一列数张数（null = 沿用 NumberingRule.ExpandCountField 那个字段）。</summary>
+    public ChoiceOption<string?>? SelectedExpandColumn
+    {
+        get => _selectedExpandColumn;
+        set
+        {
+            if (!Set(ref _selectedExpandColumn, value) || value is null) return;
+            _expandColumn = value.Value;
+            RecomputeNumbering();
+        }
+    }
+
+    /// <summary>
+    /// 换表或重导后重建展开列候选。列名一律原样取自表头（含空格与中英混排），不猜也不洗。
+    /// <para>此前它根本没法选：ExpandCountField 是封闭的 19 个枚举，表里那列叫「打印张数」就选不到。</para>
+    /// </summary>
+    public void ReloadExpandColumns()
+    {
+        var keep = _expandColumn;
+        ExpandColumnOptions.Clear();
+        ExpandColumnOptions.Add(new ChoiceOption<string?>(null, "（不选，用连接好的「总件数」字段）"));
+        foreach (var header in _source.ColumnHeaders)
+        {
+            if (!string.IsNullOrWhiteSpace(header))
+            {
+                // 值用表头原样（精确匹配才取到数），只把给人看的那一行折平：真表头常带换行（「件数(换行)CTN」）。
+                ExpandColumnOptions.Add(new ChoiceOption<string?>(header, ColumnLabel.SingleLine(header)));
+            }
+        }
+        // 直接改私有字段再 Raise：走 setter 会再触发一次重算，而调用方紧接着就要重算
+        var match = ExpandColumnOptions.FirstOrDefault(o => o.Value == keep) ?? ExpandColumnOptions[0];
+        _selectedExpandColumn = match;
+        _expandColumn = match.Value;
+        Raise(nameof(SelectedExpandColumn));
+    }
+
     public NumberingMode Mode
     {
         get => _mode;
@@ -339,9 +393,13 @@ public sealed class ImpositionViewModel : ObservableObject
         {
             if (!Set(ref _mode, value)) return;
             if (SelectedMode?.Value != value) SelectedMode = ModeOptions.FirstOrDefault(o => o.Value == value);
+            Raise(nameof(IsExpandMode));
             RecomputeNumbering();
         }
     }
+
+    /// <summary>只有「按每行的张数展开」这一档才需要选展开列，界面拿它灰掉那个下拉。</summary>
+    public bool IsExpandMode => Mode == NumberingMode.ExpandByCartonTotal;
 
     public NumberingScope Scope
     {
@@ -402,19 +460,27 @@ public sealed class ImpositionViewModel : ObservableObject
     }
 
     /// <summary>当前编号规则（每次现拼，保证与界面上的各个属性一致）。</summary>
-    public NumberingRule BuildRule() => new()
+    public NumberingRule BuildRule()
     {
-        Name = "当前任务",
-        Mode = Mode,
-        Scope = Scope,
-        GroupByField = GroupBy,
-        Start = Start,
-        Step = Step,
-        PadDigits = PadDigits,
-        Prefix = Prefix,
-        Suffix = Suffix,
-        Copies = Copies,
-    };
+        // 用户选的那一列如果已经连上某个内置字段，就把那个字段一起递过去（Core 会先查列名再退回字段）；
+        // 没连上的列保持默认的「总件数」占位，那时真的按列名读。
+        var bound = _expandColumn is { } column ? _source.FieldBoundToColumn(column) : null;
+        return new NumberingRule
+        {
+            Name = "当前任务",
+            Mode = Mode,
+            Scope = Scope,
+            GroupByField = GroupBy,
+            Start = Start,
+            Step = Step,
+            PadDigits = PadDigits,
+            Prefix = Prefix,
+            Suffix = Suffix,
+            Copies = Copies,
+            ExpandCountField = bound ?? MarkFieldKey.CartonTotal,
+            ExpandCountColumn = _expandColumn,
+        };
+    }
 
     /// <summary>从映射方案里恢复规则（同一客户反复来单不必再设一遍）。</summary>
     public void ApplySavedRule(NumberingRule? saved)
@@ -429,9 +495,12 @@ public sealed class ImpositionViewModel : ObservableObject
         _prefix = saved.Prefix;
         _suffix = saved.Suffix;
         _copies = saved.Copies;
+        _expandColumn = saved.ExpandCountColumn;
         SelectedMode = ModeOptions.FirstOrDefault(o => o.Value == _mode) ?? SelectedMode;
         SelectedScope = ScopeOptions.FirstOrDefault(o => o.Value == _scope) ?? SelectedScope;
         SelectedGroup = GroupOptions.FirstOrDefault(o => Equals(o.Value, _groupBy)) ?? SelectedGroup;
+        SelectedExpandColumn = ExpandColumnOptions.FirstOrDefault(o => o.Value == _expandColumn) ?? SelectedExpandColumn;
+        Raise(nameof(IsExpandMode));
         RaiseAll();
         RecomputeNumbering();
     }
@@ -440,6 +509,7 @@ public sealed class ImpositionViewModel : ObservableObject
     {
         Raise(nameof(Mode));
         Raise(nameof(Scope));
+        Raise(nameof(SelectedExpandColumn));
         Raise(nameof(GroupBy));
         Raise(nameof(Start));
         Raise(nameof(Step));
@@ -510,9 +580,10 @@ public sealed class ImpositionViewModel : ObservableObject
 
     private void RaiseCommands() => System.Windows.Input.CommandManager.InvalidateRequerySuggested();
 
-    /// <summary>数据或模板变了（主 VM 调用）：重算编号与拼版。</summary>
+    /// <summary>数据或模板变了（主 VM 调用）：重建展开列候选，再重算编号与拼版。</summary>
     public void RefreshFromSource()
     {
+        ReloadExpandColumns();
         RecomputeNumbering();
     }
 
@@ -529,11 +600,9 @@ public sealed class ImpositionViewModel : ObservableObject
             return;
         }
 
-        // 「一页只排同一枚」要按源数据行分组。SourceRowIndex 在编号展开时已经带到每张标签上，
-        // 不在这递引擎就照混排走 —— 它不猜、也不自己去读记录（§五-73：兜底值必须带来源标记同一条路）。
-        var groups = new int[_labels.Count];
-        for (var i = 0; i < _labels.Count; i++) groups[i] = _labels[i].SourceRowIndex;
-        var plan = ImpositionEngine.Build(spec, template.WidthMm, template.HeightMm, _labels.Count, groups);
+        // 「一页只排同一枚」开不开只看纸规那个开关：开着就是一枚唛头独占一页、页内铺满全同份数，
+        // 所以不再需要把分组键递给引擎（上一棒递的 SourceRowIndex 已无意义，那正是用户拿红框否掉的旧语义）。
+        var plan = ImpositionEngine.Build(spec, template.WidthMm, template.HeightMm, _labels.Count);
         Plan = plan;
         SheetIssues.Clear();
         foreach (var issue in plan.Issues)

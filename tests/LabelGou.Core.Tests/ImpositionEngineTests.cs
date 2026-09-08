@@ -24,6 +24,9 @@ public class ImpositionEngineTests
         GutterYMm = gutter,
         AllowRotate = allowRotate,
         RegistrationMarks = false,
+        // 本套件钉的是混排下的网格几何（坐标 / 末页余量 / 裁切范围 / 换纸比较），
+        // 「一枚 = 一张纸」那档自己有一组测试（TextCaseAndSheetRepeatTests / ExpandCountColumnTests）。
+        RepeatSameLabelPerPage = false,
     };
 
     [Fact]
@@ -257,7 +260,9 @@ public class ImpositionEngineTests
     public void 换纸规比较能算出省几张纸()
     {
         var a4 = ImpositionEngine.Build(A4(), 100, 80, 9);
-        var a3 = ImpositionEngine.Build(BuiltInSheetSpecs.A3(), 100, 80, 9);
+        var a3Spec = BuiltInSheetSpecs.A3();
+        a3Spec.RepeatSameLabelPerPage = false;      // 比的是混排下换纸省几张，不是比两档开关
+        var a3 = ImpositionEngine.Build(a3Spec, 100, 80, 9);
 
         Assert.True(a3.PageCount < a4.PageCount);
         Assert.True(ImpositionEngine.ComparePages(a3, a4) > 0);

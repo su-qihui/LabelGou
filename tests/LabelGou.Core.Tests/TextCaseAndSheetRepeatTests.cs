@@ -141,109 +141,108 @@ public class TextCaseAndSheetRepeatTests
     }
 
     [Fact]
-    public void 开着时一页不混两款唛头()
+    public void 开着时一枚唛头独占一页且页内铺满全同份数()
     {
-        var groups = new[] { 1, 1, 2, 2, 3, 3 };
-        var plan = ImpositionEngine.Build(FourUp(), W, H, groups.Length, groups);
+        // 用户 2026-09-08 拿红框纠正的原话：「开四就是一张排 4 个一模一样的，你这效果只排了一个」。
+        var plan = ImpositionEngine.Build(FourUp(), W, H, 3);
 
-        Assert.True(plan.GroupedPerPage);
-        Assert.Equal(3, plan.PageCount);                       // 两款挤一页的混排在这里变成三页
-        Assert.Empty(plan.PlacementsOnPage(1).Select(p => p.LabelIndex).Except(new[] { 1, 2 }));
-        foreach (var page in Enumerable.Range(1, plan.PageCount))
+        Assert.True(plan.OneLabelPerPage);
+        Assert.Equal(3, plan.PageCount);                       // 一枚一页，不是 ceil(3/4)=1
+        Assert.Equal(12, plan.PhysicalLabelCount);             // 上纸 12 枚 = 3 × 4
+        for (var page = 1; page <= plan.PageCount; page++)
         {
-            var onThisPage = plan.PlacementsOnPage(page).Select(p => groups[p.LabelIndex - 1]).Distinct().ToList();
-            Assert.Single(onThisPage);                         // 每一页都只有一种源标签
+            var on = plan.PlacementsOnPage(page);
+            Assert.Equal(4, on.Count);                         // 每页都铺满，不留白格
+            Assert.Equal(page, Assert.Single(on.Select(p => p.LabelIndex).Distinct()));
         }
     }
 
     [Fact]
     public void 关掉开关回到顺序混排()
     {
-        var groups = new[] { 1, 1, 2, 2, 3, 3 };
-        var plan = ImpositionEngine.Build(FourUp(repeatSame: false), W, H, groups.Length, groups);
+        var plan = ImpositionEngine.Build(FourUp(repeatSame: false), W, H, 6);
 
-        Assert.False(plan.GroupedPerPage);
+        Assert.False(plan.OneLabelPerPage);
         Assert.Equal(2, plan.PageCount);                       // ceil(6/4)
         Assert.Equal(4, plan.PlacementsOnPage(1).Count);
         Assert.Equal(2, plan.LabelsLastPage);
+        Assert.Equal(6, plan.PhysicalLabelCount);              // 混排下一枚标签就上一次纸
     }
 
     [Fact]
-    public void 没递分组键时不静默假装分了组()
+    public void 开关跟着纸规走不靠调用方递分组键()
     {
-        // 引擎不猜：调用方没给每张标签的源行号，就照混排走，并把 GroupedPerPage 留成 false。
+        // 上一版要调用方递 SourceRowIndex，没递就是个假旋钮；现在纸规说了算，任何四参数调用都照铺满。
         var plan = ImpositionEngine.Build(FourUp(), W, H, 6);
 
-        Assert.False(plan.GroupedPerPage);
-        Assert.Equal(2, plan.PageCount);
+        Assert.True(plan.OneLabelPerPage);
+        Assert.Equal(6, plan.PageCount);
+        Assert.Equal(24, plan.PhysicalLabelCount);
     }
 
     [Fact]
-    public void 分组页数按实际落位算而不是公式()
+    public void 页数按实际落位算而不是公式()
     {
-        var groups = new[] { 1, 1, 1, 1, 1 };                 // 一款货 5 箱，每页 4 枚
-        var plan = ImpositionEngine.Build(FourUp(), W, H, groups.Length, groups);
+        var plan = ImpositionEngine.Build(FourUp(), W, H, 5);  // 一款货 5 箱 → 5 张整张纸
 
-        Assert.Equal(2, plan.PageCount);
-        Assert.Equal(1, plan.LabelsLastPage);                 // 上一版这里会算成 5 - 1*4 = 1（碰巧对），
-        Assert.Equal(3, plan.EmptySlotsLastPage);             // 但末页枚数必须来自落位而不是减法
-        Assert.Equal(2, plan.MixedPageCount);                 // ceil(5/4) = 2，这一款没多耗纸
+        Assert.Equal(5, plan.PageCount);
+        Assert.Equal(4, plan.LabelsLastPage);                  // 每页都铺满，末页也满
+        Assert.Equal(0, plan.EmptySlotsLastPage);
+        Assert.Equal(2, plan.MixedPageCount);                  // 关掉它 ceil(5/4)=2 页就够
     }
 
     [Fact]
-    public void 同组排满一页后下一页从左上角重新开始()
+    public void 每页都从左上角重新排起且四格几何一致()
     {
-        var groups = new[] { 1, 1, 1, 1, 1 };
-        var plan = ImpositionEngine.Build(FourUp(), W, H, groups.Length, groups);
-        var fifth = Assert.Single(plan.PlacementsOnPage(2));
+        var plan = ImpositionEngine.Build(FourUp(), W, H, 2);
+        var first = plan.PlacementsOnPage(1);
+        var second = plan.PlacementsOnPage(2);
 
-        Assert.Equal(5, fifth.LabelIndex);
-        Assert.Equal(0, fifth.Row);
-        Assert.Equal(0, fifth.Column);
-        Assert.Equal(5, fifth.X);                              // 与第一页第一枚同一套落位（页边 5mm）
-        Assert.Equal(5, fifth.Y);
+        Assert.Equal(first.Select(p => (p.Row, p.Column, p.X, p.Y)), second.Select(p => (p.Row, p.Column, p.X, p.Y)));
+        Assert.Contains(second, p => p.LabelIndex == 2 && p.Row == 0 && p.Column == 0 && p.X == 5 && p.Y == 5);
     }
 
     [Fact]
-    public void 多耗的纸必须在那句总结里说清楚()
+    public void 上纸倍数与混排对照必须写在那句总结里()
     {
-        var groups = new[] { 1, 1, 1, 1, 1, 2, 2, 2, 2, 2 };  // 两款各 5 箱
-        var plan = ImpositionEngine.Build(FourUp(), W, H, groups.Length, groups);
+        var plan = ImpositionEngine.Build(FourUp(), W, H, 10);
 
-        Assert.Equal(4, plan.PageCount);
+        Assert.Equal(10, plan.PageCount);
         Assert.Equal(3, plan.MixedPageCount);
-        Assert.Contains("一页只排同一枚", plan.Describe());
-        Assert.Contains("多 1 页", plan.Describe());           // 用户看完这句才知道有个开关可以关
+        var text = plan.Describe();
+        Assert.Contains("10 枚唛头 = 10 页 × 每页 4 份全同 = 上纸 40 枚", text);
+        Assert.Contains("混排只占 3 页，但一页会混多款", text);   // 用户看完这句才知道有个开关可以关
     }
 
     [Fact]
     public void 一页一枚那档开关不改变任何结果()
     {
-        // 五家真样张全是一页一枚：PerPage=1 时分组与混排必须一模一样，不然升级就改了所有人的版。
-        var groups = new[] { 1, 2, 3 };
+        // 五家真样张全是一页一枚：PerPage=1 时开与关必须一模一样，不然升级就改了所有人的版。
         var onSpec = FourUp();
         onSpec.FollowsLabel = true;
         var offSpec = FourUp(repeatSame: false);
         offSpec.FollowsLabel = true;
-        var grouped = ImpositionEngine.Build(onSpec, W, H, groups.Length, groups);
-        var mixed = ImpositionEngine.Build(offSpec, W, H, groups.Length, groups);
+        var grouped = ImpositionEngine.Build(onSpec, W, H, 3);
+        var mixed = ImpositionEngine.Build(offSpec, W, H, 3);
 
         Assert.Equal(1, grouped.PerPage);
         Assert.Equal(3, grouped.PageCount);
         Assert.Equal(mixed.PageCount, grouped.PageCount);
         Assert.Equal(mixed.MixedPageCount, grouped.MixedPageCount);
-        Assert.True(grouped.GroupedPerPage);                   // 开关是开着的，只是这里没差别
+        Assert.Equal(mixed.PhysicalLabelCount, grouped.PhysicalLabelCount);
+        Assert.True(grouped.OneLabelPerPage);                   // 开关是开着的，只是这里没差别
     }
 
     [Fact]
-    public void 同一个源行分两段出现时算两组不回头填()
+    public void 铺满后的用纸利用率按物理枚数算()
     {
-        // 顺序里 1 出现两次（中间夹了 2）就按两组处理：引擎不重排用户的标签顺序。
-        var groups = new[] { 1, 2, 1 };
-        var plan = ImpositionEngine.Build(FourUp(), W, H, groups.Length, groups);
+        var on = ImpositionEngine.Build(FourUp(), W, H, 5);
+        var off = ImpositionEngine.Build(FourUp(repeatSame: false), W, H, 5);
 
-        Assert.Equal(3, plan.PageCount);                       // 三枚各占一页（每页只准一种源标签）
-        Assert.Equal(1, plan.MixedPageCount);                  // 混排下三枚本来能挤同一页
-        Assert.Contains("多 2 页", plan.Describe());
+        // 每页 4 枚 × 5400 ÷ 28000 = 77.1%（页边与间距占掉的那块不会凭空消失）；
+        // 上一棒报的那句「21.2%」就是把「有几个不同唛头」当成了上纸量。
+        Assert.Equal(77.1, on.UtilizationPercent, 1);
+        Assert.True(on.UtilizationPercent > off.UtilizationPercent);
+        Assert.Equal(48.2, off.UtilizationPercent, 1);
     }
 }

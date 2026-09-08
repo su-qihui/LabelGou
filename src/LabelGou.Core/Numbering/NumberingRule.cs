@@ -88,6 +88,14 @@ public sealed class NumberingRule
     /// </summary>
     public MarkFieldKey ExpandCountField { get; set; } = MarkFieldKey.CartonTotal;
 
+    /// <summary>
+    /// 展开时改读<strong>表里某一列的列名</strong>（非空就优先于 <see cref="ExpandCountField"/>）。
+    /// <para>用户 2026-09-08 的原话：「张数一般表格里会有一列写的（例：表格写打印 5 张，那对应的那张就要排出
+    /// 5 张整张纸）」。那些列叫「打印张数」/「张数」/「一开四」，而 <see cref="MarkFieldKey"/> 是封闭的 19 个枚举，
+    /// 光靠 <see cref="ExpandCountField"/> 根本选不到 —— 所以开一个按列名取数的口子（§十-A-25 的正解）。</para>
+    /// </summary>
+    public string? ExpandCountColumn { get; set; }
+
     /// <summary>不分组时的固定写法，省得界面再点一遍。</summary>
     public static NumberingRule Default() => new();
 
@@ -104,6 +112,7 @@ public sealed class NumberingRule
         Suffix = Suffix,
         Copies = Copies,
         ExpandCountField = ExpandCountField,
+        ExpandCountColumn = ExpandCountColumn,
     };
 
     /// <summary>给人看的一句话，界面状态栏直接可用。</summary>
@@ -113,7 +122,9 @@ public sealed class NumberingRule
         {
             NumberingMode.KeepData => "沿用数据件号",
             NumberingMode.ForceSequence => "强制重排",
-            NumberingMode.ExpandByCartonTotal => "按箱数展开",
+            NumberingMode.ExpandByCartonTotal => string.IsNullOrWhiteSpace(ExpandCountColumn)
+                ? "按箱数展开"
+                : $"按「{Marks.ColumnLabel.SingleLine(ExpandCountColumn)}」列展开",
             _ => Mode.ToString(),
         };
         var scope = Scope == NumberingScope.Global

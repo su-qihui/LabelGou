@@ -92,7 +92,7 @@ public static class NumberingEngine
                 cartonsPerRecord[i] = 1;
                 continue;
             }
-            var (count, note) = ReadCartonCount(records[i], rule.ExpandCountField);
+            var (count, note) = ReadCartonCount(records[i], rule.ExpandCountField, rule.ExpandCountColumn);
             if (note is not null)
                 issues.Add(new TemplateIssue(IssueLevel.Warning, $"第 {i + 1} 行：{note}"));
             cartonsPerRecord[i] = count;
@@ -267,27 +267,46 @@ public static class NumberingEngine
     }
 
     /// <summary>
-    /// 读一行的箱数；拿不到合法正整数时按 1 箱处理并回一句原因。
+    /// 读一行的箱数（= 这枚唛头出几张纸）；拿不到合法正整数时按 1 处理并回一句原因。
     /// <para>只认属于本行的数据（<see cref="RowDataText"/>）：兜底填进 <c>CartonTotal</c> 的
     /// 整批行数或被当成「本行几箱」，九行表就会变成 9×9=81 张标签。</para>
+    /// <para><paramref name="columnName"/> 非空时优先按<strong>列名</strong>读（用户 2026-09-08：「张数一般表格里会有一列写的」），
+    /// 读不到就逐行报 Warning，不静默按 1 假装分过了。</para>
+    /// <para>但<strong>已经连上字段的那一列不会另存一份 <c>col:</c> 键</strong>（金沐的「件数 CTN」就是这样），
+    /// 所以列名查不到时要退回按 <paramref name="field"/> 取，否则会对着一张明明存在的列报 32 条「没有值」。</para>
     /// </summary>
-    private static (int Cartons, string? Note) ReadCartonCount(MarkRecord record, MarkFieldKey field)
+    private static (int Cartons, string? Note) ReadCartonCount(MarkRecord record, MarkFieldKey field, string? columnName)
     {
-        var text = RowDataText(record, field);
+        var byColumn = !string.IsNullOrWhiteSpace(columnName);
+        var column = columnName?.Trim();
+        var text = byColumn
+            ? ColumnDataText(record, column!) ?? RowDataText(record, field)
+            : RowDataText(record, field);
+        var name = byColumn ? $"「{ColumnLabel.SingleLine(column)}」列" : $"「{DefName(field)}」";
         if (string.IsNullOrWhiteSpace(text))
-            return (1, $"「{DefName(field)}」不是表格里的值（没连到列或被兜底填成整批总数），本行按 1 箱处理");
+            return (1, byColumn
+                ? $"{name}在本行没有值（表里没这一列，或这一格是空的），本行按 1 张纸处理"
+                : $"{name}不是表格里的值（没连到列或被兜底填成整批总数），本行按 1 箱处理");
 
         // 允许 "12"、"12 箱"、"12ctn" 这类写法：取第一个连续数字串。
         // 不能像以前那样把所有数字字符拼起来——注释自证的 "12.0" 会被拼成 120（十倍箱数，批次一-1）。
         var match = FirstIntegerPattern.Match(text);
         if (!match.Success || !int.TryParse(match.Value, NumberStyles.None, CultureInfo.InvariantCulture, out var count))
-            return (1, $"「{DefName(field)}」＝「{text}」读不出整数，按 1 箱处理");
+            return (1, $"{name}＝「{text}」读不出整数，按 1 张纸处理");
 
-        if (count <= 0) return (1, $"「{DefName(field)}」＝0，按 1 箱处理");
+        if (count <= 0) return (1, $"{name}＝0，按 1 张纸处理");
         if (count > NumberingRule.MaxExpandPerRecord)
             return (NumberingRule.MaxExpandPerRecord,
-                $"「{DefName(field)}」＝{count.ToString(CultureInfo.InvariantCulture)} 超过单行上限 {NumberingRule.MaxExpandPerRecord}，已截断");
+                $"{name}＝{count.ToString(CultureInfo.InvariantCulture)} 超过单行上限 {NumberingRule.MaxExpandPerRecord}，已截断");
         return (count, null);
+    }
+
+    /// <summary>按列名取本行原文（只认导入的值，引擎自己填的 Rule 值不算）。</summary>
+    private static string? ColumnDataText(MarkRecord record, string column)
+    {
+        var value = record.GetCustom("col:" + column);
+        if (value is null) return null;
+        return value.Origin is ValueOrigin.Rule or ValueOrigin.BatchFixed ? null : value.Text;
     }
 
     private static string DefName(MarkFieldKey field)

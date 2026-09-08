@@ -324,7 +324,7 @@
                                 <CheckBox Content="套准十字" IsChecked="{Binding Sheet.Working.RegistrationMarks}" Margin="12,0,0,0" VerticalAlignment="Center" />
                                 <CheckBox Content="横向用纸" IsChecked="{Binding Sheet.Working.Landscape}" Margin="12,0,0,0" VerticalAlignment="Center" />
                                 <CheckBox Content="一页只排同一枚" IsChecked="{Binding Sheet.RepeatSameLabelPerPage}" Margin="12,0,0,0" VerticalAlignment="Center"
-                                          ToolTip="默认勾上（2026-09-08 用户口径「一整张排同一个」）：一张纸上不混两款唛头，同一款排满一页再换页，不足一页的空位留着不填。&#10;关掉就是按顺序铺满整页、跨款混排，更省纸。勾与不勾各要几页，下面那行方案会同时报出来。" />
+                                          ToolTip="默认勾上（2026-09-08 用户口径「开四就是一张排 4 个一模一样的」）：一枚唛头占一张纸，页内铺满每页枚数份全同唛头，不留白格。&#10;上纸枚数 = 唛头数 × 每页枚数（一开四就是 4 倍料）；这枚唛头要出几张纸由「按哪一列数张数」说，不是由这里乘。&#10;关掉就是按顺序铺满整页、跨款混排（一行几箱拼在同一页上），更省纸。两种各要几页，下面那行方案会同时报出来。" />
                             </WrapPanel>
 
                             <Grid Margin="0,6,0,0">
@@ -373,6 +373,19 @@
                                 <ComboBox Grid.Column="1" ItemsSource="{Binding Sheet.ModeOptions}"
                                           SelectedItem="{Binding Sheet.SelectedMode}"
                                           DisplayMemberPath="Label" />
+                            </Grid>
+
+                            <Grid Margin="0,4,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="按哪一列数张数：" VerticalAlignment="Center" IsEnabled="{Binding Sheet.IsExpandMode}" />
+                                <ComboBox Grid.Column="1" ItemsSource="{Binding Sheet.ExpandColumnOptions}"
+                                          SelectedItem="{Binding Sheet.SelectedExpandColumn}"
+                                          DisplayMemberPath="Label"
+                                          IsEnabled="{Binding Sheet.IsExpandMode}"
+                                          ToolTip="用户口径：「张数一般表格里会有一列写的（例：表格写打印 5 张，那对应的那张就要排出 5 张整张纸）」。&#10;选这一档时，每行按那一列的数字展开成几张，一张就是一页纸（开着「一页只排同一枚」时页内铺满全同份数）。&#10;只有「按每行的张数展开」这一档才用得上；读不到数的行会逐行报警，不会静默按 1 张处理。" />
                             </Grid>
 
                             <Grid Margin="0,4,0,0">
