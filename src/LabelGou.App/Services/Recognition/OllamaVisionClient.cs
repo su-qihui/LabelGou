@@ -36,7 +36,13 @@ public sealed class ModelOutcome
 /// </summary>
 public static partial class OllamaVisionClient
 {
-    private static readonly HttpClient Http = new() { Timeout = Timeout.InfiniteTimeSpan };
+    /// <summary>
+    /// 共享客户端。handler 必须是 <see cref="DualStackConnect"/> 那个双栈回退的：
+    /// 本机实测百炼的 DNS 把 IPv6 排在前面，而这台机器没有 IPv6 出口，
+    /// 用默认 handler 会先撞黑洞地址、一路挂到超时，界面只能报「拉模型列表超时」（第 10 棒）。
+    /// </summary>
+    private static readonly HttpClient Http =
+        new(DualStackConnect.NewHandler()) { Timeout = Timeout.InfiniteTimeSpan };
 
     /// <summary>
     /// 取一个 HTTP 客户端。<paramref name="handler"/> 是单测钩子：想验“<c>response</c> 空而
@@ -100,6 +106,10 @@ public static partial class OllamaVisionClient
         catch (OperationCanceledException) when (!cancel.IsCancellationRequested)
         {
             return (false, "连接模型服务超时，可能它没在运行（ollama serve）。");
+        }
+        catch (HttpRequestException ex)
+        {
+            return (false, DualStackConnect.Talk(ex));
         }
         catch (Exception ex)
         {

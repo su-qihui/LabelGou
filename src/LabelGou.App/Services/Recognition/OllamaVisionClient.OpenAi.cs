@@ -55,11 +55,12 @@ public static partial class OllamaVisionClient
                 return (empty, $"云端需要密钥（填设置里的 apiKey，或设环境变量 {settings.ApiKeyEnvVar}）。");
         }
 
+        var url = openAi ? OpenAiUrl(settings.Endpoint, "models") : settings.Endpoint.TrimEnd('/') + "/api/tags";
+        var seconds = Math.Clamp(settings.TimeoutSeconds, 10, 60);
         try
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancel);
-            timeout.CancelAfter(TimeSpan.FromSeconds(Math.Clamp(settings.TimeoutSeconds, 5, 30)));
-            var url = openAi ? OpenAiUrl(settings.Endpoint, "models") : settings.Endpoint.TrimEnd('/') + "/api/tags";
+            timeout.CancelAfter(TimeSpan.FromSeconds(seconds));
             using var request = new HttpRequestMessage(HttpMethod.Get, url);
             if (key is not null) request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
 
@@ -90,7 +91,12 @@ public static partial class OllamaVisionClient
         }
         catch (OperationCanceledException) when (!cancel.IsCancellationRequested)
         {
-            return (empty, "拉模型列表超时。");
+            return (empty, $"{seconds} 秒内没等到 {url} 的回答（地址填的是云端就把它调大一点，填的是本机 Ollama 先确认它在跑）。");
+        }
+        catch (HttpRequestException ex)
+        {
+            // 连接层已经分诊过（解析失败 / 拒绝连接 / 没有出口），不再退回一句看不出原因的「超时」。
+            return (empty, DualStackConnect.Talk(ex));
         }
         catch (Exception ex)
         {
@@ -132,7 +138,8 @@ public static partial class OllamaVisionClient
         return AskOpenAiAsync(settings, OcrLinesPrompt(text), image: null, cancel, handler);
     }
 
-    /// <summary>云端探活：列模型清单看那个名字在不在。百炼/DeepSeek 都实现了 /models。</summary>
+    /// <summary>云端探活：列模型清单看那个名字在不在。百炼的 <c>/compatible-mode/v1/models</c>
+    /// 第 10 棒实测存在（不带密钥返 401 而不是 404），DeepSeek 同样实现；列不出来时给分诊后的人话。</summary>
     private static async Task<(bool Found, string Reason)> ProbeOpenAiAsync(
         RecognitionSettings settings,
         CancellationToken cancel,
@@ -141,10 +148,11 @@ public static partial class OllamaVisionClient
         if (settings.ResolveApiKey() is null)
             return (false, $"云端没有 API 密钥（填设置里的 apiKey，或设环境变量 {settings.ApiKeyEnvVar}）。");
 
+        var seconds = Math.Clamp(settings.TimeoutSeconds, 10, 60);
         try
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancel);
-            timeout.CancelAfter(TimeSpan.FromSeconds(Math.Clamp(settings.TimeoutSeconds, 5, 30)));
+            timeout.CancelAfter(TimeSpan.FromSeconds(seconds));
             using var request = new HttpRequestMessage(HttpMethod.Get, OpenAiUrl(settings.Endpoint, "models"));
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", settings.ResolveApiKey());
 
@@ -169,7 +177,11 @@ public static partial class OllamaVisionClient
         }
         catch (OperationCanceledException) when (!cancel.IsCancellationRequested)
         {
-            return (false, "连云端超时，检查网络或把超时调大。");
+            return (false, $"{seconds} 秒内没等到云端回答，检查网络，或在设置里把超时调大。");
+        }
+        catch (HttpRequestException ex)
+        {
+            return (false, DualStackConnect.Talk(ex));
         }
         catch (Exception ex)
         {
