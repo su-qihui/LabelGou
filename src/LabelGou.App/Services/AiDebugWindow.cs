@@ -87,6 +87,10 @@ public sealed class AiDebugWindow : Window
         var ask = new Button { Content = "拿一张图真问一次（调试用）", Padding = new Thickness(12, 6, 12, 6), Margin = new Thickness(0, 0, 8, 0) };
         ask.Click += async (_, _) => await AskOnceAsync();
         buttons.Children.Add(ask);
+        // 调试完想问「那该怎么改」不该让人去找菜单：两个入口同一个窗口。
+        var chat = new Button { Content = "和模型对话…", Padding = new Thickness(12, 6, 12, 6), Margin = new Thickness(0, 0, 8, 0) };
+        chat.Click += (_, _) => new AiChatWindow { Owner = this }.Show();
+        buttons.Children.Add(chat);
         var save = new Button { Content = "保存并关闭", Padding = new Thickness(12, 6, 12, 6) };
         save.Click += (_, _) =>
         {

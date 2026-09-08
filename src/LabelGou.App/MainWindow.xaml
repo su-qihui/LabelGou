@@ -24,6 +24,8 @@
                 <MenuItem Header="智能识别单据…（照片 / 截图 / Word）(_R)" Click="OnRecognizeClick" InputGestureText="Ctrl+Shift+R" />
                 <MenuItem Header="模型（AI）设置与调试…(_A)" Click="OnAiSettingsClick"
                       ToolTip="选本机 Ollama 还是云端（阿里云百炼 / DeepSeek），并当场试一次看模型到底答什么、多少秒" />
+                <MenuItem Header="和模型对话（问它怎么调）…(_C)" Click="OnAiChatClick"
+                      ToolTip="多轮自由问答，可以附一张样张图。聊出来的内容不会自动改唛头，也不碰模板与毫米" />
                 <Separator />
                 <MenuItem Header="打印整版…(_P)" Command="{Binding Export.PrintCommand}" InputGestureText="Ctrl+P" />
                 <MenuItem Header="导出 PDF…" Command="{Binding Export.ExportPdfCommand}" />

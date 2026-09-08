@@ -235,6 +235,25 @@ public partial class MainWindow : Window
     private void OnAiSettingsClick(object sender, RoutedEventArgs e)
         => new Services.AiDebugWindow { Owner = this }.ShowDialog();
 
+    private Services.AiChatWindow? _chatWindow;
+
+    /// <summary>
+    /// 「和模型对话」入口（第 10 棒）：用户要的是能问、能来回调，而不是又一条固定提示词的抽字段。
+    /// <para>故意用非模态：这个窗口的用法就是一边看预览一边问，模态会把预览与 ②③ 面板全部挡住；
+    /// 但同时只开一个（再点一次只把它带回前台），避免两个窗口各自一份历史、用户分不清哪份在发。</para>
+    /// </summary>
+    private void OnAiChatClick(object sender, RoutedEventArgs e)
+    {
+        if (_chatWindow is { IsVisible: true })
+        {
+            _chatWindow.Activate();
+            return;
+        }
+        _chatWindow = new Services.AiChatWindow { Owner = this };
+        _chatWindow.Closed += (_, _) => _chatWindow = null;
+        _chatWindow.Show();
+    }
+
     /// <summary>
     /// 识别入口。三条现场约束决定了它的形状：
     /// ① 大模型一张约 34 秒，所以必须能中途取消（<see cref="RecognitionProgressWindow"/>）；
