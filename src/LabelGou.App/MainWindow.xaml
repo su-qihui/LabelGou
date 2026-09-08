@@ -67,12 +67,16 @@
             </StatusBarItem>
         </StatusBar>
 
-        <Grid Margin="10">
+        <Grid Margin="10" x:Name="RootColumns">
             <Grid.ColumnDefinitions>
                 <!-- 左栏可以拖宽了（用户 2026-09-08：表格显示区太小）：给个下限，免得拖成一条缝再也不会调 -->
-                <ColumnDefinition Width="470" MinWidth="320" />
+                <ColumnDefinition x:Name="WizardCol" Width="470" MinWidth="320" />
                 <ColumnDefinition Width="6" />
                 <ColumnDefinition Width="*" MinWidth="360" />
+                <!-- AI 吸到右侧（用户 2026-09-09：「拉到右侧可以吸附」）才用得上这两列；
+                     平时宽 0 + 分隔条收起，在界面上等于不存在，旧布局一格也没动。 -->
+                <ColumnDefinition x:Name="AiRightSplitCol" Width="0" />
+                <ColumnDefinition x:Name="AiRightCol" Width="0" />
             </Grid.ColumnDefinitions>
             <GridSplitter Grid.Column="1" Width="6" HorizontalAlignment="Stretch"
                           Background="#E1E5EA" ShowsPreview="False"
@@ -849,12 +853,41 @@
                 <Border Grid.Row="2" x:Name="DetachedHint" Visibility="Collapsed"
                         Background="#F5F7FA" BorderBrush="#CDD3DA" BorderThickness="1" Padding="10,8">
                     <StackPanel VerticalAlignment="Center">
-                        <TextBlock Text="AI 助手已拆成独立窗口（标题「LabelGou · AI 助手」），这一行的高度还给预览。&#10;把那个窗口拖到显示器另一边，就能 AI 在窗外、排版在窗内对照着看；关掉它也会自动收回这里。"
-                                   Style="{StaticResource Hint}" TextWrapping="Wrap" />
+                        <TextBlock x:Name="DetachedHintText" Style="{StaticResource Hint}" TextWrapping="Wrap"
+                                   Text="AI 助手已拆成独立窗口（标题「LabelGou · AI 助手」），这一行的高度还给预览。&#10;把那个窗口拖到显示器另一边，就能 AI 在窗外、排版在窗内对照着看；关掉它也会自动收回这里。" />
                         <Button Content="收回这里" Click="OnDetachAiClick" Margin="0,8,0,0" HorizontalAlignment="Left" />
                     </StackPanel>
                 </Border>
             </Grid>
+
+            <!-- ==================== AI 吸附成右侧那一栏时住的地方（用户 2026-09-09：「拉到右侧可以吸附」） ====================
+                 与上面那行 AiHost 是同一块内容的两个泊位：任何时刻只有一个宿主持有它（DetachablePanel 保证），
+                 所以这里不建第二个 AI 面板，也不复制一份会话。 -->
+            <GridSplitter Grid.Column="3" x:Name="AiRightSplitter" Width="6" HorizontalAlignment="Stretch"
+                          Background="#E1E5EA" ShowsPreview="False" Visibility="Collapsed"
+                          ToolTip="按住左右拖：改右侧 AI 那一栏的宽度（预览与 AI 谁多看谁；预览最少留 360）" />
+            <GroupBox Grid.Column="4" x:Name="AiRightBox" Visibility="Collapsed">
+                <GroupBox.Header>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="AI 助手（右栏）" Style="{StaticResource StepTitle}" />
+                        <Button Grid.Column="1" Content="回底部原位 ⇩" Click="OnAiDockBottomClick" Padding="9,1" MinWidth="124"
+                                ToolTip="把 AI 从右侧这一栏放回右下角那一行（也可以按住它顶部那条握把拖到下缘）" />
+                    </Grid>
+                </GroupBox.Header>
+                <ContentControl x:Name="AiHostRight" />
+            </GroupBox>
+
+            <!-- 拖动中的落点预览：画在最上面、不吃鼠标；判据说吸不上（含右栏挤不下）就根本不画 -->
+            <Rectangle Grid.Column="4" x:Name="DockPreviewRight" Width="420" HorizontalAlignment="Right"
+                       Fill="#221D4ED8" Stroke="#1D4ED8" StrokeThickness="2" StrokeDashArray="6 3"
+                       Visibility="Collapsed" Panel.ZIndex="9" />
+            <Rectangle Grid.Column="2" x:Name="DockPreviewBottom" Height="200" VerticalAlignment="Bottom"
+                       Fill="#221D4ED8" Stroke="#1D4ED8" StrokeThickness="2" StrokeDashArray="6 3"
+                       Visibility="Collapsed" Panel.ZIndex="9" />
         </Grid>
     </DockPanel>
 </Window>

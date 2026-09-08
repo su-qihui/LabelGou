@@ -110,14 +110,64 @@ public sealed class AiChatPanel : UserControl
 
     public string Transcript => _transcript.Text;
 
+    /// <summary>
+    /// 顶部那条<strong>拖拽握把</strong>（M7 第 17 棒第二版，用户 2026-09-09 第三次纠正：
+    /// 「把这个 AI 窗口长按拖动可以拆下来，然后拉到右侧可以吸附」）。
+    /// <para>为什么它是面板的一部分而不是主窗口的一块 chrome：这块内容会在
+    /// 底部泊位 / 右栏泊位 / 浮动窗口之间搬（<see cref="DetachablePanel"/>），握把长在面板上，
+    /// <strong>拆出去之后才有地方抓回来</strong>——挂在主窗标题栏上的那种把手一拆就没了。</para>
+    /// <para>主窗口负责往它身上接鼠标事件（<c>PanelDragController</c>）；这里只把它做出来、不自己搬自己。</para>
+    /// </summary>
+    public Border DragGrip { get; private set; } = null!;
+
+    /// <summary>握把那一行：一个拖拽把手该有的样子（≡ 图标 + 一句怎么用 + 十字移动光标）。</summary>
+    private static Border BuildDragGrip()
+    {
+        var grip = new Border
+        {
+            Background = new SolidColorBrush(Color.FromRgb(0xF0, 0xF3, 0xF7)),
+            BorderBrush = new SolidColorBrush(Color.FromRgb(0xCD, 0xD3, 0xDA)),
+            BorderThickness = new Thickness(0, 0, 0, 1),
+            Padding = new Thickness(6, 3, 6, 3),
+            Margin = new Thickness(0, 0, 0, 6),
+            Cursor = Cursors.SizeAll,
+            ToolTip = "按住这一条拖动：拖出主窗口 = 拆成独立窗口（跟着手走）；" +
+                      "拖到主窗右缘 = 停靠成右侧一栏（预览在左、AI 在右）；拖到主窗下缘 = 回到底部原位。\n" +
+                      "不想用拖的：右上角那个按钮与「视图」菜单是同一个动作。",
+        };
+        var line = new StackPanel { Orientation = Orientation.Horizontal };
+        line.Children.Add(new TextBlock
+        {
+            Text = "≡ AI 助手",
+            FontWeight = FontWeights.SemiBold,
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+        line.Children.Add(new TextBlock
+        {
+            Text = "按住这里拖：拖出主窗 = 独立窗口 · 拖到右缘 = 吸成右栏 · 拖到下缘 = 回底部",
+            FontSize = 11,
+            Foreground = Brushes.Gray,
+            Margin = new Thickness(8, 0, 0, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        });
+        grip.Child = line;
+        return grip;
+    }
+
     public AiChatPanel()
     {
         var root = new Grid();
-        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });                        // 0：通道行
-        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });    // 1：对话区（唯一可变的那块）
-        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });                        // 2：附图状态
-        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });                        // 3：一排按钮（聊天 + 排版）
-        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });                        // 4：输入框与一行脚注
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });                        // 0：拖拽握把（拆窗 / 吸附的唯一手势入口）
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });                        // 1：通道行
+        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });    // 2：对话区（唯一可变的那块）
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });                        // 3：附图状态
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });                        // 4：一排按钮（聊天 + 排版）
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });                        // 5：输入框与一行脚注
+
+        DragGrip = BuildDragGrip();
+        Grid.SetRow(DragGrip, 0);
+        root.Children.Add(DragGrip);
 
         var openSettings = new Button { Content = "打开通道设置…", Padding = new Thickness(10, 4, 10, 4) };
         openSettings.Click += (_, _) =>
@@ -129,7 +179,7 @@ public sealed class AiChatPanel : UserControl
         DockPanel.SetDock(openSettings, Dock.Right);
         header.Children.Add(openSettings);
         header.Children.Add(_channelLine);
-        Grid.SetRow(header, 0);
+        Grid.SetRow(header, 1);
         root.Children.Add(header);
 
         // 红线那句话从两行压成一行 + ToolTip：它是本面板最不该被误删的一句实话（聊与问不会自动改唛头），
@@ -144,10 +194,10 @@ public sealed class AiChatPanel : UserControl
                       "没经你核对的值一律不进打印。打印走的还是 ⑤ 那一条命令与复核闸门。",
         };
 
-        Grid.SetRow(_transcript, 1);
+        Grid.SetRow(_transcript, 2);
         root.Children.Add(_transcript);
 
-        Grid.SetRow(_attachment, 2);
+        Grid.SetRow(_attachment, 3);
         root.Children.Add(_attachment);
 
         // 两排按钮合成一排 WrapPanel：窄的时候自己换行，不再固定吃掉两行高。
@@ -174,11 +224,11 @@ public sealed class AiChatPanel : UserControl
         buttons.Children.Add(_askLayout);
         buttons.Children.Add(_applyLayout);
         buttons.Children.Add(_print);
-        Grid.SetRow(buttons, 3);
+        Grid.SetRow(buttons, 4);
         root.Children.Add(buttons);
 
         var bottom = new StackPanel();
-        Grid.SetRow(bottom, 4);
+        Grid.SetRow(bottom, 5);
         bottom.Children.Add(notice);
         bottom.Children.Add(_input);
         bottom.Children.Add(new TextBlock

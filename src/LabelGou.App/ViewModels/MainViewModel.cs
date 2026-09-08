@@ -8,6 +8,7 @@ using LabelGou.App.Export;
 using LabelGou.App.Mvvm;
 using LabelGou.App.Services;
 using LabelGou.Core.Data;
+using LabelGou.Core.Docking;
 using LabelGou.Core.Layout;
 using LabelGou.Core.Mapping;
 using LabelGou.Core.Marks;
@@ -695,6 +696,32 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         s.AiFloatTop = top;
         s.AiFloatWidth = width;
         s.AiFloatHeight = height;
+        _uiState.Save(s);
+    }
+
+    /// <summary>
+    /// AI 那块上次停在哪个泊位，以及右栏上次多宽。
+    /// <para>认不出的字符串一律退回底部那一行（= 本棒之前的唯一行为），<strong>不拿旧状态文件拦启动、也不替人猜一个新位置</strong>。</para>
+    /// </summary>
+    public (DockSite Site, double RightWidth) LoadAiDock()
+    {
+        var s = _uiState.Load();
+        var site = Enum.TryParse<DockSite>(s.AiDockSite, ignoreCase: true, out var parsed) && parsed != DockSite.Float
+            ? parsed
+            : DockSite.Bottom;
+        return (site, s.AiRightColumnWidth);
+    }
+
+    /// <summary>记下泊位与右栏宽度（拖完/点完那一次调，不跟着分隔条每像素写盘）。</summary>
+    public void SaveAiDock(DockSite site, double rightWidth)
+    {
+        if (site == DockSite.Float) return;     // 浮动不存：下次启动不该莫名多开一个窗口
+        var s = _uiState.Load();
+        var name = site.ToString();
+        if (string.Equals(s.AiDockSite, name, StringComparison.Ordinal)
+            && Math.Abs(s.AiRightColumnWidth - rightWidth) < 1) return;
+        s.AiDockSite = name;
+        s.AiRightColumnWidth = rightWidth;
         _uiState.Save(s);
     }
 

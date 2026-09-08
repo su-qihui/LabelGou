@@ -40,6 +40,18 @@ public sealed class UiState
     public double AiFloatWidth { get; set; }
 
     public double AiFloatHeight { get; set; }
+
+    /// <summary>
+    /// AI 那块上次停在哪个泊位（用户 2026-09-09：「拉到右侧可以吸附」）。
+    /// <para>存的是 <c>"Bottom"</c> / <c>"Right"</c> 这样的字符串而不是枚举值：认不出的旧字符串能当场退回默认，
+    /// 而越界的枚举数字反序列化得回来，却要等到用的时候才发现没有那个泊位。</para>
+    /// <para><strong>空 = 没记过 = 底部那一行</strong>，所以旧状态文件缺这个字段时行为零变化。
+    /// 浮动不存：关软件时 AI 正飘着，下次启动不该莫名多开一个窗口，所以存的是「上次停靠的那一个」。</para>
+    /// </summary>
+    public string AiDockSite { get; set; } = "";
+
+    /// <summary>上次吸到右栏时那一栏多宽（0 = 没记过 = 用 <c>DockSnap.DefaultRightColumnDip</c>）。</summary>
+    public double AiRightColumnWidth { get; set; }
 }
 
 /// <summary>

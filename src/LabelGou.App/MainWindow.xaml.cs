@@ -5,6 +5,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using LabelGou.App.Services.Recognition;
 using LabelGou.App.ViewModels;
+using LabelGou.Core.Docking;
 using LabelGou.Core.Editing;
 using LabelGou.Core.Templates;
 
@@ -48,8 +49,19 @@ public partial class MainWindow : Window
             ReadGeometry = _viewModel.LoadAiFloatGeometry,
             WriteGeometry = (l, t, w, h) => _viewModel.SaveAiFloatGeometry(l, t, w, h),
         };
+        // 第二个泊位（用户 2026-09-09 第三次纠正：「拉到右侧可以吸附」）：右侧那一栏。
+        // 只是多登记一个宿主，内容仍只有一个实例；拖拽与按钮走的都是同一套 Float / Dock。
+        _aiPanel.AddDockSite(DockSite.Right, AiHostRight);
         _aiPanel.StateChanged += SyncAiPanelState;
+        // 按住顶部那条握把拖 = 拆出（跟手）/ 拖到右缘或下缘 = 吸附。判据在 Core 的 DockSnap，这里只接线。
+        _aiDrag = new Services.PanelDragController(this, _aiPanel, ai.DragGrip,
+            DockPreviewRight, DockPreviewBottom, SplitRegionWidthDip, DesiredRightWidthDip);
+        // 上次停在哪就摆回哪（浮动不记：启动不该莫名多开一个窗口）。
+        if (_viewModel.LoadAiDock().Site == DockSite.Right) _aiPanel.Dock(DockSite.Right);
         SyncAiPanelState();
+        // 分隔条拖到哪、下次就开多宽：只在关窗那一次写盘，不跟着拖动每像素写。
+        Closing += (_, _) => _viewModel.SaveAiDock(_aiPanel?.LastDockedSite ?? DockSite.Bottom,
+            AiRightCol.ActualWidth > 0 ? AiRightCol.ActualWidth : _rightWidthDip);
 
         Loaded += (_, _) =>
         {
@@ -67,6 +79,14 @@ public partial class MainWindow : Window
         => MessageBox.Show(this, message, "LabelGou", MessageBoxButton.OK, MessageBoxImage.Warning);
 
     private Services.DetachablePanel? _aiPanel;
+    private Services.PanelDragController? _aiDrag;
+
+    /// <summary>
+    /// 右栏上次给过多少宽（分隔条拖完、或下次吸附时读回来）。0 = 还没给过。
+    /// <para>为什么另存一份而不直接读 <c>AiRightCol.Width</c>：AI 不在右栏时那一列必须真的收回 0 宽
+    /// （列宽是预留空间，藏着 GroupBox 不藏列），所以那个值会被抹掉，不能当记忆用。</para>
+    /// </summary>
+    private double _rightWidthDip;
 
     /// <summary>AI 面板本体（通道设置窗关回来要刷新它那一行）。</summary>
     internal Services.AiChatPanel AiPanel { get; private set; }
@@ -86,16 +106,63 @@ public partial class MainWindow : Window
 
     private void OnDetachAiClick(object sender, RoutedEventArgs e) => _aiPanel?.Toggle();
 
-    /// <summary>拆/收之后同步：按钮文字、原位提示，以及把 AI 那一行的高度让给预览。</summary>
+    /// <summary>右栏那一栏里的手动退回入口：与拖到下缘同一个 <see cref="DetachablePanel.Dock(DockSite)"/>，不开第二套。</summary>
+    private void OnAiDockBottomClick(object sender, RoutedEventArgs e) => _aiPanel?.Dock(DockSite.Bottom);
+
+    /// <summary>「预览 + 右栏」这一整块现在有多宽（DIP）：判右栏挤不挤得下的唯一口径。
+    /// <para>构造期 ActualWidth 还是 0，那时拿屏幕工作区估一下——不然启动时会被判成「挤不下」而永久停在底部。</para></summary>
+    private double SplitRegionWidthDip()
+    {
+        var total = RootColumns.ActualWidth > 0 ? RootColumns.ActualWidth : SystemParameters.WorkArea.Width;
+        return Math.Max(0, total - WizardCol.ActualWidth - DockSnap.SplitterDip);
+    }
+
+    /// <summary>右栏想要多宽：先看现在这一栏（用户刚拖过分隔条），再看本窗上次给过的，再看上次记的，都没有就用默认那档。</summary>
+    private double DesiredRightWidthDip()
+    {
+        if (AiRightCol.ActualWidth >= DockSnap.MinRightColumnDip) return AiRightCol.ActualWidth;
+        if (_rightWidthDip >= DockSnap.MinRightColumnDip) return _rightWidthDip;
+        var saved = _viewModel.LoadAiDock().RightWidth;
+        return saved > 0 ? saved : DockSnap.DefaultRightColumnDip;
+    }
+
+    /// <summary>拆/收/换泊位之后同步：两块宿主谁可见、行与列的宽、按钮文字、原位那句实话。</summary>
     private void SyncAiPanelState()
     {
-        var detached = _aiPanel is { IsDetached: true };
-        AiBox.Visibility = detached ? Visibility.Collapsed : Visibility.Visible;
+        if (_aiPanel is not { } panel) return;
+        var site = panel.Site;
+        var detached = site == DockSite.Float;
+
+        AiBox.Visibility = site == DockSite.Bottom ? Visibility.Visible : Visibility.Collapsed;
+        AiRightBox.Visibility = site == DockSite.Right ? Visibility.Visible : Visibility.Collapsed;
+        AiRightSplitter.Visibility = site == DockSite.Right ? Visibility.Visible : Visibility.Collapsed;
+        AiRightSplitCol.Width = new GridLength(site == DockSite.Right ? DockSnap.SplitterDip : 0);
         DetachedHint.Visibility = detached ? Visibility.Visible : Visibility.Collapsed;
-        AiRow.Height = detached ? GridLength.Auto : new GridLength(DockedAiHeight);
-        // 拆走后只剩一行提示，那一行不能再撑 260 高（否则「把高度让给预览」是句空话）。
-        AiRow.MinHeight = detached ? 0 : DockedAiMinHeight;
+
+        // AI 不挂在下面那一行时，那一行的高度必须真让给预览（Height 与 MinHeight 成对改，§五-107）。
+        AiRow.Height = site == DockSite.Bottom ? new GridLength(DockedAiHeight) : GridLength.Auto;
+        AiRow.MinHeight = site == DockSite.Bottom ? DockedAiMinHeight : 0;
+
+        var rightWidth = 0d;
+        if (site == DockSite.Right)
+        {
+            // 夹一道：地方不够就是 0，那时宁可不撑这一栏也不把预览挤没（判据在 DockSnap）。
+            rightWidth = DockSnap.ClampRightColumnDip(DesiredRightWidthDip(), SplitRegionWidthDip());
+            if (rightWidth > 0) _rightWidthDip = rightWidth;
+        }
+        // 不吸右栏时这一列必须真的收回 0：列宽是「预留空间」，只藏 GroupBox 不藏列会把预览挤短一截。
+        AiRightCol.Width = new GridLength(rightWidth > 0 ? rightWidth : 0);
+
         DetachAiButton.Content = detached ? "收回主窗口 ⇤" : "把 AI 拆成独立窗口 ⇱";
+        // 原位那句话要说的是真让出去的那一块，而不是固定写死「这一行」。
+        DetachedHintText.Text = detached
+            ? (panel.LastDockedSite == DockSite.Right
+                ? "AI 助手已拆成独立窗口（标题「LabelGou · AI 助手」），右侧那一栏的宽度已还给预览。\n" +
+                  "按住它顶部那条握把拖到主窗下缘就吸回底部那一行，拖到右缘又吸回这里；关掉窗口也会收回原位。"
+                : "AI 助手已拆成独立窗口（标题「LabelGou · AI 助手」），下面这一行的高度已还给预览。\n" +
+                  "按住它顶部那条握把拖到主窗右缘，就能把 AI 吸成右侧一栏，与预览并排对照；拖回下缘或关掉窗口都会收回这里。")
+            : "";
+        _viewModel.SaveAiDock(panel.LastDockedSite, _rightWidthDip);
     }
 
     private void OnExitClick(object sender, RoutedEventArgs e) => Close();
