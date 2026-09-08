@@ -29,13 +29,22 @@ public sealed partial class TemplateEditorWindow : Window
             AllowCloseWithoutPrompt = true;   // 存好了，关窗口不用再问
             Saved?.Invoke(template);
         });
+        _editor.SavedAsCopy += template => Dispatcher.Invoke(() =>
+        {
+            // 另存只告诉主窗口「库里多了一份」，不动 AllowCloseWithoutPrompt：当前这份还没存
+            ResultTemplate = template;
+            SavedAsCopy?.Invoke(template);
+        });
         _editor.ErrorRaised += message => Dispatcher.Invoke(() =>
             MessageBox.Show(this, message, "模板编辑", MessageBoxButton.OK, MessageBoxImage.Warning));
         _editor.CloseRequested += () => Dispatcher.Invoke(Close);
     }
 
-    /// <summary>保存成功（主窗口据此刷新模板列表并选中）。</summary>
+    /// <summary>当前这份保存成功（主窗口据此刷新模板列表并选中）。</summary>
     public event Action<LabelTemplate>? Saved;
+
+    /// <summary>另存出一份新副本（主窗口刷新列表并选中它，但编辑器仍开着改原模板）。</summary>
+    public event Action<LabelTemplate>? SavedAsCopy;
 
     /// <summary>关闭时若还有未保存改动，问一句——打印店常用的动作就是"改完直接关窗口"。</summary>
     protected override void OnClosing(CancelEventArgs e)

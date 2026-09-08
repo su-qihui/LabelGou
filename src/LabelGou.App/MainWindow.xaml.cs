@@ -1,6 +1,7 @@
 using System.IO;
 using System.Threading;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Input;
 using LabelGou.App.Services.Recognition;
 using LabelGou.App.ViewModels;
@@ -91,6 +92,7 @@ public partial class MainWindow : Window
         };
         var window = new TemplateEditorWindow(vm) { Owner = this };
         window.Saved += saved => _viewModel.ReloadTemplates(saved.Id);
+        window.SavedAsCopy += saved => _viewModel.ReloadTemplates(saved.Id);
         window.Closed += (_, _) => _editorWindow = null;
         _editorWindow = window;
         window.Show();
@@ -268,7 +270,7 @@ public partial class MainWindow : Window
 
             var task = RecognitionService.RunAsync(dialog.FileNames, RecognitionSettings.Load(), progress, cts.Token);
             // 跑完（或取消后停下来）就自己收窗，不靠用户去点——续接里只碰 UI，不抛新异常
-            _ = task.ContinueWith(_ => progressWindow.Complete("识别结束，正在打开核对窗口…"),
+            _ = task.ContinueWith(_ => progressWindow.Complete("识别停下来了，正在回主界面…"),
                 CancellationToken.None, TaskContinuationOptions.OnlyOnRanToCompletion, TaskScheduler.Default);
             _ = task.ContinueWith(_ => progressWindow.Complete("识别已停下来。"),
                 CancellationToken.None, TaskContinuationOptions.NotOnRanToCompletion, TaskScheduler.Default);
@@ -289,7 +291,16 @@ public partial class MainWindow : Window
         }
 
         if (run is null) return;
-        if (run.Batches.Count == 0)
+        if (run.Cancelled)
+        {
+            // 取消后不能再说「识别结束，正在打开核对窗口」：那是把半途而废当成跑完了。
+            // 已经跑完的那几份仍交回核对窗口（下面的 Batches 不为空就照开），但文案得说实话。
+            _viewModel.ReportStatus(run.Batches.Count > 0
+                ? $"识别已取消：跑完的 {run.Batches.Count} 份还是送进核对窗口了，没跑完的那些不算。"
+                : "识别已取消，没有可核对的结果。");
+            if (run.Batches.Count == 0) return;
+        }
+        else if (run.Batches.Count == 0)
         {
             _viewModel.ReportStatus(run.Warnings.Count > 0 ? string.Join("；", run.Warnings) : "没有可识别的文件。");
             return;
@@ -390,37 +401,42 @@ public partial class MainWindow : Window
 
     protected override void OnPreviewKeyDown(KeyEventArgs e)
     {
+        var modifiers = Keyboard.Modifiers;
+        // 文本框里按纯 Ctrl+字母是编辑动作（Ctrl+I 斜体、Ctrl+T/Ctrl+O 那些），不该被全局快捷键抢走：
+        // 上一版用 HasFlag(Control)，在备注框里敲字时一句「Ctrl+I」就把底稿导入窗口弹出来了。
+        // 只挡「纯 Ctrl」这一类：Alt+←/→ 这种导航键在文本框里也不该抢回来。
+        if (Keyboard.FocusedElement is TextBox or PasswordBox && modifiers == ModifierKeys.Control) return;
+
         // Ctrl+Shift+R：识别入口。Ctrl+O 已经被「打开数据文件」占了，不再抢一个键
-        if (e.Key == Key.R && Keyboard.Modifiers.HasFlag(ModifierKeys.Control)
-            && Keyboard.Modifiers.HasFlag(ModifierKeys.Shift))
+        if (e.Key == Key.R && modifiers == (ModifierKeys.Control | ModifierKeys.Shift))
         {
             OnRecognizeClick(this, new RoutedEventArgs());
             e.Handled = true;
             return;
         }
 
-        if (e.Key == Key.O && Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
+        if (e.Key == Key.O && modifiers == ModifierKeys.Control)
         {
             if (_viewModel.OpenFileCommand.CanExecute(null)) _viewModel.OpenFileCommand.Execute(null);
             e.Handled = true;
             return;
         }
 
-        if (e.Key == Key.P && Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
+        if (e.Key == Key.P && modifiers == ModifierKeys.Control)
         {
             if (_viewModel.Export.PrintCommand.CanExecute(null)) _viewModel.Export.PrintCommand.Execute(null);
             e.Handled = true;
             return;
         }
 
-        if (e.Key == Key.T && Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
+        if (e.Key == Key.T && modifiers == ModifierKeys.Control)
         {
             OnEditTemplateClick(this, new RoutedEventArgs());
             e.Handled = true;
             return;
         }
 
-        if (e.Key == Key.I && Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
+        if (e.Key == Key.I && modifiers == ModifierKeys.Control)
         {
             OnImportBackgroundClick(this, new RoutedEventArgs());
             e.Handled = true;

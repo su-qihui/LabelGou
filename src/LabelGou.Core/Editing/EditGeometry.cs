@@ -403,7 +403,11 @@ public static class EditGeometry
 
     // ---------- 对齐到标签 ----------
 
-    public static void AlignToLabel(LabelTemplate template, int index, AlignHorizontal horizontal, AlignVertical vertical)
+    /// <summary>
+    /// 对齐到标签边。某个轴传 null 表示这个轴不动 —— 界面上那六个按钮各管一个轴，
+    /// 上一版只能双轴一起给，点「顶对齐」会把水平位置也甩到最左。
+    /// </summary>
+    public static void AlignToLabel(LabelTemplate template, int index, AlignHorizontal? horizontal, AlignVertical? vertical)
     {
         var element = ElementAt(template, index);
         var box = BoxOf(element);
@@ -411,14 +415,17 @@ public static class EditGeometry
         {
             AlignHorizontal.Center => (template.WidthMm - box.Width) / 2 - box.X,
             AlignHorizontal.Right => template.WidthMm - box.Width - box.X,
-            _ => -box.X,
+            AlignHorizontal.Left => -box.X,
+            _ => 0d,
         };
         var dy = vertical switch
         {
             AlignVertical.Middle => (template.HeightMm - box.Height) / 2 - box.Y,
             AlignVertical.Bottom => template.HeightMm - box.Height - box.Y,
-            _ => -box.Y,
+            AlignVertical.Top => -box.Y,
+            _ => 0d,
         };
+        if (dx == 0 && dy == 0) return;
         ApplyShift(element, dx, dy);
     }
 

@@ -11,24 +11,32 @@ namespace LabelGou.Core.Templates;
 /// </summary>
 public static class TemplateTokenizer
 {
-    /// <summary>内置计算量（不需要在映射里绑列）。</summary>
-    private static readonly HashSet<string> BuiltIns = new(StringComparer.OrdinalIgnoreCase)
+    /// <summary>
+    /// 内置计算量清单（占位符名 + 中文说明）。
+    /// <para>界面上「插入字段」那一项由它生成：上一版编辑器自己列了一份名单，里面写着
+    /// <c>TotalCarton</c> / <c>TotalQty</c> 这两个本引擎根本不认的名字，插进去就是校验 Error。</para>
+    /// </summary>
+    public static readonly IReadOnlyList<(string Token, string Description)> BuiltInTokens = new[]
     {
         /// No. x / y 形式的件号
-        "NoXofY",
+        ("NoXofY", "件号 No. x / y"),
         /// 只有 x
-        "NoX",
+        ("NoX", "件号（只有 x）"),
         /// 只有 y（总件数，无数据时用记录总数）
-        "NoY",
+        ("NoY", "总件数（只有 y）"),
         /// 当前记录序号（1 起）
-        "RowIndex",
+        ("RowIndex", "当前记录序号"),
         /// 本次任务的记录总数
-        "RecordCount",
+        ("RecordCount", "本次任务的记录总数"),
         /// 模板名
-        "TemplateName",
+        ("TemplateName", "模板名"),
         /// 数据源文件名
-        "SourceFile",
+        ("SourceFile", "数据源文件名"),
     };
+
+    /// <summary>内置计算量（不需要在映射里绑列）。</summary>
+    private static readonly HashSet<string> BuiltIns =
+        new(BuiltInTokens.Select(t => t.Token), StringComparer.OrdinalIgnoreCase);
 
     /// <summary>依次取出文本中出现的所有占位符名（原样，未 trim 前）。</summary>
     public static IEnumerable<string> EnumerateTokens(string? text)

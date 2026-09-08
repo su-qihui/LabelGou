@@ -526,7 +526,13 @@ public sealed class ExportViewModel : ObservableObject
             IsBusy = false;
             _cts?.Dispose();
             _cts = null;
-            if (t.IsCanceled) { StatusText = jobName + " 已取消。"; return; }
+            if (t.IsCanceled)
+            {
+                // 取消不是失败：不写 ERROR 日志，也不把「A task was canceled.」当错误弹给用户
+                StatusText = jobName + " 已取消（半途而废的不算产出）。";
+                AppLog.Info($"{jobName} 被用户取消");
+                return;
+            }
             if (t.Exception is { } aggregate)
             {
                 var ex = aggregate.GetBaseException();

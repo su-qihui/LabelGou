@@ -24,6 +24,12 @@ public static class StaWorker
             {
                 tcs.TrySetResult(work(progress, token));
             }
+            catch (OperationCanceledException)
+            {
+                // 用户主动取消不是故障：上一版这里从不 TrySetCanceled，取消被当成失败冒上来，
+                // 界面弹一句「失败：A task was canceled.」并往日志里写一条 ERROR。
+                tcs.TrySetCanceled(token);
+            }
             catch (Exception ex)
             {
                 tcs.TrySetException(ex);

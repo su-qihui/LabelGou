@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Data;
 using System.IO;
 using System.Windows;
@@ -146,6 +147,12 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
     private bool _aiGateBlocked;
     private int _stepIndex;
 
+    /// <summary>自动接手换模板那一次不写盘（只顶一次，下一次用户手工选还是会被记住）。</summary>
+    private bool _suppressTemplateRemember;
+
+    /// <summary>映射告警那几行（与「模板还差哪几项」分家存，后者是派生值，每次重列）。</summary>
+    private List<string> _mapIssueLines = new();
+
     public MainViewModel() : this(uiState: null)
     {
     }
@@ -184,8 +191,10 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         // 先接上次用的那套（内置模板每加一批都退回标准模板，会让新版式在界面上等于不存在），
         // 没记过、或记的那个已被删了，才退回标准内置。
         var remembered = _uiState.Load();
+        // 兜底跟 ReloadTemplates 用同一个档（行式四行）：上一版构造兜 IdStandard、刷新兜 IdRowsFour，
+        // 冷启动与触发一次刷新后看到的不是同一套模板。
         SelectedTemplate = TemplateOptions.FirstOrDefault(t => t.Id == remembered.TemplateId)
-            ?? TemplateOptions.FirstOrDefault(t => t.Id == BuiltInTemplates.IdStandard)
+            ?? TemplateOptions.FirstOrDefault(t => t.Id == BuiltInTemplates.IdRowsFour)
             ?? TemplateOptions.FirstOrDefault();
         RefreshProfiles();
         Sheet.RefreshFromSource();
@@ -415,6 +424,7 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
                 TemplateInfoText = DescribeTemplate(value?.Template);
                 RebuildLayout();
                 Sheet.RebuildPlan();
+                RebuildIssueLines();
                 RememberTemplateId(value?.Id);
             }
         }
@@ -424,6 +434,13 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
     private void RememberTemplateId(string? templateId)
     {
         if (string.IsNullOrEmpty(templateId)) return;
+        // 自动接手那一次不算用户的选择：写盘会把他在第 3 步手工记的模板顶掉，
+        // 下一张表进来又按数据说话，等于他用手工选的模板被一次自动换档静默覆盖了。
+        if (_suppressTemplateRemember)
+        {
+            _suppressTemplateRemember = false;
+            return;
+        }
         var state = _uiState.Load();
         if (state.TemplateId == templateId) return;
         state.TemplateId = templateId;
@@ -682,14 +699,31 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
     }
 
     /// <summary>② 区「整批固定值…」对话框的一行：字段名 + 它有没有表格列 + 当前固定值。</summary>
-    public sealed class FixedValueRow
+    public sealed class FixedValueRow : INotifyPropertyChanged
     {
         public required FieldDefinition Definition { get; init; }
 
         /// <summary>该字段已连到表格列：固定值只在单元格空着时兜底，不覆盖表里的值。</summary>
         public bool HasColumn { get; init; }
 
-        public string Value { get; set; } = string.Empty;
+        private string _value = string.Empty;
+
+        /// <summary>
+        /// 固定值本体。必须带变更通知：上一版它是个普通自动属性，
+        /// 点「清空全部」后模型空了、框里还顶着旧值（所见非所得）。
+        /// </summary>
+        public string Value
+        {
+            get => _value;
+            set
+            {
+                if (_value == value) return;
+                _value = value;
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Value)));
+            }
+        }
+
+        public event PropertyChangedEventHandler? PropertyChanged;
 
         // 下面三个只服务 FixedValuesWindow 的 DataTemplate：没列的字段才是这个对话框的主角，所以加重、提蓝。
         public string Hint => HasColumn ? "已连表格列，仅在该列空着时兜底" : "表里没这一列，整批共用";
@@ -751,25 +785,48 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
     private static readonly System.Text.RegularExpressions.Regex FieldTokenPattern =
         new(@"\{\{\s*([A-Za-z][A-Za-z0-9_]*)\s*\}\}", System.Text.RegularExpressions.RegexOptions.Compiled);
 
+    /// <summary><c>{{col:列标题}}</c> 这种直取列的写法（上一版的 <see cref="FieldTokenPattern"/> 认不到它，
+    /// 注释里又假设「col: 永远有值」——而 <c>LayoutEngine</c> 碰到表里没这个列是会留空白的）。</summary>
+    private static readonly System.Text.RegularExpressions.Regex ColTokenPattern =
+        new(@"\{\{\s*col\s*:\s*([^{}]+?)\s*\}\}", System.Text.RegularExpressions.RegexOptions.Compiled);
+
     /// <summary>
-    /// 模板文字里引用了、但这批数据既没连到列也没填整批固定值的字段（按中文名，去重）。
-    /// <para><c>{{col:列标题}}</c> 那种直取列的写法不在这里查：列在不在表里由 <see cref="FieldRows"/> 那边管，
-    /// 而且它本来就是“表里有”的东西。</para>
+    /// 模板缺值的提醒（派生值：换模板、改映射都会让它变，不该由某一次操作把句子钉死）。
+    /// <para>用户圈的「字没填过来」就是这个：金沐那张表的客户名 BOLAROM 不在任何一列里，只能靠整批固定值，
+    /// 但入口藏在一个按钮里没人看见。这里不猜他该填什么，只把缺哪几项、去哪儿补直接说出来。</para>
     /// </summary>
-    private IReadOnlyList<string> TemplateFieldsWithoutValue(MappingProfile profile)
+    private IEnumerable<string> MissingValueLines()
     {
-        var missing = new List<string>();
-        foreach (var key in FieldsUsedBy(SelectedTemplate?.Template))
+        var profile = _working;
+        var template = SelectedTemplate?.Template;
+        if (profile is null || template is null) yield break;
+
+        foreach (var key in FieldsUsedBy(template))
         {
-            if (FieldRows.Any(r => r.Definition.Key == key && r.ColumnIndex >= 0)) continue;
-            if (!string.IsNullOrWhiteSpace(profile.FixedValueFor(key))) continue;
-            var chinese = MarkFieldCatalog.Get(key).ChineseName;
-            if (!missing.Contains(chinese)) missing.Add(chinese);
+            if (HasValueFor(key, profile)) continue;
+            yield return $"模板要用的「{MarkFieldCatalog.Get(key).ChineseName}」既没连到列也没填固定值，那一格会印成空白 —— 在第 2 步点「整批固定值…」补上。";
         }
-        return missing;
+
+        foreach (var column in ColumnsUsedBy(template))
+        {
+            if (!HasComputedColumn(column)) continue;
+            yield return $"模板用了 {{{{col:{column}}}}}，但算完编号后没有一张标签带这个量 —— 那一行会整条不印（表里没这一列，也不是编号引擎会补的量）。";
+        }
     }
 
-    /// <summary>这份模板的文字里用到哪些字段（<c>{{col:列标题}}</c> 这种直取列的不算，那些永远有值）。</summary>
+    /// <summary>
+    /// 这批标签里到底有没有 <c>col:某名</c> 这个量。
+    /// <para>拿渲染端真正会查的东西说事，而不是去查表头：<c>col:组内序</c>、<c>col:本行箱数</c> 这类是
+    /// 编号引擎补的计算量，表里本来就没有这一列，按表头判会误报一堆缺值。</para>
+    /// </summary>
+    private bool HasComputedColumn(string column)
+    {
+        if (_records.Count == 0) return true;   // 还没编号，谈不上缺不缺
+        var key = "col:" + column;
+        return _records.Any(r => (r.GetCustom(key)?.Text ?? string.Empty).Trim().Length > 0);
+    }
+
+    /// <summary>这份模板的文字里用到哪些字段（<c>{{col:…}}</c> 那种直取列的另算，见 <see cref="ColumnsUsedBy"/>）。</summary>
     private static List<MarkFieldKey> FieldsUsedBy(LabelTemplate? template)
     {
         var used = new List<MarkFieldKey>();
@@ -786,8 +843,41 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         return used;
     }
 
+    /// <summary>这份模板直取了哪几个列标题（去重）。</summary>
+    private static List<string> ColumnsUsedBy(LabelTemplate? template)
+    {
+        var used = new List<string>();
+        if (template is null) return used;
+        foreach (var element in template.Elements)
+        {
+            if (element.Kind != ElementKind.Text || string.IsNullOrEmpty(element.Text)) continue;
+            foreach (System.Text.RegularExpressions.Match m in ColTokenPattern.Matches(element.Text))
+            {
+                var name = m.Groups[1].Value.Trim();
+                if (name.Length > 0 && !used.Contains(name, StringComparer.OrdinalIgnoreCase)) used.Add(name);
+            }
+        }
+        return used;
+    }
+
     /// <summary>
-    /// 导入完一张表后，按「这张表能填上几个字段」挑一套最贴合的模板。
+    /// 这份模板被这批数据填上了几成：命中率 = 填得上的引用数 / 模板总引用数（字段 + 直取列）。
+    /// <para>上一版比的是「命中数」的绝对值，于是字段越多越容易赢——九格标准箱唛永远压住行式四行，
+    /// 就是用户圈过的那件事。平手时取引用数更少的那个（少而贴比多而空好）。</para>
+    /// </summary>
+    private (double Rate, int References) TemplateFitScore(LabelTemplate template, MappingProfile profile)
+    {
+        var fields = FieldsUsedBy(template);
+        var columns = ColumnsUsedBy(template);
+        var total = fields.Count + columns.Count;
+        if (total == 0) return (0, 0);
+        var hit = fields.Count(k => HasValueFor(k, profile))
+            + columns.Count(HasComputedColumn);
+        return (hit / (double)total, total);
+    }
+
+    /// <summary>
+    /// 导入完一张表后，按「这张表能把这套模板填多满」挑一套最贴合的。
     /// <para>为什么不能只在“当前模板完全印不出”时才接手：用户 uistate 里记着 M1 时代的
     /// 「标准箱唛 100×80」，那张表里只要货号连上了就算“印得出”，于是一直是那四格粗黑框在眼前，
     /// 他看的根本不是真样张那一套 —— 这就是“改了还是没变化”的直接原因。</para>
@@ -800,20 +890,32 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         if (profile is null || TemplateOptions.Count == 0) return;
 
         var scored = TemplateOptions
-            .Select(o => (Option: o, Score: FieldsUsedBy(o.Template).Count(k => HasValueFor(k, profile))))
+            .Select(o => (Option: o, Fit: TemplateFitScore(o.Template, profile)))
+            .Where(t => t.Fit.References > 0)
+            .OrderByDescending(t => t.Fit.Rate)
+            .ThenBy(t => t.Fit.References)
             .ToList();
-        var currentScore = scored.FirstOrDefault(t => t.Option.Id == SelectedTemplate?.Id).Score;
-        var best = scored.OrderByDescending(t => t.Score).First();
-        if (best.Score <= currentScore || best.Option.Id == SelectedTemplate?.Id) return;
+        if (scored.Count == 0) return;
+        var current = scored.FirstOrDefault(t => t.Option.Id == SelectedTemplate?.Id);
+        var best = scored[0];
+        var currentRate = current.Option.Id == SelectedTemplate?.Id ? current.Fit.Rate : 0;
+        if (best.Option.Id == SelectedTemplate?.Id || best.Fit.Rate <= currentRate) return;
 
         var name = SelectedTemplate?.Name ?? "原模板";
+        _suppressTemplateRemember = true;
         SelectedTemplate = best.Option;
-        StatusMessage = $"这张表能填上「{best.Option.Name}」的 {best.Score} 个字段（比「{name}」多），已自动改用前者；在第 3 步可以随时换回。{StatusMessage}";
+        StatusMessage = $"这张表能把「{best.Option.Name}」填到 {best.Fit.Rate:P0}（比「{name}」贴），已自动改用前者；在第 3 步可以随时换回。";
+        RebuildIssueLines();
     }
 
-    /// <summary>这个字段现在有没有值：连到了列，或填了整批固定值。</summary>
+    /// <summary>
+    /// 这个字段现在有没有值：连到了列，或填了整批固定值。
+    /// <para>件号与总件数除外——那两格由编号引擎每次都补上（沿用数据、缺项才按规则补），
+    /// 让用户去为它们填整批固定值只是把人支到一条白跑的道上。</para>
+    /// </summary>
     private bool HasValueFor(MarkFieldKey key, MappingProfile profile)
-        => FieldRows.Any(r => r.Definition.Key == key && r.ColumnIndex >= 0)
+        => key is MarkFieldKey.CartonNo or MarkFieldKey.CartonTotal
+        || FieldRows.Any(r => r.Definition.Key == key && r.ColumnIndex >= 0)
         || !string.IsNullOrWhiteSpace(profile.FixedValueFor(key));
 
     private void ApplyMapping()
@@ -827,12 +929,13 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         _rawRecords = result.Records;
         _mappingIssues = result.Issues;
 
-        IssueLines.Clear();
+        _mapIssueLines = new List<string>();
         foreach (var issue in result.Issues.Take(200))
         {
             var fieldName = issue.Field is null ? "整行" : MarkFieldCatalog.Get(issue.Field.Value).ChineseName;
-            IssueLines.Add($"第 {issue.RowNumber} 条 · {fieldName}：{issue.Message}");
+            _mapIssueLines.Add($"第 {issue.RowNumber} 条 · {fieldName}：{issue.Message}");
         }
+        RebuildIssueLines();
 
         AiGateBlocked = _rawRecords.Any(r => r.PendingReview().Any());
         Raise(nameof(RecordTotal));
@@ -842,17 +945,19 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         var suffix = result.Issues.Count == 0 ? "无告警" : $"{result.Issues.Count} 条告警，建议核对";
         StatusMessage = $"已连接 {boundCount} 个字段，共 {_rawRecords.Count} 条唛头记录 · {suffix}";
 
-        // 模板要用的字段既没连到列也没填固定值 → 那一行印出来就是空的。用户圈的“字没填过来”就是这个：
-        // 金沐那张表的客户名 BOLAROM 不在任何一列里，只能靠整批固定值，但入口藏在一个按钮里没人看见。
-        // 这里不猜他该填什么，只把缺哪几项、去哪儿补直接说出来。
-        var missing = TemplateFieldsWithoutValue(profile);
-        if (missing.Count > 0)
-        {
-            StatusMessage += $" · 模板还差 {missing.Count} 项没值（{string.Join("、", missing)}），在第 2 步点「整批固定值…」补上";
-        }
+        // 模板缺哪几项不再拼进这一句：它是派生值，拼一次就会被后面的换模板/改映射钉成陈话。
+        // 它现在住在 IssueLines 里（第 2 步那块橙色区），由 RebuildIssueLines 统一重列。
 
         // 件号交给 M2 编号引擎统一处理（它会回贴标签集并触发重算）
         Sheet.RefreshFromSource();
+    }
+
+    /// <summary>重列第 2 步那块提示：映射告警 + 当前模板的缺值提醒（派生值，换模板也要跟着变）。</summary>
+    private void RebuildIssueLines()
+    {
+        IssueLines.Clear();
+        foreach (var line in _mapIssueLines) IssueLines.Add(line);
+        foreach (var line in MissingValueLines()) IssueLines.Add(line);
     }
 
     private void ApplySavedProfile(MappingProfile saved)

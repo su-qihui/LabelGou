@@ -76,7 +76,9 @@ public sealed class RememberedLayoutTests : IDisposable
             return (Template: vm.SelectedTemplate?.Id, Sheet: vm.Sheet.SelectedSheetOption?.Spec.Id);
         });
 
-        Assert.Equal(BuiltInTemplates.IdStandard, result.Template);
+        // 兜底跟 ReloadTemplates 用同一个档：行式四行（上一版构造兜 IdStandard、刷新兜 IdRowsFour，
+        // 冷启动与触发一次刷新后看到的不是同一套；而九字段的标准箱唛厂牌表根本填不满）
+        Assert.Equal(BuiltInTemplates.IdRowsFour, result.Template);
         // 记的那套没了就退回当前默认档（一页一枚），而不是退成 null 让界面空着
         Assert.Equal(BuiltInSheetSpecs.IdOnePerLabel, result.Sheet);
     }

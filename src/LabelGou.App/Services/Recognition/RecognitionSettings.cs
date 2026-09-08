@@ -48,7 +48,13 @@ public sealed class RecognitionSettings
     /// </summary>
     public string Provider { get; set; } = Providers.Ollama;
 
-    /// <summary>云端密钥。<b>优先读环境变量</b>（见 <see cref="ApiKeyEnvVar"/>），这里只存用户自己填进设置界面的值。</summary>
+    /// <summary>
+    /// 云端密钥。<b>只活在这次运行里</b>：默认不落盘（<c>[JsonIgnore]</c>），长期用请设环境变量
+    /// <see cref="ApiKeyEnvVar"/>。
+    /// <para>上一版它会被明文写进 <c>%APPDATA%\LabelGou\recognition.json</c>（环境变量只是读时优先），
+    /// 而这个目录会被备份脚本扫走、店铺电脑会被人接手——那是 §十-A-1 从第一天就想堵的口子。</para>
+    /// </summary>
+    [JsonIgnore]
     public string? ApiKey { get; set; }
 
     /// <summary>密钥的环境变量名。默认先查它，避开把密钥写进磁盘。</summary>

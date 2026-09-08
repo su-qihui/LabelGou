@@ -197,6 +197,7 @@ public static class LayoutEngine
 
         var anyTokenEmittedValue = false;
         var textHadTokens = TemplateTokenizer.EnumerateTokens(source).Any();
+        string? flaggedHere = null;
 
         var result = TemplateTokenizer.Replace(source, token =>
         {
@@ -205,13 +206,16 @@ public static class LayoutEngine
             {
                 anyTokenEmittedValue = true;
             }
+            // 标红只跟着「这一格真的吃了哪个字段」走：上一版按整条记录判，
+            // 一张里任一字段待核就把全片文字都标红，用户反而看不出要看哪一格。
+            flaggedHere ??= ReviewFlagOfToken(token, record);
             return value;
         });
 
         // 含变量但所有变量都空 → 整条隐藏（不印 "G.W.:  KG" 这种残句）
         if (textHadTokens && !anyTokenEmittedValue) return string.Empty;
 
-        flagReason = FindReviewFlag(record);
+        flagReason = flaggedHere;
         return NormalizeSpaces(result);
     }
 
@@ -221,14 +225,35 @@ public static class LayoutEngine
         return collapsed.Trim();
     }
 
-    private static string? FindReviewFlag(MarkRecord record)
+    /// <summary>这个 token 吐掉的那个字段是不是还挂着「待人工核对」；不是就返回 null。</summary>
+    private static string? ReviewFlagOfToken(string token, MarkRecord record)
     {
-        foreach (var kv in record.PendingReview())
+        if (TemplateTokenizer.IsBuiltInToken(token))
         {
-            var def = MarkFieldCatalog.TryGet(kv.Key, out var d) ? d.ChineseName : kv.Key.ToString();
-            return $"{def}：{kv.Value.Warning ?? "需人工核对"}";
+            return token.ToLowerInvariant() switch
+            {
+                "noxofy" or "nox" => PendingReason(record, MarkFieldKey.CartonNo),
+                "noy" => PendingReason(record, MarkFieldKey.CartonTotal),
+                _ => null,
+            };
         }
-        return null;
+
+        if (token.StartsWith("col:", StringComparison.OrdinalIgnoreCase))
+        {
+            var key = token[4..].Trim();
+            var custom = record.GetCustom("col:" + key);
+            return custom is { NeedsReview: true } ? $"{key}：{custom.Warning ?? "需人工核对"}" : null;
+        }
+
+        return MarkFieldCatalog.TryParseKey(token, out var field) ? PendingReason(record, field) : null;
+    }
+
+    private static string? PendingReason(MarkRecord record, MarkFieldKey key)
+    {
+        var value = record.Get(key);
+        if (value is not { NeedsReview: true }) return null;
+        var def = MarkFieldCatalog.TryGet(key, out var d) ? d.ChineseName : key.ToString();
+        return $"{def}：{value.Warning ?? "需人工核对"}";
     }
 
     private static string? ResolveToken(
@@ -287,14 +312,19 @@ public static class LayoutEngine
         return null;
     }
 
-    /// <summary>件号 "x / y"。缺 y 时只印 x，都没有就用行号。</summary>
+    /// <summary>
+    /// 件号 "x / y"。缺 y 时只印 x，都没有就用行号。
+    /// <para>不印分数的两种情形：y 说总共就一箱，或分子分母是同一个数（"1 / 1" 印上去只是浪费墨）。
+    /// 上一版这里写的是 <c>y == "1" || y == RecordCount &amp;&amp; RecordCount &lt;= 1</c>，被 <c>&amp;&amp;</c> 的优先级
+    /// 顶成了一个永远轮不到说话的死条件（整批只有一条时 y 本来也是 "1"，前一项已经覆盖），
+    /// 所以「总件数=1 不印 x/y」其实从来没生效过。</para>
+    /// </summary>
     public static string FormatCarton(MarkRecord record, LayoutContext context)
     {
         var x = CartonValue(record, MarkFieldKey.CartonNo, context.RowIndex);
-        var y = record.GetText(MarkFieldKey.CartonTotal);
-        return string.IsNullOrWhiteSpace(y) || y == "1" || y == context.RecordCount.ToString() && context.RecordCount <= 1
-            ? x
-            : $"{x} / {y.Trim()}";
+        var y = record.GetText(MarkFieldKey.CartonTotal).Trim();
+        if (string.IsNullOrWhiteSpace(y) || y == "1" || string.Equals(x, y, StringComparison.Ordinal)) return x;
+        return $"{x} / {y}";
     }
 
     private static string CartonValue(MarkRecord record, MarkFieldKey key, int fallback)

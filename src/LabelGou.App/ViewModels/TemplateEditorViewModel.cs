@@ -69,8 +69,14 @@ public sealed class TemplateEditorViewModel : ObservableObject
     /// <summary>画布需要重绘。</summary>
     public event Action? CanvasChanged;
 
-    /// <summary>保存成功（主窗口据此刷新模板列表）。</summary>
+    /// <summary>当前这份保存成功（主窗口据此刷新模板列表，编辑器也可以安心关窗）。</summary>
     public event Action<LabelTemplate>? Saved;
+
+    /// <summary>
+    /// 另存出了一份新副本。与 <see cref="Saved"/> 的语义分开：库里多了一个模板，
+    /// 但当前这份的未保存改动并没存进去，不能顺手把「关窗不必再问」的守卫解掉。
+    /// </summary>
+    public event Action<LabelTemplate>? SavedAsCopy;
 
     /// <summary>需要弹窗级别提醒的错误。</summary>
     public event Action<string>? ErrorRaised;
@@ -408,23 +414,26 @@ public sealed class TemplateEditorViewModel : ObservableObject
         if (index < 0) return;
 
         Capture();
-        var (h, v) = mode switch
+        // 六个按钮各管一个轴：上一版把两个轴一起给了（点「顶对齐」会把水平位置甩到最左），
+        // 结果是「想贴顶就得重贴一次左」。
+        AlignHorizontal? h = null;
+        AlignVertical? v = null;
+        switch (mode)
         {
-            "Left" => (AlignHorizontal.Left, AlignVertical.Top),
-            "Center" => (AlignHorizontal.Center, AlignVertical.Top),
-            "Right" => (AlignHorizontal.Right, AlignVertical.Top),
-            "Top" => (AlignHorizontal.Left, AlignVertical.Top),
-            "Middle" => (AlignHorizontal.Left, AlignVertical.Middle),
-            "Bottom" => (AlignHorizontal.Left, AlignVertical.Bottom),
-            "CenterV" => (AlignHorizontal.Left, AlignVertical.Middle),
-            _ => ((AlignHorizontal?)null, (AlignVertical?)null),
-        };
-        if (h is null || v is null)
+            case "Left": h = AlignHorizontal.Left; break;
+            case "Center": h = AlignHorizontal.Center; break;
+            case "Right": h = AlignHorizontal.Right; break;
+            case "Top": v = AlignVertical.Top; break;
+            case "Middle":
+            case "CenterV": v = AlignVertical.Middle; break;
+            case "Bottom": v = AlignVertical.Bottom; break;
+        }
+        if (h is null && v is null)
         {
             ReleaseCapture();
             return;
         }
-        EditGeometry.AlignToLabel(_template, index, h.Value, v.Value);
+        EditGeometry.AlignToLabel(_template, index, h, v);
         Touch();
         RebuildSample();
         StatusText = "已按标签对齐（" + mode + "）。";
@@ -706,7 +715,9 @@ public sealed class TemplateEditorViewModel : ObservableObject
 
         RefreshElements();
         RecomputeIssues(issues);
-        Saved?.Invoke(copy);
+        // 走 SavedAsCopy 而不是 Saved：存到盘上的是一份新副本，当前这份的未保存改动还在窗口里。
+        // 上一版在这里发 Saved，界面就把「关窗不必再问」的守卫解了，用户接着关窗就静默丢了原模板的改动。
+        SavedAsCopy?.Invoke(copy);
         StatusText = $"已另存为用户模板 {fileName}。";
     }
 
@@ -890,10 +901,12 @@ public sealed class TemplateEditorViewModel : ObservableObject
         {
             list.Add(new FieldOption(field.Key.ToString(), $"{field.ChineseName}　{field.EnglishLabel}"));
         }
-        foreach (var token in new[] { "CartonNo", "NoXofY", "TotalCarton", "TotalQty", "RowIndex", "RecordCount" })
+        // 内置计算量由 TemplateTokenizer 那份清单生成：上一版这里手写名单，写了 TotalCarton / TotalQty
+        // 两个引擎根本不认的名字，插进去就是校验 Error（而且只有这一处有它们）。
+        foreach (var (token, description) in TemplateTokenizer.BuiltInTokens)
         {
             if (list.Any(f => string.Equals(f.Token, token, StringComparison.Ordinal))) continue;
-            list.Add(new FieldOption(token, $"内置计算量 {token}"));
+            list.Add(new FieldOption(token, $"内置计算量 {token}（{description}）"));
         }
         return list;
     }

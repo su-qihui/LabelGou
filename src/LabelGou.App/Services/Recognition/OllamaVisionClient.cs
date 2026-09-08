@@ -123,7 +123,8 @@ public static partial class OllamaVisionClient
         string payload;
         try
         {
-            var image64 = Convert.ToBase64String(File.ReadAllBytes(imagePath));
+            // 本机 ollama 不花流量，但一张十几 MB 的原图照样把等待时间拉长：同一份降采样口径（见 ImageForModel）
+            var (image64, _) = ImageForModel.FromFile(imagePath);
             payload = JsonSerializer.Serialize(new Dictionary<string, object?>
             {
                 ["model"] = settings.Model,

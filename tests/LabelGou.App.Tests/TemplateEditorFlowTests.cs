@@ -208,9 +208,15 @@ public class TemplateEditorFlowTests
     {
         var vm = NewVm(Path.GetTempPath() + Guid.NewGuid().ToString("N")[..6]);
         vm.SelectedRow = vm.Elements[0];
+        var yBefore = vm.Template.Elements[0].Y;
 
+        // 单轴：点「水平居中」只该动 X。上一版把 Y 也甩到 0（想居中就得重贴一次顶）
         vm.AlignCommand.Execute("Center");
         Assert.Equal(40, vm.Template.Elements[0].X, 6);
+        Assert.Equal(yBefore, vm.Template.Elements[0].Y, 6);
+
+        vm.AlignCommand.Execute("Top");
+        Assert.Equal(40, vm.Template.Elements[0].X, 6);      // 顶对齐也不能反过来改水平位置
         Assert.Equal(0, vm.Template.Elements[0].Y, 6);
 
         vm.PaddingCommand.Execute("Bottom");

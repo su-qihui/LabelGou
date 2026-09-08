@@ -129,7 +129,7 @@ public static partial class OllamaVisionClient
     {
         if (text is null || text.Lines.Count == 0)
             return Task.FromResult(new ModelOutcome { Error = "本地 OCR 没认出任何文字行，纯文本模型这一路没有依据可用。" });
-        return AskOpenAiAsync(settings, OcrLinesPrompt(text), imageBase64: null, cancel, handler);
+        return AskOpenAiAsync(settings, OcrLinesPrompt(text), image: null, cancel, handler);
     }
 
     /// <summary>云端探活：列模型清单看那个名字在不在。百炼/DeepSeek 都实现了 /models。</summary>
@@ -195,22 +195,24 @@ public static partial class OllamaVisionClient
             };
         }
         string image64;
+        string imageMime;
         try
         {
-            image64 = Convert.ToBase64String(File.ReadAllBytes(imagePath));
+            // 按真实扩展名给 MIME，并把长边降到 2000px 以内（手机原图十几 MB，整张 base64 上去就是超时）
+            (image64, imageMime) = ImageForModel.FromFile(imagePath);
         }
         catch (Exception ex)
         {
             return new ModelOutcome { Error = $"读图片失败：{ex.Message}" };
         }
-        return await AskOpenAiAsync(settings, prompt, image64, cancel, handler).ConfigureAwait(false);
+        return await AskOpenAiAsync(settings, prompt, (image64, imageMime), cancel, handler).ConfigureAwait(false);
     }
 
-    /// <summary>发一次 chat/completions。<paramref name="imageBase64"/> 为 null 时就是纯文本请求。</summary>
+    /// <summary>发一次 chat/completions。<paramref name="image"/> 为 null 时就是纯文本请求。</summary>
     private static async Task<ModelOutcome> AskOpenAiAsync(
         RecognitionSettings settings,
         string prompt,
-        string? imageBase64,
+        (string Base64, string MimeType)? image,
         CancellationToken cancel,
         HttpMessageHandler? handler)
     {
@@ -222,7 +224,7 @@ public static partial class OllamaVisionClient
         {
             new Dictionary<string, object?> { ["type"] = "text", ["text"] = prompt },
         };
-        if (imageBase64 is not null)
+        if (image is { } shot)
         {
             content.Add(new Dictionary<string, object?>
             {
@@ -230,7 +232,8 @@ public static partial class OllamaVisionClient
                 ["image_url"] = new Dictionary<string, object?>
                 {
                     // 云端只认 data URL 或公网链接；我们没有公网地址，所以走 base64 内联。
-                    ["url"] = $"data:image/png;base64,{imageBase64}",
+                    // 类型写真的那一个：上一版恒写 image/png，.jpg 的单据也被标成 png，严格的云端会拒。
+                    ["url"] = $"data:{shot.MimeType};base64,{shot.Base64}",
                 },
             });
         }

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Text;
 using System.Windows;
@@ -29,11 +30,19 @@ public sealed class AiDebugWindow : Window
         Content = "这个模型能看图（拉完列表或改模型名时会按名字自动判：带 vl/vision/omni 的吃图，deepseek-chat 这类不吃；判错了你直接改）",
         Margin = new Thickness(0, 2, 0, 12),
     };
+    private readonly CheckBox _useLocalOcr = new() { Content = "用本机 OCR 先认文字（关掉就只剩模型那一路）", Margin = new Thickness(0, 2, 0, 6) };
+    private readonly CheckBox _useVision = new() { Content = "把图真的发给模型（关掉=只把 OCR 认出的文字发过去）", Margin = new Thickness(0, 2, 0, 6) };
+    private readonly CheckBox _clearApiKey = new() { Content = "清掉已存的密钥（连本次也不留）", Margin = new Thickness(0, 2, 0, 6) };
+    private readonly TextBox _ocrLanguage = new() { Margin = new Thickness(0, 2, 0, 10) };
+    private readonly TextBox _timeout = new() { Margin = new Thickness(0, 2, 0, 10) };
     private readonly TextBlock _networkNotice = new() { TextWrapping = TextWrapping.Wrap, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 10) };
     private readonly TextBlock _log = new() { TextWrapping = TextWrapping.Wrap, FontFamily = new FontFamily("Consolas"), FontSize = 12 };
     private readonly ScrollViewer _logScroll;
 
     private RecognitionSettings _settings = RecognitionSettings.Load();
+
+    /// <summary>构造期：通道下拉的 SelectionChanged 不能拿预设顶掉用户存好的值，也不能顺手发一次 HTTP。</summary>
+    private bool _loading = true;
 
     public AiDebugWindow()
     {
@@ -53,7 +62,20 @@ public sealed class AiDebugWindow : Window
         form.Children.Add(Labeled("模型名 model（点下面的「拉取模型列表」挑，也可以手填）", _model));
         _model.SelectionChanged += (_, _) => GuessImagesForModel();
         form.Children.Add(Labeled("API 密钥（留空则读环境变量 LABELGOU_LLM_KEY，推荐这种）", _apiKey));
+        form.Children.Add(new TextBlock
+        {
+            Text = "密钥不会写进磁盘：填了只在这次运行里有效。要长期用，把环境变量 LABELGOU_LLM_KEY 设上——\n" +
+                   "这个目录会被备份脚本扫走，明文存密钥等于把它寄出去。",
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = OkBrush,
+            Margin = new Thickness(0, 0, 0, 10),
+        });
         form.Children.Add(_acceptsImages);
+        form.Children.Add(_useLocalOcr);
+        form.Children.Add(_useVision);
+        form.Children.Add(_clearApiKey);
+        form.Children.Add(Labeled("OCR 语言（留空用系统里第一个可用包，如 zh-Hans-CN / en-US）", _ocrLanguage));
+        form.Children.Add(Labeled("单次请求超时（秒，5~900）", _timeout));
         form.Children.Add(_networkNotice);
 
         var buttons = new StackPanel { Orientation = Orientation.Horizontal };
@@ -66,7 +88,14 @@ public sealed class AiDebugWindow : Window
         ask.Click += async (_, _) => await AskOnceAsync();
         buttons.Children.Add(ask);
         var save = new Button { Content = "保存并关闭", Padding = new Thickness(12, 6, 12, 6) };
-        save.Click += (_, _) => { Persist(); Close(); };
+        save.Click += (_, _) =>
+        {
+            // 存不上就不关窗：上一版 Persist 没有 try/catch，写盘失败会冒到 App.xaml.cs 的兜底 Handler，
+            // 用户看到的是「窗口没关也不知道存没存上」。
+            try { Persist(); }
+            catch (Exception ex) { WriteLine("窗口先留着，改好了再试一次：" + ex.Message); return; }
+            Close();
+        };
         buttons.Children.Add(save);
         form.Children.Add(buttons);
 
@@ -83,6 +112,7 @@ public sealed class AiDebugWindow : Window
         Content = root;
 
         SelectInitialChannel();
+        _loading = false;
         RefreshNotice();
     }
 
@@ -120,23 +150,32 @@ public sealed class AiDebugWindow : Window
     private void SelectInitialChannel()
     {
         var items = ChannelItems();
+        var index = items.Count - 1;   // 认不出来就当自定义，把已存的值原样摊给他
         for (var i = 0; i < items.Count; i++)
         {
-            if (string.Equals(items[i].Values.Endpoint, _settings.Endpoint, StringComparison.OrdinalIgnoreCase)
-                && items[i].Values.Provider == _settings.Provider)
-            {
-                _channel.SelectedIndex = i;
-                return;
-            }
+            if (!string.Equals(items[i].Values.Endpoint, _settings.Endpoint, StringComparison.OrdinalIgnoreCase)
+                || items[i].Values.Provider != _settings.Provider) continue;
+            index = i;
+            break;
         }
-        _channel.SelectedIndex = items.Count - 1;   // 认不出来就当自定义，把已存的值原样摊给他
+        _channel.SelectedIndex = index;
+
+        // 回填的一律是「已存的值」而不是那一家预设的值：上一版这一行都没写，
+        // SelectionChanged → ApplySelection 把用户存的模型名与「吃图」勾选静默顶成了预设。
         _endpoint.Text = _settings.Endpoint;
         _model.Text = _settings.Model;
         _acceptsImages.IsChecked = _settings.ModelAcceptsImages;
+        _useLocalOcr.IsChecked = _settings.UseLocalOcr;
+        _useVision.IsChecked = _settings.UseVisionModel;
+        _clearApiKey.IsChecked = false;
+        _ocrLanguage.Text = _settings.OcrLanguage ?? string.Empty;
+        _timeout.Text = _settings.TimeoutSeconds.ToString(CultureInfo.InvariantCulture);
+        _apiKey.Password = _settings.ApiKey ?? string.Empty;
     }
 
     private void ApplySelection()
     {
+        if (_loading) return;   // 构造期那一次选中不算「用户换了通道」
         if (_channel.SelectedIndex < 0) return;
         var values = ChannelItems()[_channel.SelectedIndex].Values;
         _endpoint.Text = values.Endpoint;
@@ -198,16 +237,30 @@ public sealed class AiDebugWindow : Window
         _settings.Provider = values.Provider;
         _settings.Endpoint = _endpoint.Text.Trim();
         _settings.Model = _model.Text.Trim();
-        _settings.ApiKey = string.IsNullOrWhiteSpace(_apiKey.Password) ? _settings.ApiKey : _apiKey.Password;
+        if (_clearApiKey.IsChecked == true) _settings.ApiKey = null;
+        else if (!string.IsNullOrWhiteSpace(_apiKey.Password)) _settings.ApiKey = _apiKey.Password;
         _settings.ModelAcceptsImages = _acceptsImages.IsChecked == true;
-        _settings.UseVisionModel = true;
+        // 上一版这里硬写 UseVisionModel = true，而且超时/本地 OCR/OCR 语言/密钥清除四个开关连控件都没有：
+        // 那份「只关掉一半」的欠账就落在这里。
+        _settings.UseVisionModel = _useVision.IsChecked == true;
+        _settings.UseLocalOcr = _useLocalOcr.IsChecked == true;
+        _settings.OcrLanguage = string.IsNullOrWhiteSpace(_ocrLanguage.Text) ? null : _ocrLanguage.Text.Trim();
+        if (int.TryParse(_timeout.Text.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var seconds)
+            && seconds is >= 5 and <= 900)
+        {
+            _settings.TimeoutSeconds = seconds;
+        }
+        else
+        {
+            WriteLine($"超时那个数（{_timeout.Text.Trim()}）不在 5~900 秒之间，这次沿用 {_settings.TimeoutSeconds} 秒。");
+        }
         return _settings;
     }
 
     private void Persist()
     {
         Collect().Save();
-        WriteLine($"已写入 {RecognitionSettings.FilePath}");
+        WriteLine($"已写入 {RecognitionSettings.FilePath}（密钥不在里面，它只活在这次运行里）");
     }
 
     private async Task ProbeAsync()
