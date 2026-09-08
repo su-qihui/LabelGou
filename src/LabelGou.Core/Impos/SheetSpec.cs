@@ -103,6 +103,16 @@ public sealed class SheetSpec
     /// <summary>是否允许旋转 90° 以省料（自动择优）。</summary>
     public bool AllowRotate { get; set; } = true;
 
+    /// <summary>
+    /// 一页只排同一枚唛头（2026-09-08 用户定调「一般是一个小标签排一张纸，一整张排同一个」，**默认开**）。
+    /// <para>开着一页不混两个源数据行：同组超过每页枚数则跨页接着排，不足一页的空位<strong>留着不填</strong>；
+    /// 关掉就是按标签顺序铺满整页（跨枚混排）。<see cref="Impos.ImpositionEngine.Build"/> 只有在调用方
+    /// 递了分组键（每张标签的源行号）时才真按组落位，没递就照混排走。</para>
+    /// <para>代价不粉饰：分组会多耗纸，所以 <see cref="Impos.SheetPlan.MixedPageCount"/> 把混排下的页数
+    /// 一起报出来给人对比，而不是让人自己发现页数涨了。</para>
+    /// </summary>
+    public bool RepeatSameLabelPerPage { get; set; } = true;
+
     // ---------- 裁切与套准 ----------
 
     public CropMarkMode CropMarks { get; set; } = CropMarkMode.SheetCorners;

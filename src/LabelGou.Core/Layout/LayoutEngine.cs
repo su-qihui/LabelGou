@@ -70,7 +70,39 @@ public sealed class LabelLayout
     public bool HasUnconfirmed => Items.OfType<TextItem>().Any(t => t.Flagged);
 }
 
-/// <summary>排版上下文（跨记录的公共信息）。</summary>
+/// <summary>
+/// 唛头文字的大小写口径（2026-09-08 用户要「按表格里的 / 全部大写 / 全部小写」三档开关）。
+/// <para>作用在 <see cref="LayoutEngine.Build"/> 里<strong>整行合成之后</strong>那一个点：
+/// 生产侧只有单标签预览与 <c>PageRasterizer</c> 两处取版面，从这一处走就是五出口一致（§七-11），
+/// 不会出现「预览大写、PDF 小写」。</para>
+/// <para>改的是<strong>合成后的整行文字</strong>（含用户自己写的固定标签，不只变量值）：
+/// 厂商样张上「ITEM NO」这类标签通常也是大写，只洗一半反而不一致。</para>
+/// </summary>
+public enum MarkTextCase
+{
+    /// <summary>不动（默认）：表里存的是什么就印什么，等于历史行为。</summary>
+    AsSource = 0,
+
+    /// <summary>整行转大写（不变文化：CJK、数字与标点原样，只动拉丁字母）。</summary>
+    Upper = 1,
+
+    /// <summary>整行转小写。</summary>
+    Lower = 2,
+}
+
+/// <summary>界面与提示共用同一份叫法，别让 UI 与 Core 各写一遍中文。</summary>
+public static class MarkTextCaseExtensions
+{
+    public static string ChineseName(this MarkTextCase value) => value switch
+    {
+        MarkTextCase.Upper => "全部大写",
+        MarkTextCase.Lower => "全部小写",
+        _ => "按表格里的",
+    };
+}
+
+/// <summary>
+/// 排版上下文（跨记录的公共信息）。</summary>
 /// <param name="RowIndex">当前记录序号（1 起）。</param>
 /// <param name="RecordCount">本次任务记录总数。</param>
 /// <param name="SourceFile">数据源文件名，可为 null。</param>
@@ -79,7 +111,10 @@ public sealed class LabelLayout
 /// <para><strong>默认 false</strong>：打印/PDF/图片/SVG 导出一律不含参考图（那是给人对齐用的，不能上纸）。
 /// 只有单标签预览、整版预览与模板编辑器画布会传 true。</para>
 /// </param>
-public sealed record LayoutContext(int RowIndex, int RecordCount, string? SourceFile = null, bool IncludeReference = false);
+/// <param name="TextCase">唛头文字大小写口径，<strong>默认按表格里的</strong>（不改变任何已有行为）。</param>
+public sealed record LayoutContext(
+    int RowIndex, int RecordCount, string? SourceFile = null, bool IncludeReference = false,
+    MarkTextCase TextCase = MarkTextCase.AsSource);
 
 /// <summary>
 /// 把「模板 + 一条记录」解析成 <see cref="LabelLayout"/>。
@@ -135,7 +170,9 @@ public static class LayoutEngine
 
                 case ElementKind.Text:
                 default:
-                    var text = ResolveText(element.Text, template, record, context, unresolved, out var flagReason);
+                    var text = ApplyTextCase(
+                        ResolveText(element.Text, template, record, context, unresolved, out var flagReason),
+                        context.TextCase);
                     if (string.IsNullOrWhiteSpace(text))
                     {
                         // 变量全空 或 本来就是空文本 → 隐藏；纯静态文本为空也算隐藏
@@ -183,6 +220,17 @@ public static class LayoutEngine
             : Path.Combine(TemplateStore.Directory, element.ImagePath);
         return File.Exists(candidate) ? candidate : null;
     }
+
+    /// <summary>
+    /// 大小写口径只在这一个点生效。<see cref="MarkTextCase.AsSource"/> 直接原样返回（不产生新字符串），
+    /// 所以默认档下连引用相等行为都没变。
+    /// </summary>
+    private static string? ApplyTextCase(string? text, MarkTextCase mode) => mode switch
+    {
+        MarkTextCase.Upper => text?.ToUpperInvariant(),
+        MarkTextCase.Lower => text?.ToLowerInvariant(),
+        _ => text,
+    };
 
     private static string ResolveText(
         string? source,

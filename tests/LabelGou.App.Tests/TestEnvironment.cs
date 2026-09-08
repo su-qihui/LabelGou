@@ -20,6 +20,9 @@ internal static class TestEnvironment
     internal static void RedirectUserWritablePathsToTemp()
     {
         AppLog.SetDirectoryForTests(NewTempDir("labelgou-test-logs"));
+        // 模板库 / 纸规库 / 映射方案库以前没有口子，单测里的 new MainViewModel() 会去读用户真机那个库：
+        // 2026-09-08 用户自己用 AI 存了一个模板，三条「自动接手该挑哪个模板」的单测期望当场就变了。
+        LabelGou.Core.UserPaths.SetRootForTests(NewTempDir("labelgou-test-userdata"));
     }
 
     /// <summary>每次调用给一个新的临时目录（测试类用完自己删）。</summary>

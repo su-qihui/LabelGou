@@ -224,7 +224,51 @@ public sealed class AiChatPanel : UserControl
 
     private void Append(string text)
     {
+        // 任何一条新话都算「上一条提示不再是那句了」：不然用户聊完一轮再撞同一个坑，
+        // 会被下面的去重误判成「已经提醒过了」而真的静默。
+        _noticeLine = null;
+        _noticeHits = 0;
+        AppendRaw(text);
+    }
+
+    private string? _noticeLine;
+    private int _noticeHits;
+
+    /// <summary>
+    /// 「挡下没发请求」这类提示：同一句只占一行，再撞只把次数加上去。
+    /// <para>用户 2026-09-08 拿 TOP 那张截图圈了这里：连点四次「让 AI 出一版排版」就刷出四行
+    /// 一模一样的话，看着像四个不同的问题。但不能只去重不吭声（那更像没点到），所以留一行 + 报次数。</para>
+    /// </summary>
+    private void AppendNotice(string text)
+    {
+        if (string.Equals(_noticeLine, text, StringComparison.Ordinal))
+        {
+            _noticeHits++;
+            ReplaceLastLine(NoticeText());
+            return;
+        }
+        _noticeLine = text;
+        _noticeHits = 1;
+        AppendRaw(NoticeText());
+    }
+
+    private string NoticeText() => _noticeLine is null ? string.Empty
+        : _noticeHits > 1
+            ? $"{_noticeLine}（同一句已挡 {_noticeHits} 次——点了没反应就是被它挡的，不是没收到）"
+            : _noticeLine;
+
+    private void AppendRaw(string text)
+    {
         _transcript.AppendText(text + Environment.NewLine);
+        _transcript.ScrollToEnd();
+    }
+
+    /// <summary>把最后一行换掉（只给 <see cref="AppendNotice"/> 用：同一句只占一行，次数就地更新）。</summary>
+    private void ReplaceLastLine(string line)
+    {
+        var all = _transcript.Text.TrimEnd('\r', '\n');
+        var cut = all.LastIndexOf('\n');
+        _transcript.Text = (cut < 0 ? string.Empty : all.Substring(0, cut + 1)) + line + Environment.NewLine;
         _transcript.ScrollToEnd();
     }
 
@@ -324,7 +368,7 @@ public sealed class AiChatPanel : UserControl
         }
         if (ctx.Fields.Count == 0)
         {
-            Append("一个字段都没连上，AI 排出来的版会是空格子。先回 ② 连接字段（可以点「自动推荐」）。");
+            AppendNotice("一个字段都没连上，AI 排出来的版会是空格子。先回 ② 连接字段（可以点「自动推荐」）；如果点了推荐还是这句，那张表很可能根本没有表头行。");
             return;
         }
         RefreshChannel();

@@ -323,6 +323,8 @@
                                 <CheckBox Content="允许旋转省料" IsChecked="{Binding Sheet.Working.AllowRotate}" VerticalAlignment="Center" />
                                 <CheckBox Content="套准十字" IsChecked="{Binding Sheet.Working.RegistrationMarks}" Margin="12,0,0,0" VerticalAlignment="Center" />
                                 <CheckBox Content="横向用纸" IsChecked="{Binding Sheet.Working.Landscape}" Margin="12,0,0,0" VerticalAlignment="Center" />
+                                <CheckBox Content="一页只排同一枚" IsChecked="{Binding Sheet.RepeatSameLabelPerPage}" Margin="12,0,0,0" VerticalAlignment="Center"
+                                          ToolTip="默认勾上（2026-09-08 用户口径「一整张排同一个」）：一张纸上不混两款唛头，同一款排满一页再换页，不足一页的空位留着不填。&#10;关掉就是按顺序铺满整页、跨款混排，更省纸。勾与不勾各要几页，下面那行方案会同时报出来。" />
                             </WrapPanel>
 
                             <Grid Margin="0,6,0,0">
@@ -526,6 +528,14 @@
                             </WrapPanel>
 
                             <WrapPanel Margin="0,6,0,0">
+                                <TextBlock Text="唛头文字：" VerticalAlignment="Center" />
+                                <ComboBox ItemsSource="{Binding TextCaseOptions}" SelectedItem="{Binding SelectedTextCase}"
+                                          DisplayMemberPath="Label" MinWidth="118" Margin="4,0,0,0" VerticalAlignment="Center"
+                                          ToolTip="三档：按表格里的（默认，原样印）/ 全部大写 / 全部小写。&#10;只改印出来的字：不改你表里的数据，也不改模板存的内容；预览与打印/PDF/图片/SVG 同一口径，不会预览一个样、纸上另一个样。&#10;注意它连你写的固定标签一起转（“Item no：”会变“ITEM NO：”），这是故意的：唛头样张上标签通常也是全大写。" />
+                                <TextBlock Text="（表里货号是小写、样张要大写时用这里，不要回去改表）" Style="{StaticResource Hint}" Margin="8,0,0,0" VerticalAlignment="Center" />
+                            </WrapPanel>
+
+                            <WrapPanel Margin="0,6,0,0">
                                 <TextBlock Text="SVG 成件：" VerticalAlignment="Center" />
                                 <ComboBox ItemsSource="{Binding Export.SvgModeOptions}"
                                           SelectedItem="{Binding Export.SelectedSvgMode}"
@@ -679,7 +689,7 @@
                             <StackPanel Grid.Row="2" Margin="0,8,0,0">
                                 <TextBlock Text="{Binding Sheet.PlanText}" FontWeight="Bold" TextWrapping="Wrap" />
                                 <TextBlock Style="{StaticResource Hint}" TextWrapping="Wrap"
-                                           Text="灰色虚线框 = 页边可用区；细灰线 = 裁切角线；蓝色十字 = 套准标记。拼版几何全部由 Core 的 ImpositionEngine 算出，导出与打印（M3）共用同一份结果。" />
+                                           Text="灰色虚线框 = 页边可用区；细虚线 = 裁切角线；蓝色虚线十字 = 套准标记。预览里这三样一律画成虚线，提醒它们本是给眼睛看的位置示意（打印店那张纸上通常不需要这些线）；要不要真上纸，由纸规的「裁切线」和 ⑤ 步的「含裁切线/套准标记」说了算，导出与打印按同一份几何走（Core 的 ImpositionEngine）。" />
                             </StackPanel>
                         </Grid>
                     </TabItem>

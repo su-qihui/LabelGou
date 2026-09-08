@@ -125,6 +125,10 @@ public static class SheetRenderer
     /// 标记画笔：线宽走 <see cref="RenderRules"/> 的唯一口径，颜色也取同一份（与 SVG 出口同源）。
     /// <para>Core 给的 <see cref="SheetMarkLine.ThicknessMm"/> 是真实印刷线宽（默认 0.3mm 左右），
     /// 导出/打印按它换算，屏幕预览保底可见。</para>
+    /// <para><strong>预览里角线与套准十字一律虚线</strong>（2026-09-08 用户口径「打印出来一般不需要标线，
+    /// 不过预览可以以虚线显示」）：这些线是给人看位置的，画成实线会让人以为纸上真有这道墨。
+    /// 打印/PDF/位图/SVG 出口一律还是实线——要上纸的必须是实的，所以判据是 <paramref name="target"/>
+    /// 而不是线的类型。</para>
     /// </summary>
     private static Pen PenFor(SheetMarkLine mark, double scale, RenderTarget target)
     {
@@ -135,9 +139,19 @@ public static class SheetRenderer
             _ => RenderRules.CropMarkColor,
         });
         brush.Freeze();
-        return RenderRules.PenFor(brush, mark.ThicknessMm, scale, target,
-            mark.Kind == SheetMarkKind.LabelOutline ? DashStyles.Dot : null);
+        return RenderRules.PenFor(brush, mark.ThicknessMm, scale, target, DashStyleFor(mark.Kind, target));
     }
+
+    /// <summary>
+    /// 这条线在这个去处该用什么样式：虚线 = 给眼睛看的示意，实线 = 真要上纸的墨。
+    /// <para>单独抽出一个口子是因为「预览虚线、打印实线」这件事只体现在 WPF 画笔上，
+    /// 没得单测就等于没规矩（与第 11 棒那条「只有眼睛看得到的错要补拓扑钉子」同一路做法）。</para>
+    /// </summary>
+    public static DashStyle? DashStyleFor(SheetMarkKind kind, RenderTarget target) => kind switch
+    {
+        SheetMarkKind.LabelOutline => DashStyles.Dot,          // 刀模示意线：本来就是点线
+        _ => target == RenderTarget.Screen ? DashStyles.Dash : null,
+    };
 
     private static Pen Frozen(Pen pen)
     {

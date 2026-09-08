@@ -14,6 +14,12 @@ public sealed class UiState
 
     /// <summary>上次选中的纸规 id。</summary>
     public string? SheetSpecId { get; set; }
+
+    /// <summary>
+    /// 唛头文字大小写口径（2026-09-08 用户要的三档开关）。<strong>默认按表格里的</strong>：
+    /// 旧状态文件没这个字段时反序列化就是 0 = AsSource，等于谁都没被改变。
+    /// </summary>
+    public LabelGou.Core.Layout.MarkTextCase TextCase { get; set; }
 }
 
 /// <summary>

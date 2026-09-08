@@ -13,11 +13,11 @@ namespace LabelGou.Core.Templates;
 /// </summary>
 public sealed class TemplateStore
 {
-    /// <summary>用户模板目录（图片等相对资源也以它为基准）。</summary>
-    public static string Directory => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "LabelGou",
-        "templates");
+    /// <summary>
+    /// 用户模板目录（图片等相对资源也以它为基准）。根目录走 <see cref="UserPaths"/> 这个单一来源，
+    /// 单测才能把它换到临时目录而不是偷读用户真机上的模板库（§五-48 同一条路）。
+    /// </summary>
+    public static string Directory => Path.Combine(UserPaths.Root, "templates");
 
     private readonly string _directory;
 

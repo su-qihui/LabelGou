@@ -13,11 +13,8 @@ namespace LabelGou.Core.Mapping;
 /// </summary>
 public sealed class ProfileStore
 {
-    /// <summary>默认存放目录：%APPDATA%\LabelGou\mapping-profiles。</summary>
-    public static string DefaultDirectory => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "LabelGou",
-        "mapping-profiles");
+    /// <summary>默认存放目录：<c>&lt;数据根&gt;\mapping-profiles</c>，根目录走 <see cref="UserPaths"/>（单测能换走）。</summary>
+    public static string DefaultDirectory => Path.Combine(UserPaths.Root, "mapping-profiles");
 
     private readonly string _directory;
 

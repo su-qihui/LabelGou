@@ -13,11 +13,8 @@ namespace LabelGou.Core.Impos;
 /// </summary>
 public sealed class SheetSpecStore
 {
-    /// <summary>用户纸规目录。</summary>
-    public static string Directory => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "LabelGou",
-        "sheets");
+    /// <summary>用户纸规目录（根目录走 <see cref="UserPaths"/>，单测能换走它）。</summary>
+    public static string Directory => Path.Combine(UserPaths.Root, "sheets");
 
     private readonly string _directory;
 

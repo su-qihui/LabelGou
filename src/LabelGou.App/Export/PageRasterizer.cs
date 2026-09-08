@@ -124,11 +124,18 @@ public sealed class PageContentSource
 {
     private readonly LabelTemplate _template;
     private readonly IReadOnlyList<MarkRecord> _records;
+    private readonly MarkTextCase _textCase;
 
-    public PageContentSource(LabelTemplate template, IReadOnlyList<MarkRecord> records, string sourcePath)
+    /// <param name="textCase">
+    /// 这批标签的大小写口径。它跟模板与记录一起在这个时刻<strong>固定下来</strong>：
+    /// 后台线程跑到一半用户改了下拉，也不能让同一批 PDF 里前几页大写、后几页小写。
+    /// </param>
+    public PageContentSource(LabelTemplate template, IReadOnlyList<MarkRecord> records, string sourcePath,
+        MarkTextCase textCase = MarkTextCase.AsSource)
     {
         _template = template;
         _records = records;
+        _textCase = textCase;
         SourceName = Path.GetFileName(sourcePath ?? string.Empty);
     }
 
@@ -161,7 +168,7 @@ public sealed class PageContentSource
     public LabelLayout? BuildAt(int labelIndex)
     {
         if (labelIndex < 1 || labelIndex > _records.Count) return null;
-        var context = new LayoutContext(labelIndex, Math.Max(1, _records.Count), SourceName);
+        var context = new LayoutContext(labelIndex, Math.Max(1, _records.Count), SourceName, TextCase: _textCase);
         return LayoutEngine.Build(_template, _records[labelIndex - 1], context);
     }
 

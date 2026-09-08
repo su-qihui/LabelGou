@@ -191,6 +191,9 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         // 先接上次用的那套（内置模板每加一批都退回标准模板，会让新版式在界面上等于不存在），
         // 没记过、或记的那个已被删了，才退回标准内置。
         var remembered = _uiState.Load();
+        // 大小写口径接回上次选的。这里直接写字段不走 setter：那时预览与拼版都还没建，
+        // 去重算一次只会拿到半成品（而且启动那一次不该产生写盘 IO）。
+        _textCase = remembered.TextCase;
         // 兜底跟 ReloadTemplates 用同一个档（行式四行）：上一版构造兜 IdStandard、刷新兜 IdRowsFour，
         // 冷启动与触发一次刷新后看到的不是同一套模板。
         SelectedTemplate = TemplateOptions.FirstOrDefault(t => t.Id == remembered.TemplateId)
@@ -222,7 +225,7 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         var template = SelectedTemplate?.Template;
         if (template is null) return null;
         var records = _records.Count > 0 ? _records : new[] { SampleRecords.StandardSample() };
-        return new PageContentSource(template, records, _sourcePath ?? string.Empty);
+        return new PageContentSource(template, records, _sourcePath ?? string.Empty, _textCase);
     }
 
     /// <summary>M4：模板库。编辑器与菜单共用这一个实例，不开第二份。</summary>
@@ -445,6 +448,55 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         if (state.TemplateId == templateId) return;
         state.TemplateId = templateId;
         _uiState.Save(state);
+    }
+
+    private MarkTextCase _textCase = MarkTextCase.AsSource;
+
+    /// <summary>
+    /// 唛头文字的大小写口径（⑤ 步那个三档下拉：按表格里的 / 全部大写 / 全部小写）。
+    /// <para>它只影响 <see cref="LayoutEngine"/> 合成后的文字：不改表里的数据、也不改模板存的内容，
+    /// 所以换档不会弄脏任何人的原值。预览与五个出口都从同一个点取版面，不会漂成两套。</para>
+    /// </summary>
+    public MarkTextCase TextCase
+    {
+        get => _textCase;
+        set
+        {
+            if (Set(ref _textCase, value))
+            {
+                RebuildLayout();
+                RebuildIssueLines();
+                RememberTextCase(value);
+                StatusMessage = $"唛头文字已改为「{value.ChineseName()}」（预览与打印/PDF/图片/SVG 同一口径，表里的原值没动）。";
+            }
+        }
+    }
+
+    /// <summary>大小写口径写进界面状态；与已记的相同就不写盘（同 <see cref="RememberTemplateId"/> 的口径）。</summary>
+    private void RememberTextCase(MarkTextCase value)
+    {
+        var state = _uiState.Load();
+        if (state.TextCase == value) return;
+        state.TextCase = value;
+        _uiState.Save(state);
+    }
+
+    /// <summary>
+    /// ⑤ 步「唛头文字」下拉的三项。名字从 Core 的 <see cref="MarkTextCaseExtensions.ChineseName"/> 取，
+    /// 不在 XAML 里再手打一遍中文（两处各写一份早晚对不上）。
+    /// </summary>
+    public IReadOnlyList<ChoiceOption<MarkTextCase>> TextCaseOptions { get; } = new[]
+    {
+        MarkTextCase.AsSource, MarkTextCase.Upper, MarkTextCase.Lower,
+    }.Select(v => new ChoiceOption<MarkTextCase>(v, v.ChineseName())).ToList();
+
+    public ChoiceOption<MarkTextCase>? SelectedTextCase
+    {
+        get => TextCaseOptions.FirstOrDefault(o => o.Value == _textCase);
+        set
+        {
+            if (value is not null) TextCase = value.Value;
+        }
     }
 
     /// <summary><see cref="ILabelSource"/>：拼版 VM 用它拿当前模板。</summary>
@@ -779,7 +831,20 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         AutoNumberCartons = _working.AutoNumberCartons;
         RebuildFieldRows();
         ApplyMapping();
-        StatusMessage = "已按表头别名重新自动连接。";
+        // 以前这里无条件说「已按表头别名重新自动连接」，连上 0 个也是这句（用户 2026-09-08 拿 TOP 那张
+        // 全（不映射）的截图问我们为什么骗人）。现在报真数，并在一个都没连上时把当表头用的那行摊出来：
+        // 那张表根本没有表头，不是用户没点推荐。
+        var bound = _working.BoundCount;
+        // 表头那一串只在「一个都没连上」时才需要，而且 _data 此时理论上可能已被清（取消导入那条路），所以可空取。
+        var headerHint = _data is null ? string.Empty : string.Join(" / ", _data.Headers.Take(6));
+        StatusMessage = bound switch
+        {
+            0 => "自动连接一个字段都没连上" +
+                 (headerHint.Length == 0 ? string.Empty : $"（表头认的是「{headerHint}」这些值）") +
+                 "—— 这张表可能根本没有表头行，或列名不常见；请对着下面那列自己选，别信这一句。",
+            1 => "自动连接只连上 1 个字段，其余请在第 2 步自己挑。",
+            _ => $"自动连接连上 {bound} 个字段，没连上的那一格会印成空白，请第 2 步过一眼。",
+        };
     }
 
     private static readonly System.Text.RegularExpressions.Regex FieldTokenPattern =
@@ -1110,7 +1175,8 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
 
         // 预览（单标签与整版）带参考底图，打印/导出走 PageContentSource，那边默认不含
         return LayoutEngine.Build(template, record,
-            new LayoutContext(effectiveIndex, total, Path.GetFileName(_sourcePath), IncludeReference: true));
+            new LayoutContext(effectiveIndex, total, Path.GetFileName(_sourcePath),
+                IncludeReference: true, TextCase: _textCase));
     }
 
     /// <summary>调试/自动化用：当前标签记录集（已按编号规则展开）。</summary>

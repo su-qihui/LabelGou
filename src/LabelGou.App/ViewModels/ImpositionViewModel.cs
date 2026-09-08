@@ -176,6 +176,23 @@ public sealed class ImpositionViewModel : ObservableObject
     /// <summary>是否已选好纸规（面板可用）。</summary>
     public bool HasSheet => Working is not null;
 
+    /// <summary>
+    /// 一页只排同一枚唛头（④ 步那个勾，2026-09-08 用户要「一整张排同一个」，默认开）。
+    /// <para>绑 VM 属性而不是直接绑 <c>Sheet.Working.RepeatSameLabelPerPage</c>：纸规不是
+    /// <c>INotifyPropertyChanged</c>，直接绑完勾完不会重算方案，页数不动，就是第 11 棒修过的那类
+    /// 「改了没反应」。上面的 <see cref="SelectedCropMark"/> 已经是同一个做法。</para>
+    /// </summary>
+    public bool RepeatSameLabelPerPage
+    {
+        get => Working?.RepeatSameLabelPerPage ?? true;
+        set
+        {
+            if (Working is null || Working.RepeatSameLabelPerPage == value) return;
+            Working.RepeatSameLabelPerPage = value;
+            RebuildPlan();
+        }
+    }
+
     public SheetOption? SelectedSheetOption
     {
         get => _selectedSheetOption;
@@ -228,6 +245,7 @@ public sealed class ImpositionViewModel : ObservableObject
             Raise(nameof(IsBuiltInSheet));
             Raise(nameof(FollowsLabelSheet));
             Raise(nameof(PaperSizeEditable));
+            Raise(nameof(RepeatSameLabelPerPage));
             return;
         }
 
@@ -239,6 +257,7 @@ public sealed class ImpositionViewModel : ObservableObject
         Raise(nameof(HasSheet));
         Raise(nameof(FollowsLabelSheet));
         Raise(nameof(PaperSizeEditable));
+        Raise(nameof(RepeatSameLabelPerPage));
         _selectedCropMark = CropMarkOptions.FirstOrDefault(o => o.Value == copy.CropMarks);
         Raise(nameof(SelectedCropMark));
     }
@@ -510,7 +529,11 @@ public sealed class ImpositionViewModel : ObservableObject
             return;
         }
 
-        var plan = ImpositionEngine.Build(spec, template.WidthMm, template.HeightMm, _labels.Count);
+        // 「一页只排同一枚」要按源数据行分组。SourceRowIndex 在编号展开时已经带到每张标签上，
+        // 不在这递引擎就照混排走 —— 它不猜、也不自己去读记录（§五-73：兜底值必须带来源标记同一条路）。
+        var groups = new int[_labels.Count];
+        for (var i = 0; i < _labels.Count; i++) groups[i] = _labels[i].SourceRowIndex;
+        var plan = ImpositionEngine.Build(spec, template.WidthMm, template.HeightMm, _labels.Count, groups);
         Plan = plan;
         SheetIssues.Clear();
         foreach (var issue in plan.Issues)

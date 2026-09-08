@@ -175,6 +175,23 @@ public class AiAssistantPanelTests
     }
 
     [Fact]
+    public void 同一句挡下提示连撞四次只占一行并把次数报出来()
+    {
+        var transcript = OnSta(() =>
+        {
+            var panel = new AiChatPanel();
+            panel.GetLayoutContext = () => new AiLayoutContext(new List<(string Key, string Name, string Sample)>(), 140, 100, null);
+            for (var i = 0; i < 4; i++) panel.AskLayoutAsync().GetAwaiter().GetResult();
+            return panel.Transcript;
+        });
+
+        // 用户 2026-09-08 拿 TOP 那张截图圈的就是这里：上一版刷四行一模一样的话，看着像四个不同的问题。
+        Assert.Equal(1, transcript.Split('\n').Count(l => l.Contains("一个字段都没连上")));
+        // 但不能只去重不吭声（那更像没点到），所以下次撞上去要把次数报在同一行里。
+        Assert.Contains("已挡 4 次", transcript);
+    }
+
+    [Fact]
     public void 没接上模板库与打印时说实话而不是假装能用()
     {
         var probe = OnSta(() =>

@@ -65,6 +65,44 @@ public sealed class TemplatePickAndReminderTests : IDisposable
     }
 
     [Fact]
+    public void 一个字段都没连上时状态栏不说已自动连接()
+    {
+        var store = TestEnvironment.NewTempUiStateStore();
+        // TOP 那张表实测就是这个形状：首行就是数据、列名全是数字，别名一个也认不出。
+        var csv = WriteCsv("无表头.csv", "11150588", "b5006*16", "1");
+
+        var status = OnSta(() =>
+        {
+            var vm = new MainViewModel(store);
+            vm.LoadSource(csv, null);
+            vm.AutoSuggestCommand.Execute(null);
+            return vm.StatusMessage;
+        });
+
+        // 上一版这里无条件报「已按表头别名重新自动连接」，一个都没连上也是这句（用户拿截图问为什么骗人）。
+        Assert.Contains("一个字段都没连上", status);
+        Assert.DoesNotContain("已按表头别名重新自动连接", status);
+    }
+
+    [Fact]
+    public void 连上了就把真数报出来而不是给一句空话()
+    {
+        var store = TestEnvironment.NewTempUiStateStore();
+        var csv = WriteCsv("有表头.csv", "货号 ITEM NO:", "件数 CTN", "数量 QTY");
+
+        var status = OnSta(() =>
+        {
+            var vm = new MainViewModel(store);
+            vm.LoadSource(csv, null);
+            vm.AutoSuggestCommand.Execute(null);
+            return vm.StatusMessage;
+        });
+
+        Assert.Matches("连上 \\d+ 个字段", status);
+        Assert.DoesNotContain("一个字段都没连上", status);
+    }
+
+    [Fact]
     public void 自动接手不写盘_手工换模板才写盘()
     {
         var store = TestEnvironment.NewTempUiStateStore();
