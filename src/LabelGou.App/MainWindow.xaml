@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:render="clr-namespace:LabelGou.App.Rendering"
         xmlns:mvvm="clr-namespace:LabelGou.App.Mvvm"
-        Title="LabelGou · 唛头标签助手  v0.6.0（五步向导：导入数据 → 连接字段 → 选模板 → 拼版编号 → 核对与输出）"
+        Title="LabelGou · 唛头标签助手"
         Width="1320" Height="860"
         MinWidth="1080" MinHeight="700"
         FontFamily="Microsoft YaHei" FontSize="12.5"
@@ -11,6 +11,7 @@
         WindowStartupLocation="CenterScreen">
 
     <Window.Resources>
+        <!-- 标题栏不带版本号：构造里由 AppInfo.WindowTitle 从程序集版本填（XAML 属性之间不能放注释，故说明落在内容区） -->
         <!-- 一步只露一块：每个步骤面板拿自己的步骤号去问转换器（见 Mvvm.StepIndexToVisibilityConverter） -->
         <mvvm:StepIndexToVisibilityConverter x:Key="StepEq" />
     </Window.Resources>

@@ -12,6 +12,9 @@
     <AssemblyName>LabelGou</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <StartupObject>LabelGou.App.App</StartupObject>
+    <!-- 品牌图标（第 9 棒第 37 项）：exe 文件图标与标题栏/任务栏默认图标都从这里来，
+         .ico 由 _probe\make-ico\make_ico.py 从 assets\labelgou-mark-1024.png 打包（16~128 走 BMP、256 走 PNG）。 -->
+    <ApplicationIcon>..\..\assets\labelgou.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>

@@ -19,6 +19,9 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        // 标题里的版本号从程序集版本来（§二：改一处即可）。上一版把 v0.6.0 硬编码在 XAML 与 AboutText 里各一份，
+        // 版本升上去这两处不会跟着动，用户看到的还是旧号——又是一条「改了没变化」。
+        Title = Services.AppInfo.WindowTitle;
         DataContext = _viewModel;
         _viewModel.ErrorRaised += OnErrorRaised;
 
@@ -387,16 +390,19 @@ public partial class MainWindow : Window
 
     private void SheetFitNow() => _viewModel.FitSheetTo(SheetHost.ActualWidth, SheetHost.ActualHeight);
 
-    private const string AboutText =
-        "LabelGou ·唛头标签助手 v0.6.0（M6）\n\n" +
+    private static string AboutText =>
+        $"LabelGou · 唛头标签助手 v{Services.AppInfo.Version}（M7）\n\n" +
         "面向打印店 / 印刷厂的唛头标签自动化工具。\n" +
-        "当前进度 M6：Excel/CSV 导入 → 字段映射 → 套模板（内置的、自己拖的、从 CorelDRAW/Illustrator 导出的 SVG 底稿导入的）"
-        + "→ 件号规则编号 → 整版拼版 → 预览 → 直连打印 / PDF / PNG / TIFF / SVG；"
-        + "还能把单据照片 / 截图 / Word 单据识别成记录（本地 OCR + 本机大模型双通道交叉校验）。\n\n" +
-        "识别结果逐条人工核对过才算数据：没核完的字段会被标红，并且不给导入、不给打印。\n" +
-        "识别通道开关、模型端点与超时现在要看 %APPDATA%\\LabelGou\\recognition.json（默认只连本机），界面上还没做设置页。\n" +
+        "五步向导：Excel/CSV 导入 → 字段映射（含整批固定值）→ 套模板（内置的、自己拖的、从 CorelDRAW/Illustrator 导出的 SVG 底稿导入的、按行式骨架生成的）"
+        + "→ 拼版编号（一页一枚 / 一页多枚、角线与套准十字、页边可跟随标签）→ 核对与输出。\n" +
+        "预览 / 直连打印 / PDF / PNG / TIFF / 给 CorelDRAW 的 SVG 走同一套渲染与同一套判据；"
+        + "还能把单据照片 / 截图 / Word 单据识别成记录（本地 OCR + 大模型双通道交叉校验）。\n\n" +
+        "识别结果逐条人工核对过才算数据：没核完的字段会被标红，并且不给导入、不给打印；纸规报错的条数会写在打印 / 导出的确认框里。\n" +
+        "模型通道（本机 Ollama / 云端）、端点、模型名、超时、本地 OCR 开关与密钥清除，都在「文件 → 模型（AI）设置与调试…」里改。\n" +
+        "API 密钥不落盘：填了只在这次运行里有效；要长期用，把环境变量 LABELGOU_LLM_KEY 设上。\n" +
+        "出问题先看「帮助 → 查看诊断日志…」，运行日志与被跳过的坏纸规文件名都记在那儿。\n" +
         "与店里的 CorelDRAW 对接：看安装目录下 tools\\cdr 的说明与批量导出宏。\n" +
-        "后续里程碑：M7 AI 智能排版、M8 打磨发布。\n\n" +
+        "后续里程碑：M8 打磨发布。\n\n" +
         "开发计划与进度详见 labelgou-word 目录下的文档。授权：MIT。";
 
     protected override void OnPreviewKeyDown(KeyEventArgs e)

@@ -1,9 +1,9 @@
 using System.Globalization;
 using System.IO;
-using System.Reflection;
 using System.Text;
 using System.Windows.Media.Imaging;
 using LabelGou.App.Rendering;
+using LabelGou.App.Services;
 using LabelGou.Core.Export;
 using LabelGou.Core.Impos;
 
@@ -60,7 +60,8 @@ public static class SheetExportService
     /// <summary>SVG 一次最多写多少个文件（一枚一图时 50 枚版打 20 页就上千个，防手滑）。</summary>
     public const int MaxSvgFiles = 600;
 
-    public static string ProducerName => "LabelGou " + (Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "dev");
+    // 版本号单一出口在 AppInfo（与标题栏、「关于」同一个），PDF/SVG 的 producer 不再自己反射拼一份
+    public static string ProducerName => "LabelGou " + AppInfo.Version;
 
     public static ExportOutcome ExportPdf(SheetExportRequest request, string filePath, IProgress<string>? progress, CancellationToken token)
     {
