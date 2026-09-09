@@ -18,7 +18,7 @@ public static class AiSheetProposalPrompt
     public const string SystemText =
         "你是外贸纸箱唛头排版的现场工程师。你看得到整张表（含列名以上的批注、右侧贴的效果图）。" +
         "只输出一个 JSON 对象，不要解释文字、不要 Markdown 围栏。没把握的字段就省略，不要编。" +
-        "读你回答的人是不懂电脑的打印店老板：warnings 与 reason 一律用中文大白话，" +
+        "读你回答的人是不懂电脑的打印店老板：questions 里的问题与 reason 一律用中文大白话，" +
         "不要出现 rows、JSON、字段英文名、毫米坐标这类术语，也不要用技术报告的句式（写成「最后一行像合计，建议不印」而不是「第 N 行为 summary row」）。";
 
     /// <summary>
@@ -45,19 +45,33 @@ public static class AiSheetProposalPrompt
           .Append(detectedHeaderRow > 0 ? detectedHeaderRow.ToString() : "？").Append(" 行；当前标签尺寸 ")
           .Append(currentLabelSizeText).Append("。\n");
         sb.Append(imageCount > 0
-            ? $"本条随附 {imageCount} 张图（表里贴的效果图/模板截图或用户拍的样张）：标签上印哪几行必须照图上的行序与字面，图上没有的行不要造。\n"
-            : "本条没有随附图，也没有底稿：那就只报你在表里看到的事实（列名在哪行、哪几行不像货），标签内容那一段省略，不要凭列名编设计。\n");
+            ? $"本条随附 {imageCount} 张图（表里贴的效果图/模板截图或用户拍的样张）：标签上印哪几行照图上的行序与字面，图上没有的行不要造。\n"
+            : "本条没附图。但表里常常自己就带着模板：某一列或某一块把标签上的字抄了一遍\n"
+              + "（例如右侧几行出现 BOLAROM / Item no：olu830-35 / QTY：144 pcs / Ctns：5件 这种）。\n"
+              + "有这一块 → 它就是模板：抄了哪几行、哪行加粗居中、哪行其实是某一列的值（写成占位符），都照它给出 rows，"
+              + "同时说明它抄在哪一列（templateSource）。\n"
+              + "表里确实没有这一块 → rows 省略，只报你在表里看到的事实，不要凭列名编设计。\n");
 
         sb.Append("\n只回这样一个 JSON 对象（字段可省略，行号一律用**原表行号、从 1 起**，与人看 Excel 的口径一致）：\n");
         sb.Append("{\n");
+        sb.Append("  \"dataCols\": 4,                        // 真正有用的数据几列（不算空白列、不算抄模板那一块）\n");
+        sb.Append("  \"paperText\": \"一开四--28*20--2*2--14*10\", // 纸那一句怎么写给人看：名字--纸厘米--每行*每页--标签厘米\n");
+        sb.Append("  \"templateSource\": \"F列\",             // 模板抄在哪一列/哪一块\n");
+        sb.Append("  \"qtyColumn\": \"B\",                   // 每个货出几张纸按哪一列数（写列字母、列号或表头原样都行）\n");
         sb.Append("  \"hasHeader\": true 或 false,          // false = 这张表没有列名行，第一行也是货\n");
         sb.Append("  \"headerRow\": 1,                      // 列名在原表第几行\n");
-        sb.Append("  \"totalRows\": [412],                  // 表尾「合计/TOTAL/小计」这类不该出标签的行，原表行号\n");
+        sb.Append("  \"totalRows\": [34],                   // 表尾「合计/TOTAL/小计」这类不该出标签的行，原表行号\n");
         sb.Append("  \"sheetSpec\": \"一页一枚（纸面跟标签走）\", // 只能从下面清单里原样选一个名字\n");
-        sb.Append("  \"warnings\": [\"最后一行像合计，建议不印\"],  // 你看到的疑点：最多 5 条，一条一句、不超过 25 个中文，大白话\n");
+        sb.Append("  \"questions\": [                      // 你拿不准、要老板拍一下的（最多 5 条，没把握才问，不要把确定的事拿来问）\n");
+        sb.Append("    { \"text\": \"件数末尾总数155\", \"no\": \"不需要\", \"yes\": \"需要\", \"action\": \"row-keep\", \"row\": 34 },\n");
+        sb.Append("    { \"text\": \"目前用的模板与表格相近，要不要重新排版\", \"action\": \"retemplate\" },\n");
+        sb.Append("    { \"text\": \"货号里*号及后面要不要保留\", \"action\": \"itemno-tail\" } ],\n");
         sb.Append("  \"reason\": \"为什么这么判（一句大白话，给老板看，不是给工程师看）\",\n");
-        sb.Append("  \"rows\": [ { \"content\": \"Ctns No.{{CartonNo}}/{{CartonTotal}}\", \"sizePt\": 14, \"weight\": 1 } ]  // 行式版式；{{字段}} 用上面清单里的键，没连上的列写 {{col:表头原样}}\n");
+        sb.Append("  \"rows\": [ { \"content\": \"Item no：{{col:货号ITEM NO:}}\", \"sizePt\": 14, \"weight\": 1, \"bold\": true, \"align\": \"center\" } ]  // 模板逐行；{{字段}} 用下面清单里的键，要某列原样写 {{col:表头原样}}；不加粗的行要写 bold:false（默认是加粗的）\n");
         sb.Append("}\n");
+        sb.Append("action 只能用这四个（写别的软件接不住，会被当成一句提醒丢掉）：\n")
+          .Append("  row-keep（那一行要不要当货印，要带 row）/ retemplate（要不要按你给的 rows 重排模板）/\n")
+          .Append("  paper（要不要换成你点的那张纸）/ itemno-tail（货号里 * 后面那截留不留）。\n");
 
         if (sheetSpecNames.Count > 0)
         {
@@ -68,6 +82,8 @@ public static class AiSheetProposalPrompt
         sb.Append(string.Join(" ", MarkFieldCatalog.Mappable.Select(d => d.Key))).Append('\n');
         sb.Append("硬性约束：行号必须在 1~").Append(rawRowCount).Append(" 之间；列名那一行不能同时被列进 totalRows；")
           .Append("不要输出毫米坐标、不要改纸张几何（只点名用哪张纸）；看不清就说看不清，宁可省略字段。\n");
+        sb.Append("说话要求：reason 用中文大白话、一句说完；不要出现 rows、JSON、字段英文名这些词（软件自己会把你回的话写成五行：")
+          .Append("表格有效数据 / 纸张 / 模版 / 张数 / 预览，那五行由软件拼，你不用写）。\n");
         sb.Append("一律用中文。");
         return sb.ToString();
     }

@@ -29,6 +29,8 @@ namespace LabelGou.Core.Recognition;
 /// <param name="Reason">模型说的一句人话：为什么这么判。</param>
 /// <param name="Notes">软件替它改了什么（夹范围、去重、忽略越界行号）——一条条写清，不许悄悄修好。</param>
 /// <param name="Errors">这条提案不能用的原因。非空时确认窗只准看不准「用这个」。</param>
+/// <param name="Readout">这份读表结果里「给人看的那五行」的料（几列、模板抄在哪一列、按哪列数张数）。</param>
+/// <param name="Questions">拿不准、要人二选一的那几条（第 22 棒：用户要的「⚠️ 一条问题 + ❌/✅ 两个按钮」）。</param>
 public sealed record AiSheetProposal(
     int? HeaderRow,
     bool? HasHeader,
@@ -43,7 +45,9 @@ public sealed record AiSheetProposal(
     IReadOnlyList<string> Warnings,
     string? Reason,
     IReadOnlyList<string> Notes,
-    IReadOnlyList<string> Errors)
+    IReadOnlyList<string> Errors,
+    SheetReadout Readout,
+    IReadOnlyList<AiSheetQuestion> Questions)
 {
     /// <summary>能用才允许落地（与行式版式那份 <c>RowLayoutProposal.HasSpec</c> 同一条纪律）。</summary>
     public bool IsUsable => Errors.Count == 0;
@@ -52,7 +56,8 @@ public sealed record AiSheetProposal(
     public bool IsEmpty =>
         HeaderRow is null && HasHeader is null && TotalValueRows.Count == 0 && Layout is null &&
         SheetSpecName is null && PaperWidthMm is null && PaperHeightMm is null &&
-        Columns is null && Rows is null && FollowsLabel is null;
+        Columns is null && Rows is null && FollowsLabel is null && Readout.QtyColumn is null &&
+        Questions.Count == 0;
 
     /// <summary>
     /// 折成切表指令。<paramref name="rawRowCount"/> 是原表总行数（用来把 1 起的行号换成 0 起并挡住越界）。
@@ -130,6 +135,83 @@ public sealed record AiSheetProposal(
     /// <summary>提醒最多列几条（多了等于没有，没人会逐字看）。</summary>
     public const int MaxExplainLines = 5;
 
+    /// <summary>中文序号：一行、二行……（用户写模板那一句就是这个口径）。</summary>
+    private static readonly string[] CnOrdinal = { "一", "二", "三", "四", "五", "六", "七", "八", "九", "十" };
+
+    private static string Ordinal(int i) => i < CnOrdinal.Length ? CnOrdinal[i] + "行" : $"第 {i + 1} 行";
+
+    /// <summary>
+    /// 给人看的那五行——用户 2026-09-09 逐字指定的句式，一字不改地照办：
+    /// 「表格有效数据31行4列 / 纸张:一开四--28*20--2*2--14*10 / 模版:F列:一行BOLAROM加粗居中,…
+    /// 二行Item no：(A列)… / 张数:绑定B列 / 预览:31个模板,155张」。
+    /// <para>行与张数用 <paramref name="labels"/>/<paramref name="sheets"/>（App 从真表算出来的），
+    /// 不信模型报的数——它说 155 而表里加出来 160 时，错的那一个不能上屏。</para>
+    /// </summary>
+    public IReadOnlyList<string> SummaryLines(int? labels = null, int? sheets = null)
+    {
+        var lines = new List<string>
+        {
+            $"表格有效数据{labels?.ToString() ?? "?"}行{Readout.DataCols?.ToString() ?? "?"}列",
+            "纸张:" + (Readout.PaperText ?? ComposePaper()),
+        };
+        lines.Add(Readout.TemplateLines.Count > 0
+            ? "模版:" + (Readout.TemplateSource is { Length: > 0 } src ? src + ":" : string.Empty)
+              + string.Join(",", Readout.TemplateLines.Select((t, i) => Ordinal(i) + t))
+            : "模版:这次没给（它没在表里找到抄了标签文字的那一块）");
+        lines.Add(Readout.QtyColumn is { } qty
+            ? $"张数:绑定{HeaderRowDetector.ColumnLetter(Readout.QtyColumnIndex ?? 0)}列（{qty}）"
+            : "张数:没说要按哪一列数");
+        lines.Add($"预览:{labels?.ToString() ?? "?"}个模板,{sheets?.ToString() ?? "?"}张");
+        return lines;
+    }
+
+    /// <summary>模型没给「纸张」那句展示文字时，软件拿自己知道的那些数拼一句（缺的就留缺，不编）。</summary>
+    private string ComposePaper()
+    {
+        var parts = new List<string>();
+        if (SheetSpecName is { } n) parts.Add(n);
+        if (PaperWidthMm is double pw && PaperHeightMm is double ph) parts.Add($"{pw / 10:0.#}*{ph / 10:0.#}");
+        if (Columns is > 0 || Rows is > 0)
+            parts.Add($"{(Columns is > 0 ? Columns.ToString() : "自")}*{(Rows is > 0 ? Rows.ToString() : "自")}");
+        if (Layout is { } l) parts.Add($"{l.WidthMm / 10:0.#}*{l.HeightMm / 10:0.#}");
+        return parts.Count > 0 ? string.Join("--", parts) : "没说要换哪张纸";
+    }
+
+    private static readonly System.Text.RegularExpressions.Regex PlaceholderPattern =
+        new(@"\{\{([^{}]+)\}\}", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>
+    /// 把一版模板翻成「一行 BOLAROM 加粗居中」「二行 Item no：(A列)」这种写法。
+    /// <para>占位符翻成列字母是因为用户看 Excel 就看字母（他写的就是「Item no：(A列)」），
+    /// 而 <c>{{ItemNo}}</c> 那种字段名只有工程师看得懂；认不出的占位符（自动编号那类）原样留着，
+    /// 不假装它是某一列。</para>
+    /// </summary>
+    internal static IReadOnlyList<string> FriendlyTemplateLines(
+        RowLayoutSpec spec, IReadOnlyList<ColumnPortrait>? columns)
+    {
+        var list = new List<string>();
+        foreach (var row in spec.Rows)
+        {
+            var text = PlaceholderPattern.Replace(row.Content, m => ColumnHint(m.Groups[1].Value.Trim(), columns));
+            var style = row.Align == HorizontalAlign.Center
+                ? (row.Bold ? " 加粗居中" : " 居中")
+                : row.Bold ? " 加粗" : string.Empty;
+            list.Add(text.TrimEnd() + style);
+        }
+        return list;
+    }
+
+    private static string ColumnHint(string key, IReadOnlyList<ColumnPortrait>? columns)
+    {
+        if (columns is null) return "{{" + key + "}}";
+        var name = key.StartsWith("col:", StringComparison.OrdinalIgnoreCase) ? key[4..].Trim() : key;
+        var hit = columns.FirstOrDefault(c => string.Equals(c.Header, name, StringComparison.OrdinalIgnoreCase))
+            ?? (key.StartsWith("col:", StringComparison.OrdinalIgnoreCase)
+                ? null
+                : columns.FirstOrDefault(c => string.Equals(c.BoundField, key, StringComparison.OrdinalIgnoreCase)));
+        return hit is null ? "{{" + key + "}}" : $"({HeaderRowDetector.ColumnLetter(hit.Index)}列)";
+    }
+
     private static string Shrink(string text, int max) => text.Length <= max ? text : text[..max] + "…";
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -157,6 +239,12 @@ public sealed record AiSheetProposal(
         ["followsLabel"] = "followsLabel", ["一页一枚"] = "followsLabel", ["paperFollowsLabel"] = "followsLabel",
         ["warnings"] = "warnings", ["risks"] = "warnings", ["提醒"] = "warnings", ["notes"] = "warnings",
         ["reason"] = "reason", ["why"] = "reason", ["理由"] = "reason",
+        // 第 22 棒那五行新加的键（都是「给人看」那一侧，落地仍走上面那些老键）
+        ["dataCols"] = "dataCols", ["有效列数"] = "dataCols", ["数据列数"] = "dataCols",
+        ["templateSource"] = "templateSource", ["模版列"] = "templateSource", ["模板来源"] = "templateSource",
+        ["qtyColumn"] = "qtyColumn", ["张数列"] = "qtyColumn", ["数量列"] = "qtyColumn", ["按列数张数"] = "qtyColumn",
+        ["paperText"] = "paperText", ["纸张"] = "paperText",
+        ["questions"] = "questions", ["问题"] = "questions", ["待确认"] = "questions",
     };
 
     /// <summary>
@@ -275,15 +363,114 @@ public sealed record AiSheetProposal(
             var cols = Clamp(IntField(fields, "columns"), 0, 40, "每行枚数", notes);
             var rowsPerPage = Clamp(IntField(fields, "paperRows"), 0, 40, "每页行数", notes);
 
+            // ── 给人看的那五行：几列、模板抄在哪一块、按哪一列数张数、逐条问题 ──
+            var dataCols = Clamp(IntField(fields, "dataCols"), 1, 200, "有效列数", notes);
+            var qtyWanted = TextField(fields, "qtyColumn", 40);
+            var (qtyHeader, qtyIndex) = ResolveColumn(qtyWanted, columns);
+            if (qtyWanted is not null && qtyHeader is null)
+                notes.Add($"它说按「{qtyWanted}」这一列数张数，可表里没对上这一列 —— 这条没采纳");
+
             return new AiSheetProposal(
                 headerRow, hasHeader, totalRows, layout?.Spec, specName,
                 paperW, paperH, cols, rowsPerPage, BoolField(fields, "followsLabel"),
                 StringListField(fields, "warnings"), TextField(fields, "reason", 400),
-                notes, errors);
+                notes, errors,
+                new SheetReadout(dataCols, TextField(fields, "templateSource", 20),
+                    layout?.Spec is { } spec ? FriendlyTemplateLines(spec, columns) : Array.Empty<string>(),
+                    qtyHeader, qtyIndex, TextField(fields, "paperText", 60)),
+                ParseQuestions(fields, rawRowCount, notes));
         }
 
         AiSheetProposal Bad(string why) => new(null, null, Array.Empty<int>(), null, null,
-            null, null, null, null, null, Array.Empty<string>(), null, Array.Empty<string>(), new[] { why });
+            null, null, null, null, null, Array.Empty<string>(), null, Array.Empty<string>(),
+            new[] { why }, SheetReadout.Empty, Array.Empty<AiSheetQuestion>());
+    }
+
+    /// <summary>同义词→四个认得的动作（模型会写 keepRow、也会写「重排」）。</summary>
+    private static readonly Dictionary<string, string> ActionAliases = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["row-keep"] = AiSheetQuestion.ActionRowKeep, ["keeprow"] = AiSheetQuestion.ActionRowKeep,
+        ["keep-row"] = AiSheetQuestion.ActionRowKeep, ["row"] = AiSheetQuestion.ActionRowKeep,
+        ["droprow"] = AiSheetQuestion.ActionRowKeep, ["这一行"] = AiSheetQuestion.ActionRowKeep,
+        ["retemplate"] = AiSheetQuestion.ActionRetemplate, ["re-template"] = AiSheetQuestion.ActionRetemplate,
+        ["template"] = AiSheetQuestion.ActionRetemplate, ["重排"] = AiSheetQuestion.ActionRetemplate,
+        ["paper"] = AiSheetQuestion.ActionPaper, ["sheet"] = AiSheetQuestion.ActionPaper,
+        ["换纸"] = AiSheetQuestion.ActionPaper,
+        ["itemno-tail"] = AiSheetQuestion.ActionItemNoTail, ["tail"] = AiSheetQuestion.ActionItemNoTail,
+        ["itemno"] = AiSheetQuestion.ActionItemNoTail, ["星号"] = AiSheetQuestion.ActionItemNoTail,
+    };
+
+    /// <summary>
+    /// 解「要人二选一」那一段。接不住的动作不假装能办：不进问题列表，只留一句 Note 说清楚。
+    /// <para>行号越界、没给动作、超过 <see cref="MaxExplainLines"/> 条，都是丢掉那一条而不是拒整份提案——
+    /// 一条问不对不该连带把切表与换纸也挡掉。</para>
+    /// </summary>
+    private static IReadOnlyList<AiSheetQuestion> ParseQuestions(
+        Dictionary<string, JsonElement> fields, int rawRowCount, List<string> notes)
+    {
+        var list = new List<AiSheetQuestion>();
+        if (!fields.TryGetValue("questions", out var el) || el.ValueKind != JsonValueKind.Array) return list;
+        foreach (var item in el.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.Object) continue;
+            var f = new Dictionary<string, JsonElement>(StringComparer.OrdinalIgnoreCase);
+            foreach (var prop in item.EnumerateObject()) f[prop.Name] = prop.Value;
+            string? Get(params string[] keys) => keys
+                .Select(k => f.TryGetValue(k, out var v) ? ReadText(v)?.Trim() : null)
+                .FirstOrDefault(t => !string.IsNullOrEmpty(t));
+
+            var text = Get("text", "问题", "题面", "q");
+            if (string.IsNullOrEmpty(text)) continue;
+            var rawAction = Get("action", "动作", "do") ?? string.Empty;
+            if (!ActionAliases.TryGetValue(rawAction.Replace(" ", string.Empty), out var action))
+            {
+                notes.Add($"它问的「{Shrink(text, 24)}」这条我接不住（软件里没有对应的开关），只当提醒告诉你一声");
+                continue;
+            }
+            var row = Get("row", "行", "行号") is { } rowText
+                && int.TryParse(rowText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var rv) ? rv : 0;
+            if (action == AiSheetQuestion.ActionRowKeep && (row < 1 || row > rawRowCount))
+            {
+                notes.Add($"它问的那一行号不在表里（{row}），这条没采纳");
+                continue;
+            }
+            if (list.Count >= MaxExplainLines)
+            {
+                notes.Add($"它提的问题多于 {MaxExplainLines} 条，只列前 {MaxExplainLines} 条给你选（其余在「复制全部」里能看到原文）");
+                break;
+            }
+            list.Add(new AiSheetQuestion(
+                text, Get("no", "❌", "否") ?? "不用", Get("yes", "✅", "是") ?? "要",
+                action, row, Get("value", "值", "参数")));
+        }
+        return list;
+    }
+
+    /// <summary>
+    /// 把人/模型口里的列指法翻成表里真存在的那一列：字母（B / B列）、序号（2）、表头文字都收。
+    /// <para>对不上就返回 null（宁可不写那一句），因为猜错一列 = 数错张数，比不说更坏。</para>
+    /// </summary>
+    internal static (string? Header, int? Index) ResolveColumn(string? wanted, IReadOnlyList<ColumnPortrait>? columns)
+    {
+        var text = wanted?.Trim().TrimEnd('列', ' ').Trim();
+        if (string.IsNullOrEmpty(text) || columns is null || columns.Count == 0) return (null, null);
+        if (text.Length <= 2 && text.All(c => c is >= 'a' and <= 'z' or >= 'A' and <= 'Z'))
+        {
+            var idx = 0;
+            foreach (var c in text.ToUpperInvariant()) idx = idx * 26 + (c - 'A' + 1);
+            var hit = columns.FirstOrDefault(c => c.Index == idx - 1);
+            return hit is null ? (null, null) : (hit.Header, hit.Index);
+        }
+        if (int.TryParse(text, out var n) && n is >= 1 and <= 200)
+        {
+            var hit = columns.FirstOrDefault(c => c.Index == n - 1);
+            if (hit is not null) return (hit.Header, hit.Index);
+        }
+        var squeezed = text.Replace(" ", string.Empty);
+        var byHeader = columns.FirstOrDefault(c =>
+                string.Equals(c.Header.Replace(" ", string.Empty), squeezed, StringComparison.OrdinalIgnoreCase))
+            ?? columns.FirstOrDefault(c => c.Header.Contains(squeezed, StringComparison.OrdinalIgnoreCase));
+        return byHeader is null ? (null, null) : (byHeader.Header, byHeader.Index);
     }
 
     private static int? Clamp(int? value, int min, int max, string what, List<string> notes)

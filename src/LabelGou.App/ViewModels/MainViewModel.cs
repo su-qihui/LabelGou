@@ -390,6 +390,14 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
             : _working.Mappings.FirstOrDefault(m => m.IsBound
                 && string.Equals(m.ColumnHeader?.Trim(), column.Trim(), StringComparison.Ordinal))?.Field;
 
+    /// <summary>
+    /// 某个内置字段现在连的是表里哪一列（表头原样）；没连上返回 null。
+    /// <para>AI 那条「货号里 * 后面要不要保留」要按这个改写占位符：保留 = 改成 <c>{{col:那一列}}</c> 读原样，
+    /// 不保留 = 用 <c>{{ItemNo}}</c>（软件默认去掉 * 后那截，三家真样张都是这么印的）。</para>
+    /// </summary>
+    public string? ColumnBoundToField(MarkFieldKey field)
+        => _working?.Mappings.FirstOrDefault(m => m.IsBound && m.Field == field)?.ColumnHeader;
+
     LabelLayout? ILabelSource.BuildLayoutAt(int labelIndex) => BuildLayoutFor(labelIndex);
 
     // ---------- 命令 ----------
@@ -889,6 +897,38 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
 
     /// <summary>这台机器上真有的纸规名（内置 + 用户自建）。AI 只能从这份清单里点名，造不出新纸规。</summary>
     public IReadOnlyList<string> SheetSpecNames => Sheet.SheetOptions.Select(o => o.Spec.Name).ToList();
+
+    /// <summary>
+    /// 数一遍「共几枚标签、共几张纸」——AI 那五行里的「预览」用软件自己算的数，<strong>不信模型报的那一个</strong>。
+    /// <para>用户 2026-09-09 要的那句是「预览:31个模板,155张」：31 = 切完还剩几行货，
+    /// 155 = 按他指定的那一列（件数）逐行加出来。模型说 155 而表里加出 160 时，上屏的必须是真数——
+    /// 报错一个总数就是少印或多印一垛箱子。</para>
+    /// </summary>
+    /// <param name="qtyColumnName">按哪一列数张数（表头原样）；null 或不在这张表里则一行算一张。</param>
+    public (int Labels, int Sheets)? CountOutput(string? qtyColumnName)
+    {
+        if (_data is not { } data) return null;
+        var colIndex = -1;
+        if (!string.IsNullOrWhiteSpace(qtyColumnName))
+        {
+            for (var c = 0; c < data.Headers.Count; c++)
+            {
+                if (string.Equals(data.Headers[c].Trim(), qtyColumnName.Trim(), StringComparison.OrdinalIgnoreCase))
+                {
+                    colIndex = c;
+                    break;
+                }
+            }
+        }
+        var sheets = 0;
+        for (var r = 0; r < data.RowCount; r++)
+        {
+            var n = 1;
+            if (colIndex >= 0 && int.TryParse(data.GetCell(r, colIndex)?.Trim(), out var v) && v > 0) n = v;
+            sheets += n;
+        }
+        return (data.RowCount, sheets);
+    }
 
     /// <summary>
     /// 换一份切表指令重读这张表（唯一能改「表头在哪、哪几行不当数据」的入口）。

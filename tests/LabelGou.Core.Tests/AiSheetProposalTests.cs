@@ -193,6 +193,89 @@ public class AiSheetProposalTests
     }
 
     [Fact]
+    public void 那五行按用户逐字指定的句式出来()
+    {
+        const string json = """
+        {
+          "dataCols": 4,
+          "paperText": "一开四--28*20--2*2--14*10",
+          "templateSource": "F列",
+          "qtyColumn": "B",
+          "rows": [
+            { "content": "BOLAROM", "bold": true, "align": "center", "sizePt": 30 },
+            { "content": "Item no：{{col:货号}}", "bold": false, "sizePt": 14 },
+            { "content": "QTY：{{col:数量}} pcs", "bold": false, "sizePt": 14 },
+            { "content": "Ctns：{{col:件数}}件", "bold": false, "sizePt": 14 }
+          ],
+          "questions": [
+            { "text": "件数末尾总数155", "no": "不需要", "yes": "需要", "action": "row-keep", "row": 34 }
+          ]
+        }
+        """;
+        var cols = new[]
+        {
+            new ColumnPortrait(0, "货号", "货号", null, null, new[] { "olu830-35*144" }, 31),
+            new ColumnPortrait(1, "件数", "件数 CTN", "CartonTotal", "总件数", new[] { "5" }, 32),
+            new ColumnPortrait(2, "数量", "数量", null, null, new[] { "144" }, 31),
+            new ColumnPortrait(3, "一开四", "一开四", null, null, new[] { "张数等于件数" }, 1),
+            new ColumnPortrait(4, "列E", "列E", null, null, Array.Empty<string>(), 0),
+            new ColumnPortrait(5, "列F", "列F", null, null, new[] { "BOLAROM" }, 4),
+        };
+
+        var p = AiSheetProposal.Parse(json, cols, 34, Specs);
+        var lines = p.SummaryLines(31, 155);
+
+        Assert.True(p.IsUsable, string.Join("；", p.Errors));
+        // 用户 2026-09-09 逐字写的五行，一字不改：行与张数由软件数，列字母由表里的位置推
+        Assert.Equal("表格有效数据31行4列", lines[0]);
+        Assert.Equal("纸张:一开四--28*20--2*2--14*10", lines[1]);
+        Assert.Equal("模版:F列:一行BOLAROM 加粗居中,二行Item no：(A列),三行QTY：(C列) pcs,四行Ctns：(B列)件", lines[2]);
+        Assert.Equal("张数:绑定B列（件数）", lines[3]);
+        Assert.Equal("预览:31个模板,155张", lines[4]);
+
+        Assert.Equal(new[] { "row-keep" }, p.Questions.Select(q => q.Action));
+        Assert.Equal(34, p.Questions[0].Row);
+        Assert.Equal(("不需要", "需要"), (p.Questions[0].NoLabel, p.Questions[0].YesLabel));
+    }
+
+    [Theory]
+    [InlineData("B")]
+    [InlineData("B列")]
+    [InlineData("2")]
+    [InlineData("件数")]
+    public void 数张数那一列_三种指法都认得出来(string wanted)
+    {
+        var cols = new[]
+        {
+            new ColumnPortrait(0, "货号", "货号", null, null, Array.Empty<string>(), 31),
+            new ColumnPortrait(1, "件数", "件数 CTN", null, null, Array.Empty<string>(), 32),
+        };
+        var text = "{ \"qtyColumn\": \"" + wanted + "\" }";
+
+        var p = AiSheetProposal.Parse(text, cols, 13, Specs);
+
+        Assert.Equal("件数", p.Readout.QtyColumn);
+        Assert.Equal(1, p.Readout.QtyColumnIndex);
+        Assert.StartsWith("张数:绑定B列（件数）", p.SummaryLines()[3], StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 软件接不住的动作不进问题列表_但留下一句实话()
+    {
+        const string text = """
+        { "questions": [
+            { "text": "要不要把 logo 换成蓝色", "action": "recolor" },
+            { "text": "最后一行要不要印", "action": "row-keep", "row": 99 } ] }
+        """;
+
+        var p = AiSheetProposal.Parse(text, null, 13, Specs);
+
+        Assert.Empty(p.Questions);                       // recolor 没这个开关；row-keep 那条行号不在表里
+        Assert.Contains(p.Notes, n => n.Contains("接不住", StringComparison.Ordinal));
+        Assert.Contains(p.Notes, n => n.Contains("不在表里", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void 提示词把行号口径与纸规清单都写死()
     {
         var text = AiSheetProposalPrompt.Build("整张表 13 行 × 6 列：…", Specs, 13, 1, "140×100 mm", 2);

@@ -558,7 +558,88 @@ public partial class MainWindow : Window
         };
         panel.ApplyLayout = ApplyAiLayout;
         panel.ApplyProposal = ApplyAiProposal;
+        panel.ApplyQuestion = ApplyAiQuestion;
+        // 「预览:31个模板,155张」那一句的数由软件自己数（按 AI 点的那一列逐行加），不信模型报的总数。
+        panel.OutputCounter = qtyColumn => _viewModel.CountOutput(qtyColumn);
         panel.GoPrint = PrintFromAi;
+    }
+
+    /// <summary>
+    /// 只落地用户点的那一条问题（第 22 棒）：一行问题配 ❌/✅，点哪条改哪条，不牵连其余。
+    /// <para>用户 2026-09-09 的原话是「件数末尾总数155 ❌(不需要) ✅(需要)」这种形式——
+    /// 上一版只给了一屏文字提醒，他得自己去别处点，他的评语是「改之后更乱了」。</para>
+    /// <para>四个动作都是软件真接得住的：改剔除行、存模板、换纸、改货号占位符。
+    /// 做不了的事不在这里出现（Core 那边就把接不住的丢掉了），不做「点了报成功其实没改」。</para>
+    /// </summary>
+    private (bool Ok, string Message) ApplyAiQuestion(
+        LabelGou.Core.Recognition.AiSheetProposal proposal,
+        LabelGou.Core.Recognition.AiSheetQuestion q, bool yes)
+    {
+        switch (q.Action)
+        {
+            case LabelGou.Core.Recognition.AiSheetQuestion.ActionRowKeep:
+            {
+                var next = _viewModel.CurrentChoice;
+                var rawIndex = q.Row - 1;
+                var excluded = (next.ExcludedRawRows ?? Array.Empty<int>()).ToList();
+                if (yes)
+                {
+                    if (!excluded.Remove(rawIndex))
+                        return (true, $"第 {q.Row} 行本来就在印，什么都没改。");
+                }
+                else if (!excluded.Contains(rawIndex))
+                {
+                    excluded.Add(rawIndex);
+                }
+                var (ok, msg) = _viewModel.ApplySheetChoice(new LabelGou.Core.Data.SheetLayoutChoice(
+                    next.HeaderRowIndex, next.HasHeader, excluded.Count == 0 ? null : excluded));
+                return (ok, (yes ? $"第 {q.Row} 行照你说的要印：" : $"第 {q.Row} 行不印了：") + msg);
+            }
+
+            case LabelGou.Core.Recognition.AiSheetQuestion.ActionRetemplate:
+                if (!yes) return (true, "保持你现在用的那张模板，没重排。");
+                if (proposal.Layout is not { } spec) return (false, "它这次没给出模板内容，重排不了（先让它重读一次这张表）。");
+                return ApplyAiLayout(spec);
+
+            case LabelGou.Core.Recognition.AiSheetQuestion.ActionPaper:
+            {
+                if (!yes) return (true, "纸保持现在这张，没换。");
+                var name = q.Value ?? proposal.SheetSpecName;
+                if (name is null) return (false, "它没点名要用哪张纸。");
+                var msg = _viewModel.Sheet.SelectSheetSpecByName(name);
+                return (msg.StartsWith("纸规已切到", StringComparison.Ordinal), msg);
+            }
+
+            default:   // itemno-tail：货号里 * 后面那截留不留
+            {
+                if (proposal.Layout is not { } tailSpec)
+                    return (false, "它这次没给出模板内容，这一条改不了（先点「重排」那条）。");
+                var header = _viewModel.ColumnBoundToField(LabelGou.Core.Marks.MarkFieldKey.ItemNo);
+                if (string.IsNullOrWhiteSpace(header))
+                    return (false, "这张表里货号那一列没连上字段，我不知道该改哪一行（去 ② 连接字段里先连上）。");
+                var colToken = "{{col:" + header + "}}";
+                var changed = 0;
+                foreach (var row in tailSpec.Rows)
+                {
+                    if (yes && row.Content.Contains("{{ItemNo}}", StringComparison.OrdinalIgnoreCase))
+                    {
+                        row.Content = row.Content.Replace("{{ItemNo}}", colToken);
+                        changed++;
+                    }
+                    else if (!yes && row.Content.Contains(colToken, StringComparison.OrdinalIgnoreCase))
+                    {
+                        row.Content = row.Content.Replace(colToken, "{{ItemNo}}");
+                        changed++;
+                    }
+                }
+                if (changed == 0)
+                    return (true, yes
+                        ? "模板里没用到货号那一列，已经是「连 * 后面一起印」了，没改。"
+                        : "模板里没用到货号那一列，已经是「只印 * 前面」了，没改。");
+                var (tailOk, tailMsg) = ApplyAiLayout(tailSpec);
+                return (tailOk, (yes ? "货号连 * 后面一起印（按表里原样）：" : "货号只印 * 前面：") + tailMsg);
+            }
+        }
     }
 
     /// <summary>用户点了「用这个」才走到这里。存不存得进模板库仍由 <see cref="TemplateStore"/> 的校验说了算。</summary>

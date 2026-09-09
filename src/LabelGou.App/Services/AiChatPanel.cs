@@ -110,6 +110,9 @@ public sealed class AiChatPanel : UserControl
     };
 
     private readonly System.Windows.Threading.DispatcherTimer _waitTimer = new() { Interval = TimeSpan.FromSeconds(1) };
+
+    /// <summary>逐条问题那一块：一条一行，行尾挂 ❌/✅ 两颗小按钮（第 22 棒）。</summary>
+    private readonly StackPanel _questions = new() { Visibility = Visibility.Collapsed };
     private DateTime _waitSince;
     private string _waitingFor = "AI";
     private readonly Button _send = new() { Content = "发送（Ctrl+Enter）", Padding = new Thickness(12, 6, 12, 6), Margin = new Thickness(0, 0, 8, 0) };
@@ -161,6 +164,15 @@ public sealed class AiChatPanel : UserControl
     /// 人点头后把整份提案交给主窗口落地（重切这张表 + 存版式 + 换纸规）。没挂上时按钮不亮（第 21 棒）。
     /// </summary>
     public Func<AiSheetProposal, (bool Ok, string Message)>? ApplyProposal { get; set; }
+
+    /// <summary>
+    /// 只落地「那一条问题」：第 22 棒——用户要的是一行问题配 ❌/✅ 两个按钮，
+    /// 而不是一屏文字提醒让他再去别处点（原话：「改之后更乱了」）。
+    /// </summary>
+    public Func<AiSheetProposal, AiSheetQuestion, bool, (bool Ok, string Message)>? ApplyQuestion { get; set; }
+
+    /// <summary>软件自己数「几枚标签、几张纸」（预览那行用真数，不用模型报的数）。</summary>
+    public Func<string?, (int Labels, int Sheets)?>? OutputCounter { get; set; }
 
     /// <summary>「按这版去打印」= 跳到 ⑤ 并触发既有打印命令。这里不自己开第二条出纸路。</summary>
     public Action? GoPrint { get; set; }
@@ -260,9 +272,10 @@ public sealed class AiChatPanel : UserControl
         root.Children.Add(_transcript);
 
         Grid.SetRow(_waitLine, 3);
-        // 等的那一句与附图那一行同一格堆着：窄栏里多一行固定高就是从对话区扣一块，StackPanel 只在需要时占高。
+        // 等的那一句、附图那一行、逐条问题同一格堆着：窄栏里多一行固定高就是从对话区扣一块，StackPanel 只在需要时占高。
         var status = new StackPanel();
         status.Children.Add(_waitLine);
+        status.Children.Add(_questions);
         status.Children.Add(_attachment);
         Grid.SetRow(status, 3);
         root.Children.Add(status);
@@ -772,9 +785,13 @@ public sealed class AiChatPanel : UserControl
         }
         var items = proposal.DescribeItems(rawRows);
         var explain = proposal.Explain();
-        Append($"看完了。它建议改 {items.Count} 件事"
-               + (explain.Count > 0 ? $"，另有 {explain.Count} 句提醒得你看一眼。" : "。"));
-        foreach (var item in items) Append("　· " + item);
+        // 那五行是用户逐字定的口径（表格有效数据 / 纸张 / 模版 / 张数 / 预览）；
+        // DescribeItems 那份「会改这几件事」只在它没读出新结构时兜底，不让两遍都打。
+        var count = OutputCounter?.Invoke(proposal.Readout.QtyColumn);
+        foreach (var line in proposal.SummaryLines(count?.Labels, count?.Sheets)) Append(line);
+        ShowQuestions(proposal);
+        if (items.Count > 0 && proposal.Questions.Count == 0)
+            foreach (var item in items) Append("　· " + item);
         if (explain.Count > 0)
         {
             Append("它提醒（不采纳也能用，但你得知道）：");
@@ -783,10 +800,82 @@ public sealed class AiChatPanel : UserControl
         // 软件自己改过什么单独收尾：以前它跟改动清单挤在一起，同一句会印两遍（用户圈图那屏就是这个）。
         foreach (var n in proposal.Notes) Append("（软件这边：" + n + "）");
         _pendingProposal = proposal;
-        _applyLayout.Content = "用这个（按提案重切这张表）";
+        _applyLayout.Content = "这些全都要（一次落地）";
         _applyLayout.IsEnabled = ApplyProposal is not null;
         if (ApplyProposal is null)
             Append("（这个面板没接上提案落地入口，只能看。）");
+    }
+
+    /// <summary>
+    /// 把「要人拍一下」的那几条挂成一行一句 + ❌/✅ 两颗小按钮（第 22 棒真正要的东西）。
+    /// <para>点一颗只落那一条，落完两颗都置灰并把选了哪个标在行尾——
+    /// 不然人记不住刚才点的是哪边，又变成一屏看不出结论的文字。</para>
+    /// </summary>
+    private void ShowQuestions(AiSheetProposal proposal)
+    {
+        _questions.Children.Clear();
+        if (proposal.Questions.Count == 0 || ApplyQuestion is null)
+        {
+            _questions.Visibility = Visibility.Collapsed;
+            return;
+        }
+        _questions.Visibility = Visibility.Visible;
+        for (var i = 0; i < proposal.Questions.Count; i++)
+        {
+            var q = proposal.Questions[i];
+            var rowPanel = new DockPanel { LastChildFill = true, Margin = new Thickness(0, 1, 0, 1) };
+            var answer = new TextBlock
+            {
+                FontSize = 11,
+                Foreground = OkBrush,
+                FontWeight = FontWeights.SemiBold,
+                Margin = new Thickness(6, 0, 0, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            var yes = new Button
+            {
+                Content = "✅ " + q.YesLabel,
+                FontSize = 11,
+                Padding = new Thickness(6, 1, 6, 1),
+                Margin = new Thickness(4, 0, 0, 0),
+            };
+            var no = new Button
+            {
+                Content = "❌ " + q.NoLabel,
+                FontSize = 11,
+                Padding = new Thickness(6, 1, 6, 1),
+            };
+            DockPanel.SetDock(answer, Dock.Right);
+            DockPanel.SetDock(yes, Dock.Right);
+            DockPanel.SetDock(no, Dock.Right);
+            rowPanel.Children.Add(answer);
+            rowPanel.Children.Add(yes);
+            rowPanel.Children.Add(no);
+            rowPanel.Children.Add(new TextBlock
+            {
+                Text = $"⚠️{i + 1}. {q.Text}",
+                FontSize = 12,
+                TextWrapping = TextWrapping.Wrap,
+                VerticalAlignment = VerticalAlignment.Center,
+            });
+            no.Click += (_, _) => AnswerQuestion(proposal, q, false, answer, no, yes);
+            yes.Click += (_, _) => AnswerQuestion(proposal, q, true, answer, no, yes);
+            _questions.Children.Add(rowPanel);
+        }
+    }
+
+    private void AnswerQuestion(AiSheetProposal proposal, AiSheetQuestion q, bool yes, TextBlock answer, Button no, Button yesButton)
+    {
+        if (ApplyQuestion is not { } apply)
+        {
+            Append("这个面板没接上「逐条落地」入口（只有主窗口里的 AI 页签能这么点）。");
+            return;
+        }
+        no.IsEnabled = false;
+        yesButton.IsEnabled = false;
+        answer.Text = (yes ? "✅ " : "❌ ") + (yes ? q.YesLabel : q.NoLabel);
+        var (ok, message) = apply(proposal, q, yes);
+        Append((ok ? "已办：" : "没办成：") + message);
     }
 
     /// <summary>清掉待确认的东西，并把「用这个」那颗按钮的文案还回去（两种提案共用一颗按钮，文案不能错）。</summary>
@@ -794,6 +883,8 @@ public sealed class AiChatPanel : UserControl
     {
         _pending = null;
         _pendingProposal = null;
+        _questions.Children.Clear();
+        _questions.Visibility = Visibility.Collapsed;
         _applyLayout.IsEnabled = false;
         _applyLayout.Content = "用这个（存成我的模板并选中）";
     }
