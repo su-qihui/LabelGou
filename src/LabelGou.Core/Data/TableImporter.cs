@@ -44,6 +44,19 @@ public static class TableImporter
     /// <exception cref="NotSupportedException">扩展名不支持。</exception>
     /// <exception cref="InvalidDataException">文件损坏/没有可用数据。</exception>
     public static TabularData Import(string filePath, string? sheetName = null)
+        => Import(filePath, sheetName, null);
+
+    /// <summary>
+    /// 按一份切表指令导入（第 21 棒：AI 说「表头在第 3 行」或「第 412 行是合计行」，软件照着重切）。
+    /// <para>指令只做三件事，不造任何判断：<strong>表头那一行改到哪个位置、有没有表头、那几行不当数据</strong>。
+    /// 几何、字段、数量合法性一律由下游校验（映射与拼版）说，这里只防两种会把自己弄空的指令：</p>
+    /// <list type="bullet">
+    ///   <item>剔完一行的都不剩 → 直接拒（宁可不切，也不能默默交出一张 0 行的表）；</item>
+    ///   <item>表头指在最后一行或更下 → 同样拒（那等于没有数据）。</item>
+    /// </list>
+    /// </summary>
+    /// <exception cref="InvalidDataException">指令把这张表切到没数据可用。</exception>
+    public static TabularData Import(string filePath, string? sheetName, SheetLayoutChoice? choice)
     {
         if (string.IsNullOrWhiteSpace(filePath)) throw new InvalidDataException("请先选择数据文件。");
         if (!File.Exists(filePath)) throw new FileNotFoundException($"找不到文件：{filePath}", filePath);
@@ -87,10 +100,11 @@ public static class TableImporter
         if (grid.Count == 0)
             throw new InvalidDataException("这个表里没有读到任何内容，请确认文件里有数据。");
 
-        var detection = HeaderRowDetector.Detect(grid);
+        var detection = HeaderRowDetector.Detect(grid, choice);
         if (detection.DataRows.Count == 0)
-            throw new InvalidDataException(
-                $"识别到表头（第 {detection.HeaderRowIndex + 1} 行），但表头下面没有数据行。");
+            throw new InvalidDataException(choice is { IsDefault: false }
+                ? $"按这份指令切完（{choice.Describe()}）这张表已经没有数据行了，所以不改。"
+                : $"识别到表头（第 {detection.HeaderRowIndex + 1} 行），但表头下面没有数据行。");
 
         var actualSheet = lower is ".xlsx" or ".xlsm"
             ? (sheetName ?? ListSheets(filePath).FirstOrDefault() ?? "Sheet1")
@@ -104,7 +118,10 @@ public static class TableImporter
             detection.HeaderRowIndex,
             encoding,
             detection.PreambleRows,
-            ReadImagesSafely(filePath, lower, actualSheet));
+            ReadImagesSafely(filePath, lower, actualSheet),
+            detection.DataRowRawIndexes,
+            choice ?? SheetLayoutChoice.Auto,
+            detection.RawRowCount);
     }
 
     /// <summary>

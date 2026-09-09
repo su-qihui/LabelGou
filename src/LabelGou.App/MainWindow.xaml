@@ -53,6 +53,9 @@
                     <Separator />
                     <MenuItem Header="AI 助手：放回底部那一行" Click="OnAiDockBottomClick"
                               ToolTip="不放在右栏了，放回预览下面那一行（也可以按住它顶部那条握把拖到主窗下缘）" />
+                    <Separator />
+                    <MenuItem Header="这张表：恢复自动猜切法（清掉 AI 定过的表头行与剔除行）" Click="OnResetSheetCutClick"
+                              ToolTip="AI 提案点错了、或换了一批数据想回到软件自己猜，就走这一条。只会重读当前这个文件，不动你的文件本身" />
                 </MenuItem>
                 <Separator />
                 <MenuItem Header="放大" Command="{Binding ZoomInCommand}" />

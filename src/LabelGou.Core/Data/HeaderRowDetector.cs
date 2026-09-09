@@ -20,26 +20,84 @@ public static class HeaderRowDetector
     public const int ScanWindow = 8;
 
     /// <summary>识别结果。</summary>
-    /// <param name="HeaderRowIndex">表头所在行（0 起）。</param>
+    /// <param name="HeaderRowIndex">表头所在行（0 起）；<b>-1 = 用户说这张表没表头</b>。</param>
     /// <param name="Headers">归一化后的表头（空标题补成 "列 A"，重复标题加序号）。</param>
-    /// <param name="DataRows">表头之下的数据行（已按表头列宽补齐）。</param>
+    /// <param name="DataRows">表头之下的数据行（已按表头列宽补齐、已去掉整行空行与被剔除行）。</param>
     /// <param name="PreambleRows">表头<strong>以上</strong>那几行原样（含空行，行号就是原始网格行号），给 AI 与人看批注用。</param>
+    /// <param name="DataRowRawIndexes">每一条数据行在<strong>原表</strong>里的行号（0 起），与 <paramref name="DataRows"/> 同序。
+    /// <para>为什么要它：AI 报的是原表行号（它看到的就是原表），软件内部数的是第几条，
+    /// 中间隔着一段被跳掉的行与剔掉的行——不留这张对应表，两边一定会错配（错配 = 剔错行）。</para></param>
+    /// <param name="RawRowCount">原表总行数（含被跳过的与被剔除的）：AI 报行号的合法上界。</param>
     public sealed record DetectionResult(
         int HeaderRowIndex,
         IReadOnlyList<string> Headers,
         IReadOnlyList<IReadOnlyList<string>> DataRows,
-        IReadOnlyList<IReadOnlyList<string>> PreambleRows);
+        IReadOnlyList<IReadOnlyList<string>> PreambleRows,
+        IReadOnlyList<int> DataRowRawIndexes,
+        int RawRowCount = 0);
 
-    public static DetectionResult Detect(IReadOnlyList<string[]> grid)
+    public static DetectionResult Detect(IReadOnlyList<string[]> grid) => Detect(grid, null);
+
+    /// <summary>
+    /// 按一份指令切表（第 21 棒）。<paramref name="choice"/> 为 null 或全默认时行为与以前一字不差。
+    /// </summary>
+    public static DetectionResult Detect(IReadOnlyList<string[]> grid, SheetLayoutChoice? choice)
     {
         if (grid.Count == 0)
-            return new DetectionResult(0, Array.Empty<string>(), Array.Empty<IReadOnlyList<string>>(), Array.Empty<IReadOnlyList<string>>());
+            return new DetectionResult(0, Array.Empty<string>(), Array.Empty<IReadOnlyList<string>>(),
+                Array.Empty<IReadOnlyList<string>>(), Array.Empty<int>(), 0);
 
         var width = grid.Max(r => r.Length);
+        var hasHeader = choice?.HasHeader ?? true;
+        var excluded = choice?.ExcludedRawRows is { Count: > 0 }
+            ? new HashSet<int>(choice.ExcludedRawRows) : null;
+
+        int headerIndex;
+        if (!hasHeader) headerIndex = -1;
+        else if (choice?.HeaderRowIndex is int forced)
+            headerIndex = Math.Clamp(forced, 0, Math.Max(0, grid.Count - 1));   // 指到最后一行之内的合法位置
+        else headerIndex = BestHeaderIndex(grid, width);
+
+        var headerRow = headerIndex >= 0 ? grid[headerIndex] : Array.Empty<string>();
+        var headers = NormalizeHeaders(headerRow, width);
+        var firstDataRow = Math.Max(0, headerIndex + 1);
+
+        var preamble = new List<IReadOnlyList<string>>(Math.Max(0, headerIndex));
+        for (var r = 0; r < headerIndex; r++) preamble.Add(Pad(grid[r], width));   // 到表头那一行为止（不含它本身）
+
+        var dataRows = new List<IReadOnlyList<string>>(Math.Max(0, grid.Count - firstDataRow));
+        var rawIndexes = new List<int>(dataRows.Capacity);
+        for (var r = firstDataRow; r < grid.Count; r++)
+        {
+            var row = grid[r];
+            if (row.All(string.IsNullOrWhiteSpace)) continue;
+            if (excluded is not null && excluded.Contains(r)) continue;
+            dataRows.Add(Pad(row, width));
+            rawIndexes.Add(r);
+        }
+
+        // HeaderRowIndex == -1 本身就是「没表头」的记号，不再另存一个 bool（两个真源必有一个会说谎）。
+        // RawRowCount 递的是原表总行数（含被剔的）：下一轮 AI 报行号时边界必须是这张表本来的长度，
+        // 否则剔过几行之后，「第 412 行」会被当成越界误删——而合计行恰恰就在最后那几行。
+        return new DetectionResult(headerIndex, headers, dataRows, preamble, rawIndexes, grid.Count);
+    }
+
+    /// <summary>把一行补齐到表宽（Excel 的稀疏行右边那几格根本不存在，不是空串）。</summary>
+    private static string[] Pad(string[] row, int width)
+    {
+        if (row.Length == width) return row;
+        var padded = new string[width];
+        Array.Copy(row, padded, Math.Min(row.Length, width));
+        for (var c = row.Length; c < width; c++) padded[c] = string.Empty;
+        return padded;
+    }
+
+    /// <summary>按打分找表头行（前 <see cref="ScanWindow"/> 行里得分最高的那行）。</summary>
+    private static int BestHeaderIndex(IReadOnlyList<string[]> grid, int width)
+    {
         var candidates = Math.Min(ScanWindow, grid.Count);
         var bestIndex = 0;
         var bestScore = double.MinValue;
-
         for (var i = 0; i < candidates; i++)
         {
             var score = Score(grid[i], width, i);
@@ -49,33 +107,7 @@ public static class HeaderRowDetector
                 bestIndex = i;
             }
         }
-
-        var headers = NormalizeHeaders(grid[bestIndex], width);
-        var preamble = new List<IReadOnlyList<string>>(bestIndex);
-        for (var r = 0; r < bestIndex; r++)
-        {
-            var above = new string[width];
-            Array.Copy(grid[r], above, Math.Min(grid[r].Length, width));
-            for (var c = grid[r].Length; c < width; c++) above[c] = string.Empty;
-            preamble.Add(above);
-        }
-        var dataRows = new List<IReadOnlyList<string>>(Math.Max(0, grid.Count - bestIndex - 1));
-        for (var r = bestIndex + 1; r < grid.Count; r++)
-        {
-            var row = grid[r];
-            if (row.All(string.IsNullOrWhiteSpace)) continue;
-            if (row.Length == width)
-            {
-                dataRows.Add(row);
-                continue;
-            }
-            var padded = new string[width];
-            Array.Copy(row, padded, Math.Min(row.Length, width));
-            for (var c = row.Length; c < width; c++) padded[c] = string.Empty;
-            dataRows.Add(padded);
-        }
-
-        return new DetectionResult(bestIndex, headers, dataRows, preamble);
+        return bestIndex;
     }
 
     /// <summary>

@@ -122,6 +122,17 @@ public partial class MainWindow : Window
     /// <summary>右栏那一栏里的手动退回入口：与拖到下缘同一个 <see cref="DetachablePanel.Dock(DockSite)"/>，不开第二套。</summary>
     private void OnAiDockBottomClick(object sender, RoutedEventArgs e) => _aiPanel?.Dock(DockSite.Bottom);
 
+    /// <summary>
+    /// 「恢复自动猜切法」：把 AI 定过的表头行与剔除行全部清掉，重读一次当前文件（第 21 棒）。
+    /// <para>这条入口必须存在：不然用户点错一次「用这个」，就只能重选一次文件才能改回来。</para>
+    /// </summary>
+    private void OnResetSheetCutClick(object sender, RoutedEventArgs e)
+    {
+        var (ok, msg) = _viewModel.ResetSheetChoice();
+        if (!ok) _viewModel.ReportStatus("没能恢复自动切法：" + msg);
+        Services.AppLog.Info((ok ? "切法恢复自动：" : "切法恢复失败：") + msg);
+    }
+
     /// <summary>「预览 + 右栏」这一整块现在有多宽（DIP）：判右栏挤不挤得下的唯一口径。
     /// <para>构造期 ActualWidth 还是 0，那时拿屏幕工作区估一下——不然启动时会被判成「挤不下」而永久停在底部。</para></summary>
     private double SplitRegionWidthDip()
@@ -540,9 +551,13 @@ public partial class MainWindow : Window
             var hasArtwork = template.Elements.Any(e => e.Kind is LabelGou.Core.Templates.ElementKind.Image
                                                         or LabelGou.Core.Templates.ElementKind.Vector);
             return new Services.AiLayoutContext(fields, template.WidthMm, template.HeightMm, _viewModel.StatusMessage,
-                portrait?.Columns, portrait?.Portrait, sheetImages, hasArtwork);
+                portrait?.Columns, portrait?.Portrait, sheetImages, hasArtwork,
+                // 提案那一枪要的东西：真有的纸规清单（它只能从这份里选）、原表行数（行号边界）、
+                // 软件目前猜的表头行（告诉它现在错在哪，它才知道要不要改）。
+                _viewModel.SheetSpecNames, _viewModel.RawRowCount, _viewModel.DetectedHeaderRow);
         };
         panel.ApplyLayout = ApplyAiLayout;
+        panel.ApplyProposal = ApplyAiProposal;
         panel.GoPrint = PrintFromAi;
     }
 
@@ -559,6 +574,50 @@ public partial class MainWindow : Window
         _viewModel.ReloadTemplates(template.Id);
         Services.AppLog.Info($"AI 出的版式经用户确认存为模板：{template.Name}（{fileName}）");
         return (true, $"已存成我的模板「{template.Name}」（{fileName}）并选中，预览已跟着换。要改细节走 ③ 编辑模板。");
+    }
+
+    /// <summary>
+    /// 用户点头后落地整份提案（第 21 棒）：重切这张表 → 存这版模板 → 换那张纸。
+    /// <para>三件各自独立报成败，不假装「全成才算成功」：切表会被 Core 拒掉（那张表保住），
+    /// 版式进不了模板库是校验的事，纸规点名不对就保持现状——把它们包成一个布尔值反而隐掉了用户真正需要看的那一句。</para>
+    /// </summary>
+    private (bool Ok, string Message) ApplyAiProposal(LabelGou.Core.Recognition.AiSheetProposal proposal)
+    {
+        var lines = new List<string>();
+        var anyOk = false;
+
+        var next = _viewModel.ChoiceFrom(proposal);
+        if (!SameCut(_viewModel.CurrentChoice, next))
+        {
+            var (ok, msg) = _viewModel.ApplySheetChoice(next);
+            lines.Add((ok ? "切表✓ " : "切表✗（表保持原样）") + msg);
+            anyOk |= ok;
+        }
+        if (proposal.Layout is { } spec)
+        {
+            var (ok, msg) = ApplyAiLayout(spec);
+            lines.Add((ok ? "版式✓ " : "版式✗ ") + msg);
+            anyOk |= ok;
+        }
+        if (proposal.SheetSpecName is { } name)
+        {
+            var msg = _viewModel.Sheet.SelectSheetSpecByName(name);
+            lines.Add(msg);
+            anyOk |= msg.StartsWith("纸规已切到", StringComparison.Ordinal);
+        }
+        foreach (var w in proposal.Warnings) lines.Add("⚠ " + w);
+        if (lines.Count == 0) return (false, "这份提案里没有可落地的改动（它什么都没提）。当前表、模板与纸规都没动。");
+        Services.AppLog.Info("AI 提案经用户确认落地：" + string.Join(" / ", lines));
+        return (anyOk, string.Join("\n", lines));
+    }
+
+    /// <summary>两份切法是否等价（等价就别白重读一次文件，也不要假装"改了其实没改"）。</summary>
+    private static bool SameCut(LabelGou.Core.Data.SheetLayoutChoice a, LabelGou.Core.Data.SheetLayoutChoice b)
+    {
+        var ra = a.ExcludedRawRows ?? Array.Empty<int>();
+        var rb = b.ExcludedRawRows ?? Array.Empty<int>();
+        return a.HasHeader == b.HasHeader && a.HeaderRowIndex == b.HeaderRowIndex
+            && ra.SequenceEqual(rb);
     }
 
     /// <summary>「按这版去打印」：跳到 ⑤ 并触发那条既有命令；未核对字段照样被复核闸门拦着。</summary>

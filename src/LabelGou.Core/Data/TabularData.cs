@@ -20,7 +20,10 @@ public sealed class TabularData
         int headerRowIndex,
         Encoding? encoding = null,
         IReadOnlyList<IReadOnlyList<string>>? preamble = null,
-        IReadOnlyList<SheetImage>? images = null)
+        IReadOnlyList<SheetImage>? images = null,
+        IReadOnlyList<int>? dataRowRawIndexes = null,
+        SheetLayoutChoice? choice = null,
+        int rawRowCount = 0)
     {
         SourceFile = sourceFile;
         SheetName = sheetName;
@@ -30,6 +33,9 @@ public sealed class TabularData
         Encoding = encoding;
         Preamble = preamble ?? Array.Empty<IReadOnlyList<string>>();
         Images = images ?? Array.Empty<SheetImage>();
+        DataRowRawIndexes = dataRowRawIndexes ?? Array.Empty<int>();
+        Choice = choice ?? SheetLayoutChoice.Auto;
+        RawRowCount = rawRowCount > 0 ? rawRowCount : rows.Count;
     }
 
     /// <summary>来源文件完整路径。</summary>
@@ -42,8 +48,11 @@ public sealed class TabularData
 
     public IReadOnlyList<IReadOnlyList<string>> Rows { get; }
 
-    /// <summary>表头在原始网格中的行号（0 起），用于向用户解释"跳过了前几行"。</summary>
+    /// <summary>表头在原始网格中的行号（0 起），用于向用户解释"跳过了前几行"；<b>-1 = 按用户/AI 的指令当它没表头</b>。</summary>
     public int HeaderRowIndex { get; }
+
+    /// <summary>这张表按有表头切（true）还是第一行也当数据（false）。只有一个真源：表头行号是不是负数。</summary>
+    public bool HasHeaderRow => HeaderRowIndex >= 0;
 
     /// <summary>CSV 实际使用的编码；XLSX 为 null。</summary>
     public Encoding? Encoding { get; }
@@ -63,6 +72,28 @@ public sealed class TabularData
 
     /// <summary>这张表里有没有可供 AI 对照的视觉参照（没图时 AI 不许造模板，只能要参照）。</summary>
     public bool HasVisualReference => Images.Count > 0;
+
+    /// <summary>
+    /// 每一条数据行在<strong>原表</strong>里的行号（0 起），与 <see cref="Rows"/> 同序；旧调用方没递时为空表。
+    /// <para>作用是把「第 N 条唛头」与「原表第 M 行」对起来：AI 报行号、人看的是 Excel 行号，
+    /// 软件自己数的是第几条——不让两边能换算，剔行与回查一定错配。</para>
+    /// </summary>
+    public IReadOnlyList<int> DataRowRawIndexes { get; }
+
+    /// <summary>这张表是按哪份指令切的（表头在哪、有没有表头、剔了哪几行）。默认 = 自动猜。</summary>
+    public SheetLayoutChoice Choice { get; }
+
+    /// <summary>
+    /// 原表总行数（含被跳过的表头行、空行与被剔除的行）。<see cref="RowCount"/> 是「会出唛头的行数」，
+    /// 两者不一样时必须说出来：不然是 AI 与人都在拿一张被切小的表当原表对行号。
+    /// </summary>
+    public int RawRowCount { get; }
+
+    /// <summary>第几条数据行对应原表第几行（1 起，给人看）；没这张对应表时退回"第 n+1 条"。</summary>
+    public string RawRowLabelOf(int dataIndex)
+        => dataIndex >= 0 && dataIndex < DataRowRawIndexes.Count
+            ? $"原表第 {DataRowRawIndexes[dataIndex] + 1} 行"
+            : $"第 {dataIndex + 1} 条";
 
     public int ColumnCount => Headers.Count;
 
@@ -93,7 +124,9 @@ public sealed class TabularData
     public string Describe()
     {
         var enc = Encoding is null ? "" : $" · {Encoding.WebName}";
-        return $"{Path.GetFileName(SourceFile)}[{SheetName}]{enc} · {RowCount} 行 × {ColumnCount} 列";
+        var cut = Choice.IsDefault ? string.Empty : $" · {Choice.Describe()}";
+        var head = HasHeaderRow ? $" · 表头在第 {HeaderRowIndex + 1} 行" : " · 按你说的没表头（首行也当数据）";
+        return $"{Path.GetFileName(SourceFile)}[{SheetName}]{enc}{head} · {RowCount} 行 × {ColumnCount} 列{cut}";
     }
 }
 

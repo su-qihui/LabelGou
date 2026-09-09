@@ -135,6 +135,13 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
 
     private TabularData? _data;
     private MappingProfile? _working;
+
+    /// <summary>
+    /// 这张表当前按哪份指令切的（表头在哪、有没有表头、剔了哪几行）。
+    /// <para>第 21 棒：这份指令可以由 AI 提、人点头后落下来，也可以用户在 ① 步手选。
+    /// 每次改都走「重读一遍源文件」，所以不存在「内存里改了、下次打开又变回去」这种两套真源。</para>
+    /// </summary>
+    private SheetLayoutChoice _choice = SheetLayoutChoice.Auto;
     private IReadOnlyList<MarkRecord> _rawRecords = Array.Empty<MarkRecord>();
     private IReadOnlyList<MarkRecord> _records = Array.Empty<MarkRecord>();
     private IReadOnlyList<MappingIssue> _mappingIssues = Array.Empty<MappingIssue>();
@@ -871,6 +878,69 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         LoadSource(dialog.FileName, null);
     }
 
+    /// <summary>当前这张表是按哪份指令切的（界面与 AI 面板要能说清「这不是自动猜的那一份」）。</summary>
+    public SheetLayoutChoice CurrentChoice => _choice;
+
+    /// <summary>原表总行数（含被跳过的与被剔的）——AI 报行号时的合法上界。</summary>
+    public int RawRowCount => _data?.RawRowCount ?? 0;
+
+    /// <summary>软件目前把表头认在原表第几行（1 起）；0 = 还没导数据，-1+1=0 = 按指令当它没表头。</summary>
+    public int DetectedHeaderRow => _data is null ? 0 : _data.HeaderRowIndex + 1;
+
+    /// <summary>这台机器上真有的纸规名（内置 + 用户自建）。AI 只能从这份清单里点名，造不出新纸规。</summary>
+    public IReadOnlyList<string> SheetSpecNames => Sheet.SheetOptions.Select(o => o.Spec.Name).ToList();
+
+    /// <summary>
+    /// 换一份切表指令重读这张表（唯一能改「表头在哪、哪几行不当数据」的入口）。
+    /// <para><strong>失败必须退回原样</strong>：这是一张能用的表被改坏的唯一机会，
+    /// 宁可拒绝指令，也不能让用户面对一个 0 行或表头错位的工作区。</para>
+    /// </summary>
+    public (bool Ok, string Message) ApplySheetChoice(SheetLayoutChoice next)
+    {
+        if (string.IsNullOrWhiteSpace(_sourcePath)) return (false, "还没导入任何表，没有可改切法的对象。");
+        var previous = _choice;
+        var previousSheet = _data?.SheetName ?? SelectedSheet;
+        try
+        {
+            _choice = next;
+            LoadSource(_sourcePath, previousSheet);
+            return (true, _data?.Describe() ?? "已按新切法重读这张表。");
+        }
+        catch (Exception ex)
+        {
+            _choice = previous;
+            try { LoadSource(_sourcePath, previousSheet); } catch { /* 连原样都读不回来就是文件本身变了，不拿这句话骗人 */ }
+            return (false, ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// 把一份 AI 提案合到当前切法上（没提的那一项保持不动）。
+    /// <para>三个细则：① 行号一律按<strong>原表行号 1 起</strong>进来，这里换成 0 起并夹在合法区间；
+    /// ② 表头那一行永远不能同时被当合计行剔掉；③ 剔除行取<strong>并集</strong>而不是覆盖——
+    /// 上一轮剔掉的行这一轮模型不会再提（它看到的表已经没那几行了），覆盖会把它们静默放回来，
+    /// 等于用户点两次「用这个」反而多印几张。</para>
+    /// </summary>
+    public SheetLayoutChoice ChoiceFrom(LabelGou.Core.Recognition.AiSheetProposal p)
+    {
+        var raw = Math.Max(1, RawRowCount);
+        int? header = p.HasHeader == false ? 0
+            : p.HeaderRow is int hr ? Math.Clamp(hr - 1, 0, raw - 1)
+            : _choice.HeaderRowIndex;
+        var rows = new List<int>(_choice.ExcludedRawRows ?? Array.Empty<int>());
+        foreach (var r in p.TotalValueRows)
+        {
+            if (r < 1 || r > raw) continue;
+            if (header is int h && r - 1 == h) continue;
+            if (!rows.Contains(r - 1)) rows.Add(r - 1);
+        }
+        rows.Sort();
+        return new SheetLayoutChoice(header, p.HasHeader ?? _choice.HasHeader, rows.Count == 0 ? null : rows);
+    }
+
+    /// <summary>回到「软件自动猜表头、不剔行」的那一份切法（用户说「改错了，恢复」时走这条）。</summary>
+    public (bool Ok, string Message) ResetSheetChoice() => ApplySheetChoice(SheetLayoutChoice.Auto);
+
     /// <summary>
     /// 读一份表（<paramref name="path"/> 为 null/空白时什么都不做）。对话框、重选工作表、
     /// 以后的“把文件拖到窗口上”都走这一个入口，单测也直接拿它喂数据。
@@ -878,9 +948,12 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
     public void LoadSource(string? path, string? sheet)
     {
         if (string.IsNullOrWhiteSpace(path)) return;
+        // 换文件 = 切表指令作废的那只手：上一张表剔的「第 412 行」对新表毫无意义（拿它切新表就是切错行）。
+        if (!string.Equals(_sourcePath, Path.GetFullPath(path), StringComparison.OrdinalIgnoreCase))
+            _choice = SheetLayoutChoice.Auto;
         try
         {
-            var data = TableImporter.Import(path, sheet);
+            var data = TableImporter.Import(path, sheet, _choice);
             _data = data;
             SourcePath = data.SourceFile;
 
@@ -889,8 +962,10 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
             _selectedSheet = data.SheetName;
             Raise(nameof(SelectedSheet));
 
-            HeaderInfoText = $"{data.Describe()} · 表头在第 {data.HeaderRowIndex + 1} 行" +
-                             (data.Encoding is not null ? $" · 编码 {data.Encoding.WebName}" : string.Empty);
+            // Describe() 自己会报表头行（没表头时说的是另一句话），不再在这儿拼一遍拼错的
+            HeaderInfoText = data.Describe() +
+                             (data.Encoding is not null ? $" · 编码 {data.Encoding.WebName}" : string.Empty) +
+                             (data.Choice.ExcludedCount > 0 ? $" · 已按指令剔除 {data.Choice.ExcludedCount} 行" : string.Empty);
 
             BuildPreviewTable(data);
             ColumnOptions = new ObservableCollection<ColumnOption> { new(-1, "（不映射）") };

@@ -651,6 +651,23 @@ public sealed class ImpositionViewModel : ObservableObject
         _ => "ℹ",
     };
 
+    /// <summary>
+    /// 按名字选一张这台机器上真有的纸规（第 21 棒：AI 提案点名用）。
+    /// <para>只做精确匹配（去空格后的原名或忽略大小写），<strong>认不出就保持现状并说一句人话</strong>：
+    /// 拿「一页一枚」模糊匹配到「A4 一行两枚」这种邻家名字，结果是换错了纸，比不换还坏。</para>
+    /// </summary>
+    public string SelectSheetSpecByName(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return "没点名纸规，保持现在这张。";
+        var wanted = name.Replace(" ", string.Empty);
+        var hit = SheetOptions.FirstOrDefault(o => string.Equals(o.Spec.Name.Replace(" ", string.Empty), wanted, StringComparison.Ordinal))
+                  ?? SheetOptions.FirstOrDefault(o => string.Equals(o.Spec.Name.Replace(" ", string.Empty), wanted, StringComparison.OrdinalIgnoreCase));
+        if (hit is null)
+            return $"这台机器上没有叫「{name}」的纸规，保持现在这张（可选：{string.Join("、", SheetOptions.Select(o => o.Spec.Name).Take(8))}）。";
+        SelectedSheetOption = hit;
+        return $"纸规已切到「{hit.Spec.Name}」。";
+    }
+
     private void SaveSheetAs()
     {
         var working = Working;

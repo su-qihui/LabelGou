@@ -33,7 +33,10 @@ public sealed record AiLayoutContext(
     IReadOnlyList<ColumnPortrait>? Columns = null,
     string? Portrait = null,
     IReadOnlyList<AiChatImage>? SheetImages = null,
-    bool TemplateHasArtwork = false)
+    bool TemplateHasArtwork = false,
+    IReadOnlyList<string>? SheetSpecNames = null,
+    int RawRowCount = 0,
+    int CurrentHeaderRow = 0)
 {
     /// <summary>能问的东西有没有：已连字段与整表画像一个都没才算真的没得可给（第 15 棒：不能再把「没连上字段」当门槛）。</summary>
     public bool HasAnythingToAsk => (Fields is { Count: > 0 }) || !string.IsNullOrWhiteSpace(Portrait);
@@ -94,6 +97,7 @@ public sealed class AiChatPanel : UserControl
     private readonly Button _stop = new() { Content = "停止", Padding = new Thickness(12, 6, 12, 6), Margin = new Thickness(0, 0, 8, 0), IsEnabled = false };
     private readonly Button _attach = new() { Content = "附上图片…", Padding = new Thickness(12, 6, 12, 6), Margin = new Thickness(0, 0, 8, 0) };
     private readonly Button _detach = new() { Content = "去掉图", Padding = new Thickness(12, 6, 12, 6), Margin = new Thickness(0, 0, 8, 0), IsEnabled = false };
+    private readonly Button _askProposal = new() { Content = "读这张表并提案", Padding = new Thickness(12, 6, 12, 6), Margin = new Thickness(0, 0, 8, 0) };
     private readonly Button _askLayout = new() { Content = "让 AI 出一版排版", Padding = new Thickness(12, 6, 12, 6), Margin = new Thickness(0, 0, 8, 0) };
     private readonly Button _applyLayout = new() { Content = "用这个（存成我的模板并选中）", Padding = new Thickness(12, 6, 12, 6), Margin = new Thickness(0, 0, 8, 0), IsEnabled = false };
     private readonly Button _print = new() { Content = "按这版去打印", Padding = new Thickness(12, 6, 12, 6) };
@@ -109,8 +113,21 @@ public sealed class AiChatPanel : UserControl
     /// <summary>AI 刚出的那版方案，等人点头。没点「用这个」之前它不落盘、不进模板库、不进预览。</summary>
     private RowLayoutSpec? _pending;
 
+    /// <summary>
+    /// 整份提案（表头行/合计行/版式/纸规），同样等人点头才落地（第 21 棒）。
+    /// <para>与 <see cref="_pending"/> 分开存：一份只是模板，另一份还会重切用户的表，
+    /// 两者共用一个按钮但不能共用一个待落地对象（错落地一个就是印错货）。</para>
+    /// </summary>
+    private AiSheetProposal? _pendingProposal;
+
     /// <summary>上一次问出去时递了哪份表画像：解析回来时要拿它对 <c>{{col:列名}}</c> 折算真表头。</summary>
     private IReadOnlyList<ColumnPortrait>? _lastColumns;
+
+    /// <summary>上一次问出去时那张表的<strong>原表</strong>行数（行号越界的判据）。0 = 还没问过。</summary>
+    private int _lastRawRowCount;
+
+    /// <summary>上一次递出去的纸规清单（提案只能从这份里点名）。空 = 还没问过。</summary>
+    private IReadOnlyList<string> _lastSpecNames = Array.Empty<string>();
 
     private CancellationTokenSource? _running;
     private RecognitionSettings _settings = RecognitionSettings.Load();
@@ -120,6 +137,11 @@ public sealed class AiChatPanel : UserControl
 
     /// <summary>人点了「用这个」才落地：交给主窗口存成用户模板并选中，返回一句结果话。</summary>
     public Func<RowLayoutSpec, (bool Ok, string Message)>? ApplyLayout { get; set; }
+
+    /// <summary>
+    /// 人点头后把整份提案交给主窗口落地（重切这张表 + 存版式 + 换纸规）。没挂上时按钮不亮（第 21 棒）。
+    /// </summary>
+    public Func<AiSheetProposal, (bool Ok, string Message)>? ApplyProposal { get; set; }
 
     /// <summary>「按这版去打印」= 跳到 ⑤ 并触发既有打印命令。这里不自己开第二条出纸路。</summary>
     public Action? GoPrint { get; set; }
@@ -231,6 +253,7 @@ public sealed class AiChatPanel : UserControl
         clear.Click += (_, _) => { _turns.Clear(); _transcript.Clear(); Append("会话已清空。"); };
         var copy = new Button { Content = "复制全部", Padding = new Thickness(12, 6, 12, 6), Margin = new Thickness(0, 0, 8, 0) };
         copy.Click += (_, _) => { if (_transcript.Text.Length > 0) Clipboard.SetText(_transcript.Text); };
+        _askProposal.Click += async (_, _) => await AskProposalAsync();
         _askLayout.Click += async (_, _) => await AskLayoutAsync();
         _applyLayout.Click += (_, _) => ApplyPending();
         _print.Click += (_, _) => PrintNow();
@@ -242,6 +265,7 @@ public sealed class AiChatPanel : UserControl
         buttons.Children.Add(clear);
         buttons.Children.Add(copy);
         buttons.Children.Add(new Border { Width = 1, Background = Brushes.LightGray, Margin = new Thickness(0, 4, 8, 4) });
+        buttons.Children.Add(_askProposal);
         buttons.Children.Add(_askLayout);
         buttons.Children.Add(_applyLayout);
         buttons.Children.Add(_print);
@@ -368,6 +392,7 @@ public sealed class AiChatPanel : UserControl
         _stop.IsEnabled = busy;
         _input.IsEnabled = !busy;
         _askLayout.IsEnabled = !busy;
+        _askProposal.IsEnabled = !busy && GetLayoutContext?.Invoke() is not null;
     }
 
     /// <summary>
@@ -494,8 +519,7 @@ public sealed class AiChatPanel : UserControl
         }
 
         RefreshChannel();
-        _pending = null;
-        _applyLayout.IsEnabled = false;
+        ClearPending();
 
         var prompt = RowLayoutPrompt.Build(ctx.Fields, ctx.WidthMm, ctx.HeightMm, ctx.Note, ctx.Portrait)
             + (images.Count == 0 ? string.Empty : $"\n本条随附 {images.Count} 张图：它们是这张表里贴的效果照片/模板截图，或用户拍的样张。" +
@@ -553,8 +577,7 @@ public sealed class AiChatPanel : UserControl
     /// </summary>
     public void FeedLayoutAnswer(string? modelText, double seconds = 0)
     {
-        _pending = null;
-        _applyLayout.IsEnabled = false;
+        ClearPending();
 
         var proposal = RowLayoutJsonParser.Parse(modelText, _lastColumns);
         foreach (var note in proposal.Notes) Append($"（已修正：{note}）");
@@ -590,12 +613,147 @@ public sealed class AiChatPanel : UserControl
         foreach (var warn in issues.Where(i => i.Severity == IssueLevel.Warning))
             Append($"（提醒：{warn.Message}）");
         Append("看一眼：字段对不对、哪行该大该小。点「用这个」才会存成你的模板并选中；不点就什么都不变。");
+        _applyLayout.Content = "用这个（存成我的模板并选中）";
         _applyLayout.IsEnabled = true;
+    }
+
+    /// <summary>
+    /// 「读这张表并提案」：把整张表（画像 + 贴图 + 纸规清单 + 原表行数）一次交给模型，
+    /// 要它回一份「这张表该怎么切、这张纸该怎么摆」的 JSON 提案（第 21 棒）。
+    /// <para>与 <see cref="AskLayoutAsync"/> 的分工：那条只要一版模板；这条管切表与选纸——
+    /// 用户 2026-09-09 判定这些判断该由看得到整张表的 AI 做，而不是由程序写死规则去猜。</para>
+    /// </summary>
+    public async Task AskProposalAsync()
+    {
+        if (_running is not null) return;
+        var ctx = GetLayoutContext?.Invoke();
+        if (ctx is null)
+        {
+            Append("现在问不了：先走到 ① 导入数据，AI 才知道这张表里真有什么。");
+            return;
+        }
+        if (!ctx.HasAnythingToAsk)
+        {
+            AppendNotice("这张表我什么都没拿到（没连字段也没画像），问它也是白问。");
+            return;
+        }
+        RefreshChannel();
+        ClearPending();
+
+        var attached = _image;
+        var images = new List<AiChatImage>(MaxImagesPerRequest);
+        if (attached is { } shot) images.Add(new AiChatImage(shot.Base64, shot.MimeType, shot.Name));
+        foreach (var img in ctx.SheetImages ?? Array.Empty<AiChatImage>())
+        {
+            if (images.Count >= MaxImagesPerRequest) break;
+            images.Add(img);
+        }
+        _image = null;
+        ShowAttachment();
+
+        _lastColumns = ctx.Columns;
+        _lastRawRowCount = ctx.RawRowCount;
+        _lastSpecNames = ctx.SheetSpecNames ?? Array.Empty<string>();
+
+        var prompt = AiSheetProposalPrompt.Build(
+            ctx.Portrait ?? "（没拿到整张表画像，只有已连字段）",
+            _lastSpecNames, ctx.RawRowCount, ctx.CurrentHeaderRow,
+            $"{ctx.WidthMm:0.#}×{ctx.HeightMm:0.#} mm", images.Count);
+        var payload = new List<AiChatTurn>
+        {
+            new(AiChatTurn.System, AiSheetProposalPrompt.SystemText),
+            new(AiChatTurn.User, prompt),
+        };
+        Append($"让它读这张表：原表 {_lastRawRowCount} 行、纸规清单 {_lastSpecNames.Count} 张、随附 {images.Count} 张图…");
+
+        _running = new CancellationTokenSource();
+        SetBusy(true);
+        try
+        {
+            var outcome = await OllamaVisionClient.ChatWithImagesAsync(
+                _settings, payload,
+                images.Count == 0 ? null : images.Select(x => (x.Base64, x.MimeType)).ToList(), _running.Token);
+            if (!outcome.Ok)
+            {
+                if (_running.IsCancellationRequested) Append("已停止，提案没回来，表与纸规都没动。");
+                else
+                {
+                    Append($"没拿到提案：{outcome.Error}");
+                    if (!string.IsNullOrWhiteSpace(outcome.Raw)) Append($"（服务原话：{outcome.Raw}）");
+                }
+                return;
+            }
+            FeedProposalAnswer(outcome.Text, outcome.Elapsed.TotalSeconds);
+        }
+        finally
+        {
+            _running.Dispose();
+            _running = null;
+            SetBusy(false);
+        }
+    }
+
+    /// <summary>
+    /// 把提案逐条摊在面板上等用户点头（表头行、合计行、版式、纸规各一条，谁不对可以只拒一份）。
+    /// <para>跟版式那条一样拆成公开方法：这条「不点头就不改用户的表」的红线要能在不联网的情况下测。</para>
+    /// </summary>
+    public void FeedProposalAnswer(string? modelText, double seconds = 0)
+    {
+        ClearPending();
+        // 没问过就直喂（单测这条路）时不知道原表行数，那就用 int.MaxValue 让边界检查空转，
+        // 而不是编一个看起来很真的行数。
+        var rawRows = _lastRawRowCount > 0 ? _lastRawRowCount : int.MaxValue;
+        var proposal = AiSheetProposal.Parse(modelText, _lastColumns, rawRows, _lastSpecNames);
+        foreach (var note in proposal.Notes) Append($"（已修正：{note}）");
+        if (proposal.Errors.Count > 0)
+        {
+            Append("这份提案有不能用的地方：" + string.Join("；", proposal.Errors));
+            Append("表、模板与纸规都保持原样。");
+            return;
+        }
+        if (proposal.IsEmpty)
+        {
+            Append("它没给出任何可执行的指令（可能只回了话）。表、模板与纸规保持原样。");
+            return;
+        }
+        foreach (var item in proposal.DescribeItems(rawRows)) Append(item);
+        _pendingProposal = proposal;
+        _applyLayout.Content = "用这个（按提案重切这张表）";
+        _applyLayout.IsEnabled = ApplyProposal is not null;
+        if (ApplyProposal is null)
+            Append("（这个面板没接上提案落地入口，只能看。）");
+    }
+
+    /// <summary>清掉待确认的东西，并把「用这个」那颗按钮的文案还回去（两种提案共用一颗按钮，文案不能错）。</summary>
+    private void ClearPending()
+    {
+        _pending = null;
+        _pendingProposal = null;
+        _applyLayout.IsEnabled = false;
+        _applyLayout.Content = "用这个（存成我的模板并选中）";
     }
 
     /// <summary>用户点了「用这个」才落地。存不存得进模板库由 <see cref="TemplateStore"/> 的校验说了算，这里不放宽。</summary>
     public void ApplyPending()
     {
+        // 先试提案：它还会重切用户的表与换纸规，不能与「只存一版模板」那一路走同一个口子静默降级。
+        if (_pendingProposal is { } pendingProposal)
+        {
+            if (ApplyProposal is not { } applyProposal)
+            {
+                Append("这个面板没接上提案落地入口（提案要改表与纸规，只有主窗口的「AI 助手」页签里能用）。");
+                return;
+            }
+            var (okAll, msgAll) = applyProposal(pendingProposal);
+            if (okAll)
+            {
+                _pendingProposal = null;
+                _applyLayout.IsEnabled = false;
+                _applyLayout.Content = "用这个（存成我的模板并选中）";
+            }
+            Append((okAll ? "已落地：" : "没落地：") + msgAll);
+            return;
+        }
         if (_pending is not { } spec)
         {
             Append("手上没有待确认的方案，先点「让 AI 出一版排版」。");
