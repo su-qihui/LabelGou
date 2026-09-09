@@ -182,11 +182,12 @@ public class BarcodeEncoderTests
     public void 铺条时静区算在框内且模块向下取整()
     {
         var encoding = BarcodeEncoder.Encode("4006381333931", BarcodeSymbology.Ean13);
+        Assert.Equal(11, encoding.QuietZoneModules);                // GS1 对 EAN-13 的静区下限(第 23 棒)
         var g = BarcodeBars.Build(encoding, 0, 0, 100, 0, 10);
         Assert.Null(g.Warning);
-        // 115 个模块（95 + 两侧各 10）铺进 100 mm → 往下取整到 0.01
-        Assert.Equal(0.86, g.ModuleMm, 3);
-        Assert.Equal(8.6, g.QuietZoneMm, 3);
+        // 117 个模块（95 + 两侧各 11）铺进 100 mm → 往下取整到 0.01
+        Assert.Equal(0.85, g.ModuleMm, 3);
+        Assert.Equal(9.35, g.QuietZoneMm, 3);
         var last = g.Bars[^1];
         Assert.True(last.X + last.Width <= 100 + 1e-9, "最后一根条不许推出框外");
         Assert.True(g.Bars.Count > 0);
@@ -269,6 +270,22 @@ public class BarcodeEncoderTests
             BarcodeOnly("{{col:条码}}", BarcodeSymbology.Code128), RecordWithBarcode(""), new LayoutContext(1, 1));
         Assert.Empty(layout.Items.OfType<BarcodeItem>());
         Assert.Equal(1, layout.HiddenElementCount);
+    }
+
+    [Fact]
+    public void 小尺寸条码的文字带不溢出元素底边()
+    {
+        // 高 2mm 的小元素:旧口径文字带固定 3mm,条顶在 Y、文字带压出元素底边(第 23 棒审计)。
+        var template = BarcodeOnly("{{col:条码}}", BarcodeSymbology.Code128);
+        template.Elements[0].Height = 2;
+
+        var bar = LayoutEngine.Build(template, RecordWithBarcode("BOX-000123"), new LayoutContext(1, 1))
+            .Items.OfType<BarcodeItem>().Single();
+
+        Assert.True(bar.BarsHeight >= bar.Height * 0.5 - 1e-9,
+            $"条高 {bar.BarsHeight} 应至少占元素高 {bar.Height} 的一半");
+        Assert.True(bar.BarsY + bar.Height <= template.Elements[0].Y + template.Elements[0].Height + 1e-9,
+            "文字带不许压出元素底边");
     }
 
     [Fact]

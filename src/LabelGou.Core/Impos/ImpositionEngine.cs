@@ -118,14 +118,16 @@ public sealed class SheetPlan
     /// <summary>末页空出来的枚数位（省料评估要看它）。「一页只排同一枚」开着时恒为 0（每页都铺满）。</summary>
     public int EmptySlotsLastPage => PerPage <= 0 ? 0 : PerPage - LabelsLastPage;
 
-    /// <summary>纸张利用率（%）：<strong>物理枚数</strong>的总面积 ÷ 实际耗用纸张面积。铺满就是 100%，不是按「有几个不同的唛头」算。</summary>
+    /// <summary>纸张利用率（%）：<strong>物理枚数</strong>的总面积 ÷ 实际耗用纸张面积。铺满就是 100%，不是按「有几个不同的唛头」算。
+    /// <para>第 23 棒修正:用实际落位尺寸(<see cref="SheetGrid.LabelWidthMm"/>,纸规刀模或旋转交换后的值),
+    /// 不再用模板原始尺寸——100×80 模板配 60×40 刀模曾算出 231%。</para></summary>
     public double UtilizationPercent
     {
         get
         {
             var paper = Spec.PaperAreaMm2 * Math.Max(1, PageCount);
             if (paper <= 0) return 0;
-            var used = PhysicalLabelCount * TemplateLabelWidthMm * TemplateLabelHeightMm;
+            var used = PhysicalLabelCount * Grid.LabelWidthMm * Grid.LabelHeightMm;
             return Math.Round(used / paper * 100, 1);
         }
     }

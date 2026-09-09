@@ -241,8 +241,27 @@ public sealed class PdfImageWriter : IDisposable
 
     private static void AppendString(StringBuilder target, string key, string value)
     {
-        var escaped = value.Replace("\\", "\\\\").Replace("(", "\\(").Replace(")", "\\)");
-        target.Append(" /").Append(key).Append(" (").Append(escaped).Append(')');
+        target.Append(" /").Append(key).Append(' ');
+        AppendPdfText(target, value);
+    }
+
+    /// <summary>
+    /// PDF 文本串：纯 ASCII 走字面量；含非 ASCII（中文标题/作者）走 UTF-16BE 带字节序标记的十六进制串——
+    /// PDFDocEncoding 没有汉字，旧写法把非 ASCII 全写成一串 '?'（第 23 棒）。
+    /// </summary>
+    private static void AppendPdfText(StringBuilder target, string value)
+    {
+        if (value.All(c => c < 128))
+        {
+            var escaped = value.Replace("\\", "\\\\").Replace("(", "\\(").Replace(")", "\\)");
+            target.Append('(').Append(escaped).Append(')');
+            return;
+        }
+
+        target.Append("<FEFF");     // UTF-16BE 的字节序标记
+        foreach (var b in Encoding.BigEndianUnicode.GetBytes(value))
+            target.Append(b.ToString("X2", CultureInfo.InvariantCulture));
+        target.Append('>');
     }
 
     /// <summary>坐标 4 位小数足够（1/72 英寸以下没人能量得出来），同时避免科学计数法写进 PDF。</summary>

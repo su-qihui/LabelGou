@@ -105,6 +105,26 @@ public class ImpositionEngineTests
     }
 
     [Fact]
+    public void 利用率按实际落位尺寸算_错配刀模不超百()
+    {
+        // 100×80 模板配 60×40 刀模:旧口径用模板原始尺寸算曾给出 231%(第 23 棒审计-11)。
+        var plan = ImpositionEngine.Build(BuiltInSheetSpecs.A4Small60x40(), 100, 80, 20);
+
+        Assert.True(plan.PerPage > 0);
+        Assert.True(plan.UtilizationPercent <= 100 + 1e-9,
+            $"利用率 {plan.UtilizationPercent}% 超过了 100%——落位尺寸必须按纸规刀模算");
+    }
+
+    [Fact]
+    public void 纸规与模板不一致的告警说清按纸规留位()
+    {
+        // 旧文案说「按模板尺寸落位」,实际落位按纸规刀模——提示与行为相反(第 23 棒审计-12)。
+        var issues = SheetSpecValidator.Validate(BuiltInSheetSpecs.A4Small60x40(), 100, 80);
+
+        Assert.Contains(issues, i => i.Message.Contains("按纸规的刀模尺寸留位", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void 纸规跟模板走时按模板尺寸落位()
     {
         var (w, h) = ImpositionEngine.EffectiveLabelSize(A4(), 100, 80);

@@ -106,8 +106,12 @@ public readonly record struct SvgMatrix(double A, double B, double C, double D, 
     public double ScaleX => Math.Max(Math.Abs(A), Math.Abs(B));
     public double ScaleY => Math.Max(Math.Abs(C), Math.Abs(D));
 
-    /// <summary>各向缩放均值，用于把 <c>stroke-width</c> 折算到毫米（非等比缩放时只能是近似）。</summary>
-    public double StrokeScale => (ScaleX + ScaleY) / 2.0;
+    /// <summary>
+    /// 各向缩放均值，用于把 <c>stroke-width</c> 与字号折算到毫米。
+    /// <para>口径 = 列向量范数 <c>sqrt(A²+B²)</c>（第 23 棒修正）：旧的 <c>max(|A|,|B|)</c> 只对
+    /// 90° 整倍数旋转与纯缩放成立，rotate(45°) 会把 12pt 算成 8.5pt。均匀缩放+旋转时列范数精确。</para>
+    /// </summary>
+    public double StrokeScale => (Math.Sqrt(A * A + B * B) + Math.Sqrt(C * C + D * D)) / 2.0;
 
     public bool HasFlip => A * D - B * C < 0;
 

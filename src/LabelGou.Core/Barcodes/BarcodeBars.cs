@@ -30,7 +30,8 @@ public sealed record BarcodeGeometry(
 /// </summary>
 public static class BarcodeBars
 {
-    /// <summary>规范要求的两侧静区各不少于 10 个模块（留不够，扫码枪会把边缘那两根条当成噪声）。</summary>
+    /// <summary>两侧静区的默认模块数（Code 128 / Code 39 / ITF-14 的规范下限；留不够，扫码枪会把边缘那两根条当成噪声）。
+    /// EAN-13 按 GS1 是 11,由 <see cref="BarcodeEncoding.QuietZoneModules"/> 按制式声明。</summary>
     public const int QuietZoneModules = 10;
 
     /// <summary>
@@ -59,7 +60,9 @@ public static class BarcodeBars
         if (width <= 0 || barsHeight <= 0)
             return new BarcodeGeometry(Array.Empty<BarStrip>(), 0, barsY, barsHeight, 0, "条码框的宽或高是 0，画不出来。");
 
-        var totalModules = encoding.Modules + QuietZoneModules * 2;
+        // 静区模块数由制式自己声明(BarcodeEncoding.QuietZoneModules):EAN-13 是 11,其余 10(第 23 棒)
+        var quietModules = encoding.QuietZoneModules;
+        var totalModules = encoding.Modules + quietModules * 2;
         // 往下取整到 0.01mm：宁可留一点白，也不要超出框（超出就裁掉了，裁掉的可能是最后一根条）。
         var module = Math.Floor(width / totalModules / ModuleStepMm) * ModuleStepMm;
         string? warning = null;
@@ -74,7 +77,7 @@ public static class BarcodeBars
                       $"建议把框拉宽到 {totalModules * MinModuleMm:0} mm 以上，或改选更短的列。";
         }
 
-        var quiet = QuietZoneModules * module;
+        var quiet = quietModules * module;
         var bars = new List<BarStrip>();
         var cursor = x + quiet;
         var run = 0;

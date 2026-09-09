@@ -295,7 +295,7 @@ public static class SheetSpecValidator
             {
                 issues.Add(new TemplateIssue(IssueLevel.Warning,
                     $"纸规标签 {spec.LabelWidthMm:0.#}×{spec.LabelHeightMm:0.#} mm 与模板 {labelWidthMm:0.#}×{labelHeightMm:0.#} mm 不一致，" +
-                    "拼版将按模板尺寸落位。"));
+                    "拼版按纸规的刀模尺寸留位，模板内容仍按模板自身尺寸画（不会缩放），会压到旁边的标签——请核对预览或改模板尺寸。"));
             }
         }
 

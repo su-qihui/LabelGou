@@ -152,6 +152,19 @@ public class ExportTests
     }
 
     [Fact]
+    public void 中文标题写成UTF16BE而不是一串问号()
+    {
+        // PDFDocEncoding 没有汉字:旧写法把非 ASCII 全写成一串 '?',交付文件的元数据是乱码(第 23 棒)。
+        var options = new PdfWriteOptions { Title = "金沐唛头一开四", Producer = "LabelGou" };
+
+        Assert.True(PdfImageDocument.TryWrite(new[] { JpegPage() }, options, out var pdf, out var error));
+
+        var text = Encoding.ASCII.GetString(pdf);
+        Assert.Contains("/Title <FEFF", text);      // UTF-16BE 带字节序标记的十六进制串
+        Assert.DoesNotContain("/Title (", text);
+    }
+
+    [Fact]
     public void MediaBoxUsesMillimetreToPointsConversion()
     {
         Assert.True(PdfImageDocument.TryWrite(new[] { JpegPage() }, null, out var pdf, out _));

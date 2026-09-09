@@ -275,7 +275,10 @@ public static class SvgWriter
                     SvgTextAnchor.End => text.XMm + text.WidthEstimateMm,
                     _ => text.XMm,
                 };
+                // 剔除判定不只看 Id:合并行(SvgModel.MergedSourceIds)里其余单字的 id 也在里面,
+                // 漏剔会把固定文字与可编辑元素各印一遍——合并逻辑给的契约就是「这些 id 都得剔」(第 23 棒)。
                 if (text.Id is not null && excluded.Contains(text.Id)) continue;
+                if (text.MergedSourceIds is not null && text.MergedSourceIds.Any(excluded.Contains)) continue;
                 builder.GlyphText(text, anchorX);
             }
         }

@@ -11,12 +11,14 @@ namespace LabelGou.Core.Barcodes;
 /// <see cref="Note"/> 会说清差在哪。</param>
 /// <param name="Note">自动替用户做的那件事（补校验位 / 转大写）。不静默改印刷数据是本项目红线，改了必须说。</param>
 /// <param name="Error">编不出来的原因 + 怎么改。界面拿它直接显示，不做二次加工。</param>
+/// <param name="QuietZoneModules">这个制式规范的左右静区模块数：EAN-13 是 11，其余 10（第 23 棒按制式区分）。</param>
 public sealed record BarcodeEncoding(
     bool Ok,
     string Bits,
     string Data,
     string? Note,
-    string? Error)
+    string? Error,
+    int QuietZoneModules = BarcodeBars.QuietZoneModules)
 {
     /// <summary>模块数（= 位数）。几何层按它决定一根模块多宽。</summary>
     public int Modules => Bits.Length;
@@ -249,7 +251,8 @@ public static class BarcodeEncoder
         for (var i = 7; i <= 12; i++)
             AppendWidths(bits, EanLeft[text[i] - '0'], startsWithBar: true);
         AppendWidths(bits, EanGuard);                              // 结束保护条
-        return new BarcodeEncoding(true, bits.ToString(), text, note, null);
+        // GS1 对 EAN-13 的左右静区要求是 11 模块,比其他制式的 10 多一个(第 23 棒)
+        return new BarcodeEncoding(true, bits.ToString(), text, note, null, QuietZoneModules: 11);
     }
 
     // ---------- ITF-14 ----------

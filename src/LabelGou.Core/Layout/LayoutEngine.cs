@@ -211,8 +211,11 @@ public static class LayoutEngine
                     }
 
                     var encoding = BarcodeEncoder.Encode(data, element.Symbology);
-                    // 可读数字那一条占底部 22%（最少 3 mm）：这一刀只在这里算一次。
-                    var textBand = element.ShowBarcodeText ? Math.Max(3, element.Height * 0.22) : 0;
+                    // 可读数字那一条占底部 22%（最少 3 mm、最多一半高）：只在这里算一次。
+                    // 上限是第 23 棒补的——高 2mm 的小元素曾给 3mm 文字带,条顶在 Y、文字带压出元素底边。
+                    var textBand = element.ShowBarcodeText
+                        ? Math.Min(Math.Max(3, element.Height * 0.22), element.Height * 0.5)
+                        : 0;
                     var barsHeight = Math.Max(1, element.Height - textBand);
                     var geometry = BarcodeBars.Build(encoding, element.X, element.Y, element.Width, element.Y, barsHeight);
                     items.Add(new BarcodeItem(

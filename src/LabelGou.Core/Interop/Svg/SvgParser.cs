@@ -532,7 +532,7 @@ public static class SvgParser
             };
         }
 
-        private static List<SvgPathCommand> EllipseCommands(XElement e, string cxName, string cyName, string rxName, string ryName)
+        private List<SvgPathCommand> EllipseCommands(XElement e, string cxName, string cyName, string rxName, string ryName)
         {
             var cx = Num(e, cxName);
             var cy = Num(e, cyName);
@@ -552,7 +552,7 @@ public static class SvgParser
             };
         }
 
-        private static List<SvgPathCommand> LineCommands(XElement e)
+        private List<SvgPathCommand> LineCommands(XElement e)
         {
             var list = new List<SvgPathCommand>
             {
@@ -868,48 +868,78 @@ public static class SvgParser
             if (((string?)text.Attribute("x")) is { } rawX && SvgMatrix.ParseNumberList(rawX).Count > 1)
                 WarnOnce("textx", "底稿里一个 <text> 的 x 写了多个值（逐字定位），只取第一个，字间距会回到默认。");
 
-            foreach (var node in text.Elements())
+            // 按文档序走:裸文本与 <tspan> 谁在前就谁先印。旧写法把裸文本整段插到所有 tspan 之前,
+            // "Total: <tspan>5</tspan> pcs" 会印成 "5Total: pcs"(第 23 棒)。
+            // 只有第一段裸文本继承 <text> 自己的 x/y 与 dx/dy,后面的段靠笔推进衔接。
+            // 段与段衔接处的空格要留住( Collapse 会掐边),词距才不会丢。
+            var bare = new System.Text.StringBuilder();
+            var emittedBare = false;
+            void FlushBare(bool final)
             {
-                var local = node.Name.LocalName.ToLowerInvariant();
+                var raw = bare.ToString();
+                bare.Clear();
+                if (string.IsNullOrWhiteSpace(raw)) return;
+                var content = Collapse(raw);
+                if (content.Length == 0) return;
+                if (list.Count > 0 && char.IsWhiteSpace(raw[0])) content = " " + content;
+                if (!final && char.IsWhiteSpace(raw[^1])) content += " ";
+                list.Add(new TextSegment(content, (string?)text.Attribute("id"), IsTspan: false,
+                    emittedBare ? null : NumOpt(text, "x"),
+                    emittedBare ? null : NumOpt(text, "y"),
+                    emittedBare ? 0 : SumNum(text, "dx"),
+                    emittedBare ? 0 : SumNum(text, "dy"),
+                    parentStyle));
+                emittedBare = true;
+            }
+
+            foreach (var node in text.Nodes())
+            {
+                if (node is XText rawText)
+                {
+                    bare.Append(rawText.Value);
+                    continue;
+                }
+                if (node is not XElement element) continue;
+
+                var local = element.Name.LocalName.ToLowerInvariant();
                 if (local == "tspan")
                 {
-                    var style = parentStyle.Overlay(node, sheet, _ux);
+                    FlushBare(final: false);
+                    var style = parentStyle.Overlay(element, sheet, _ux);
                     list.Add(new TextSegment(
-                        Collapse(node.Value),
-                        (string?)node.Attribute("id"),
+                        Collapse(element.Value),
+                        (string?)element.Attribute("id"),
                         IsTspan: true,
-                        X: NumOpt(node, "x"),
-                        Y: NumOpt(node, "y"),
-                        Dx: SumNum(node, "dx"),
-                        Dy: SumNum(node, "dy"),
+                        X: NumOpt(element, "x"),
+                        Y: NumOpt(element, "y"),
+                        Dx: SumNum(element, "dx"),
+                        Dy: SumNum(element, "dy"),
                         StyleOverride: style));
                 }
                 else if (local is "a" or "textpath")
                 {
+                    FlushBare(final: false);
                     WarnOnce(local, $"<text> 里出现 <{local}>，只按普通文字取出内容。");
-                    foreach (var inner in node.Elements().Where(n => n.Name.LocalName.Equals("tspan", StringComparison.OrdinalIgnoreCase)))
+                    foreach (var inner in element.Elements().Where(n => n.Name.LocalName.Equals("tspan", StringComparison.OrdinalIgnoreCase)))
                     {
+                        FlushBare(final: false);
                         list.Add(new TextSegment(Collapse(inner.Value), (string?)inner.Attribute("id"), true,
                             NumOpt(inner, "x"), NumOpt(inner, "y"), SumNum(inner, "dx"), SumNum(inner, "dy"),
                             parentStyle.Overlay(inner, sheet, _ux)));
                     }
-                    var self = Collapse(node.Value);
+                    // 只取本元素自己的直接文本,不再用 .Value(那会把上面已收的 tspan 再并一遍)
+                    var self = Collapse(string.Concat(element.Nodes().OfType<XText>().Select(t => t.Value)));
                     if (self.Length > 0) list.Add(new TextSegment(self, null, true, null, null, 0, 0, parentStyle));
                 }
                 else if (local == "tref" || local == "altglyph")
                 {
+                    FlushBare(final: false);
                     WarnOnce(local, $"<text> 里有 <{local}>，这类文字取不出来，已留在底图里。");
                 }
             }
+            FlushBare(final: true);
 
-            // 直接写在 <text> 里的裸文本（没有 tspan 包住）
-            var bare = Collapse(string.Concat(text.Nodes().OfType<XText>().Select(t => t.Value)));
-            if (bare.Length > 0)
-            {
-                list.Insert(0, new TextSegment(bare, (string?)text.Attribute("id"), IsTspan: false,
-                    NumOpt(text, "x"), NumOpt(text, "y"), SumNum(text, "dx"), SumNum(text, "dy"), parentStyle));
-            }
-            else if (list.Count == 0)
+            if (list.Count == 0)
             {
                 var id = (string?)text.Attribute("id");
                 list.Add(new TextSegment(string.Empty, id, false, NumOpt(text, "x"), NumOpt(text, "y"), 0, 0, parentStyle));
@@ -1028,26 +1058,37 @@ public static class SvgParser
 
         // ---- 取值工具 ----
 
-        private static double Num(XElement e, string name) => NumOpt(e, name) ?? 0;
+        private double Num(XElement e, string name) => NumOpt(e, name) ?? 0;
 
-        private static double? NumOpt(XElement e, string name)
+        private double? NumOpt(XElement e, string name)
         {
             var raw = (string?)e.Attribute(name);
             if (string.IsNullOrWhiteSpace(raw)) return null;
             var trimmed = raw.Trim();
             if (double.TryParse(trimmed, NumberStyles.Float, CultureInfo.InvariantCulture, out var v)) return v;
+            // 带单位的数值("10mm"):旧写法 ParseNumberList 只取数字、单位被静默扔掉——
+            // viewBox 不是 1:1 时形状会错,至少要说一声(第 23 棒)。
+            if (HasUnitSuffix(trimmed))
+                WarnOnce("svg-num-unit", "SVG 数值属性带了单位（如 10mm）：已按数字处理，单位本身被忽略。画布是 1 用户单位 = 1 毫米，若源文件画布不同，尺寸请核对。");
             var nums = SvgMatrix.ParseNumberList(trimmed);
             return nums.Count > 0 ? nums[0] : null;
         }
 
-        private static double SumNum(XElement e, string name)
+        private double SumNum(XElement e, string name)
         {
             var raw = (string?)e.Attribute(name);
             if (string.IsNullOrWhiteSpace(raw)) return 0;
+            var trimmed = raw.Trim();
+            if (HasUnitSuffix(trimmed))
+                WarnOnce("svg-num-unit", "SVG 数值属性带了单位（如 10mm）：已按数字处理，单位本身被忽略。画布是 1 用户单位 = 1 毫米，若源文件画布不同，尺寸请核对。");
             var sum = 0d;
             foreach (var v in SvgMatrix.ParseNumberList(raw)) sum += v;
             return sum;
         }
+
+        /// <summary>数字开头、字母结尾 = 带了单位后缀（"10mm"、"5pt"；纯数字与百分数不算）。</summary>
+        private static bool HasUnitSuffix(string trimmed)
+            => trimmed.Length > 1 && char.IsLetter(trimmed[^1]) && (char.IsDigit(trimmed[0]) || trimmed[0] is '.' or '-' or '+');
 
         private static SvgPathCommand Cmd(char c, params double[] args) => new(c, args);
 

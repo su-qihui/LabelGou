@@ -175,7 +175,7 @@ public static class CdrPreviewReader
             {
                 using var source = best.Open();
                 using var copy = new MemoryStream();
-                source.CopyTo(copy);
+                CopyWithCap(source, copy, MaxEncodedBytes);
                 var data = copy.ToArray();
                 if (data.Length == 0) return null;
                 var (width, height) = ProbeSize(data, best.FullName);
@@ -187,6 +187,20 @@ public static class CdrPreviewReader
                 issues.Add(new TemplateIssue(IssueLevel.Warning, $"缩略图条目「{best.FullName}」取不出来（{ex.Message}）。"));
                 return null;
             }
+        }
+    }
+
+    /// <summary>解压封顶：ZIP 中央目录声明的 Length 可以撒谎，只信实际读到的字节——
+    /// 声明很小、解压膨胀数 GB 的畸形文件会把内存吃光（第 23 棒）。</summary>
+    private static void CopyWithCap(Stream source, MemoryStream target, long capBytes)
+    {
+        var buffer = new byte[81920];
+        int read;
+        while ((read = source.Read(buffer, 0, buffer.Length)) > 0)
+        {
+            if (target.Length + read > capBytes)
+                throw new InvalidDataException($"缩略图解压后超过 {capBytes} 字节，疑似畸形文件，已放弃。");
+            target.Write(buffer, 0, read);
         }
     }
 

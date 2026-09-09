@@ -623,6 +623,48 @@ ABC  </text>"));
     }
 
     [Fact]
+    public void WriterExcludesMergedSourceIdsNotJustTheFirstId()
+    {
+        // SvgModel.MergedSourceIds 的契约:提升成可编辑元素后这些 id 都得从底图剔掉,
+        // 只剔 Id 一个会把剩下的单字再印一遍(第 23 棒)。
+        var doc = new SvgDocument();
+        doc.Add(new SvgText { Content = "BOLAROM", MergedSourceIds = new[] { "t1", "t2" } });
+
+        var written = SvgWriter.WriteDocument(doc, new SvgWriteOptions { ExcludedTextIds = new[] { "t2" } });
+
+        Assert.DoesNotContain("BOLAROM", written, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Rotate45DoesNotShrinkFonts()
+    {
+        // 旧 StrokeScale 用 max(|A|,|B|):rotate(45°) 时 0.707,12pt 被算成 8.5pt(第 23 棒)。
+        var doc = Ok(Wrap(@"<g transform=""rotate(45)""><text x=""10"" y=""20"" font-size=""12pt"">A</text></g>"));
+        Assert.Equal(12, Assert.Single(doc.Texts).SizePt, 3);
+    }
+
+    [Fact]
+    public void MixedBareTextAndTspanKeepsDocumentOrder()
+    {
+        // "Total: <tspan>5</tspan> pcs" 旧写法把裸文本整段插到最前,印成 "5Total: pcs"(第 23 棒)。
+        // 解析器默认跑 SvgTextLineJoiner:同基线的段会被并回一行,内容顺序就是断言点。
+        var doc = Ok(Wrap(@"<text x=""10"" y=""20"">Total: <tspan font-weight=""bold"">5</tspan> pcs</text>"));
+
+        var joined = Assert.Single(doc.Texts);
+        Assert.Equal("Total: 5 pcs", joined.Content);
+    }
+
+    [Fact]
+    public void UnitSuffixedNumbersWarnInsteadOfSilentlyDropping()
+    {
+        // "5mm" 旧写法只取数字、单位被静默扔掉;viewBox 不是 1:1 时形状会错,至少说一声(第 23 棒)。
+        var result = SvgParser.Parse(Wrap(@"<rect x=""5mm"" y=""2"" width=""20mm"" height=""10"" fill=""black""/>"));
+
+        Assert.Contains(result.Issues, i => i.Message.Contains("单位", StringComparison.Ordinal));
+        Assert.Single(result.Document.Paths);
+    }
+
+    [Fact]
     public void WriterEscapesTextAndAttributes()
     {
         var doc = Ok(Wrap(@"<text x=""1"" y=""5"" font-size=""4"">A &amp; B &lt;x&gt;</text>"));
