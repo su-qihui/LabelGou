@@ -46,6 +46,16 @@ public class ExpandCountColumnTests
     }
 
     [Fact]
+    public void 千分位整串按整体数张数()
+    {
+        // "1,234" 旧口径取第一个连续数字串读成 1:该出 1234 张的活只出 1 张(第 23 棒审计-13)。
+        var records = new[] { Row(1, "A", sheets: "1,234") };
+        var rule = new NumberingRule { Mode = NumberingMode.ExpandByCartonTotal, ExpandCountColumn = "打印张数" };
+
+        Assert.Equal(1234, NumberingEngine.Apply(records, rule).LabelCount);
+    }
+
+    [Fact]
     public void 列名优先于连接好的总件数字段()
     {
         // 表里同时有「件数 1」和「打印张数 4」时，用户选哪列就按哪列，不能被字段映射悄悄顶掉。

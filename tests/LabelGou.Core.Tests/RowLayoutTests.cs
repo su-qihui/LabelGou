@@ -16,6 +16,18 @@ public class RowLayoutTests
 {
     private const double Eps = 1e-6;
 
+    [Fact]
+    public void 内置模板清单每次给新实例_界面改不脏库()
+    {
+        // All() 与 GetById() 同一个理由:别让界面拿到共享可变定义(第 23 棒审计-17)。
+        var first = BuiltInTemplates.All()[0];
+        first.Name = "被我改掉了";
+
+        var again = BuiltInTemplates.All().First(t => t.Id == first.Id);
+        Assert.NotSame(first, again);
+        Assert.NotEqual("被我改掉了", again.Name);
+    }
+
     private static RowLayoutSpec FourRows()
     {
         var spec = new RowLayoutSpec { WidthMm = 140, HeightMm = 100, PaddingMm = 5, GapMm = 2 };
@@ -88,7 +100,7 @@ public class RowLayoutTests
     [Fact]
     public void EveryBuiltInTemplateStillPassesValidationIncludingTheRowOnes()
     {
-        foreach (var template in BuiltInTemplates.All)
+        foreach (var template in BuiltInTemplates.All())
         {
             var issues = TemplateValidator.Validate(template);
             Assert.False(issues.HasError(), $"{template.Id}: {string.Join(" | ", issues.ErrorMessages())}");

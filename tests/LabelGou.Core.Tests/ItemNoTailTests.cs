@@ -124,7 +124,7 @@ public class ItemNoTailTests
     [Fact]
     public void 厂牌样张不充当内置模板只能当评测基准()
     {
-        var ids = BuiltInTemplates.All.Select(t => t.Id).ToList();
+        var ids = BuiltInTemplates.All().Select(t => t.Id).ToList();
 
         // 用户说得很清楚：那几张样张是拿来训练的，不是让我抄成五个选项直接塞给他选。
         // 所以三套厂牌定义可以从代码里调到（评测用），但绝不可出现在内置清单 / GetById 里。
@@ -136,7 +136,7 @@ public class ItemNoTailTests
         Assert.Contains(BuiltInTemplates.IdRowsFour, ids);
         Assert.Contains(BuiltInTemplates.IdRowsBigTwo, ids);
         // 写死的单号品名不得出现在任何内置模板里（用户圈的“乱加一个不知道什么”）
-        Assert.All(BuiltInTemplates.All, t => Assert.DoesNotContain("香水", string.Concat(
+        Assert.All(BuiltInTemplates.All(), t => Assert.DoesNotContain("香水", string.Concat(
             t.Elements.Where(e => e.Kind == ElementKind.Text).Select(e => e.Text))));
     }
 

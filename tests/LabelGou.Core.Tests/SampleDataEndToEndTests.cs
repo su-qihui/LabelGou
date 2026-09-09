@@ -79,7 +79,7 @@ public class SampleDataEndToEndTests
         var data = TableImporter.Import(LocateSample("样例-唛头装箱单.csv"));
         var mapped = RecordMapper.Map(data, MappingSuggester.Suggest(data.Headers));
 
-        foreach (var template in BuiltInTemplates.All)
+        foreach (var template in BuiltInTemplates.All())
         {
             for (var i = 0; i < mapped.Count; i++)
             {

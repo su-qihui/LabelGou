@@ -115,6 +115,26 @@ public class RecognitionTests
         Assert.Null(weight.Warning);
     }
 
+    [Fact]
+    public void 印面规范化文本不受系统区域小数逗号影响()
+    {
+        // 这是要印上唛头的文本:区域是小数逗号的系统(欧式)曾把 25.5 印成 25,5(第 23 棒审计-14)。
+        var original = System.Globalization.CultureInfo.CurrentCulture;
+        try
+        {
+            System.Globalization.CultureInfo.CurrentCulture = System.Globalization.CultureInfo.GetCultureInfo("fr-FR");
+            var weight = FieldNormalizer.Normalize(MarkFieldKey.GrossWeight, "25.5 KGS");
+            Assert.Equal("25.5 KGS", weight.Value);
+
+            var volume = FieldNormalizer.Normalize(MarkFieldKey.Measurement, "0.072 CBM");
+            Assert.Equal("0.072 CBM", volume.Value);
+        }
+        finally
+        {
+            System.Globalization.CultureInfo.CurrentCulture = original;
+        }
+    }
+
     [Theory]
     [InlineData("25.5", "单位")]                    // 缺单位：不能替用户猜公斤还是磅
     [InlineData("0 KGS", "0 或负数")]
@@ -333,6 +353,18 @@ public class RecognitionTests
         Assert.Equal(2, result.DroppedKeys);   // TotalWeight 与 coordinates 都不在唛头字段清单里
         Assert.Contains(result.Warnings, w => w.Contains("白名单", StringComparison.Ordinal));
         Assert.Single(result.Candidates);   // 只有合法键留下
+    }
+
+    [Fact]
+    public void 尾逗号与散文花括号不整份拒收()
+    {
+        // 模型爱留尾逗号、也爱在 JSON 前后带带花括号的解释——旧抠取口径整份毒死(第 23 棒审计-10)。
+        var trailing = LlmFieldJsonParser.Parse("""{ "GrossWeight": "10 KGS", }""");
+        Assert.Single(trailing.Candidates);
+
+        var prose = LlmFieldJsonParser.Parse("识别{要点}如下：\n{ \"GrossWeight\": \"10 KGS\" }\n{完毕}");
+        var candidate = Assert.Single(prose.Candidates);
+        Assert.Equal("10 KGS", candidate.RawValue);
     }
 
     [Fact]

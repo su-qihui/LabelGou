@@ -16,6 +16,11 @@ internal static class XlsxFixture
         IReadOnlyList<string>? merges = null,
         IReadOnlyList<string>? dateCells = null,
         IReadOnlyList<string>? decimalCells = null,
+        IReadOnlyList<string>? twoDecimalBuiltinCells = null,   // s=3 内置 numFmtId 2 = "0.00"
+        IReadOnlyList<string>? thousandBuiltinCells = null,     // s=4 内置 numFmtId 3 = "#,##0"
+        IReadOnlyList<string>? unitSuffixCells = null,          // s=5 自定义 numFmtId 165 = #,##0"mm"
+        IReadOnlyList<string>? unitPcsCells = null,             // s=6 自定义 numFmtId 166 = 0"pcs"
+        bool rowsWithoutNumbers = false,                        // row 元素省略 r 属性(极简生成器写法)
         string sheetName = "Sheet1")
     {
         using var memory = new MemoryStream();
@@ -29,7 +34,9 @@ internal static class XlsxFixture
             if (sharedStrings is { Count: > 0 })
                 Write(archive, "xl/sharedStrings.xml", SharedStrings(sharedStrings));
             Write(archive, "xl/worksheets/sheet1.xml",
-                Sheet(rows, sharedStrings, merges, dateCells, decimalCells));
+                Sheet(rows, sharedStrings, merges, dateCells, decimalCells,
+                    twoDecimalBuiltinCells, thousandBuiltinCells, unitSuffixCells, unitPcsCells,
+                    rowsWithoutNumbers));
         }
         return memory.ToArray();
     }
@@ -48,10 +55,19 @@ internal static class XlsxFixture
         IReadOnlyList<string>? sharedStrings,
         IReadOnlyList<string>? merges,
         IReadOnlyList<string>? dateCells,
-        IReadOnlyList<string>? decimalCells)
+        IReadOnlyList<string>? decimalCells,
+        IReadOnlyList<string>? twoDecimalBuiltinCells,
+        IReadOnlyList<string>? thousandBuiltinCells,
+        IReadOnlyList<string>? unitSuffixCells,
+        IReadOnlyList<string>? unitPcsCells,
+        bool rowsWithoutNumbers)
     {
         var dateSet = new HashSet<string>(dateCells ?? Array.Empty<string>(), StringComparer.OrdinalIgnoreCase);
         var decSet = new HashSet<string>(decimalCells ?? Array.Empty<string>(), StringComparer.OrdinalIgnoreCase);
+        var twoDecSet = new HashSet<string>(twoDecimalBuiltinCells ?? Array.Empty<string>(), StringComparer.OrdinalIgnoreCase);
+        var thousandSet = new HashSet<string>(thousandBuiltinCells ?? Array.Empty<string>(), StringComparer.OrdinalIgnoreCase);
+        var unitSet = new HashSet<string>(unitSuffixCells ?? Array.Empty<string>(), StringComparer.OrdinalIgnoreCase);
+        var unitPcsSet = new HashSet<string>(unitPcsCells ?? Array.Empty<string>(), StringComparer.OrdinalIgnoreCase);
 
         var sb = new StringBuilder();
         sb.Append("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>");
@@ -60,13 +76,20 @@ internal static class XlsxFixture
 
         for (var r = 0; r < rows.Count; r++)
         {
-            sb.Append("<row r=\"").Append(r + 1).Append("\">");
+            if (rowsWithoutNumbers) sb.Append("<row>");
+            else sb.Append("<row r=\"").Append(r + 1).Append("\">");
             var cells = rows[r];
             for (var c = 0; c < cells.Count; c++)
             {
                 var reference = ColumnLetter(c) + (r + 1);
                 var value = cells[c];
-                var styleAttr = dateSet.Contains(reference) ? " s=\"1\"" : decSet.Contains(reference) ? " s=\"2\"" : string.Empty;
+                var styleAttr = dateSet.Contains(reference) ? " s=\"1\""
+                    : decSet.Contains(reference) ? " s=\"2\""
+                    : twoDecSet.Contains(reference) ? " s=\"3\""
+                    : thousandSet.Contains(reference) ? " s=\"4\""
+                    : unitSet.Contains(reference) ? " s=\"5\""
+                    : unitPcsSet.Contains(reference) ? " s=\"6\""
+                    : string.Empty;
 
                 if (value.StartsWith("s:", StringComparison.Ordinal) && sharedStrings is not null)
                 {
@@ -120,6 +143,14 @@ internal static class XlsxFixture
                 foreach (var part in parts) sb.Append("<r><t>").Append(Escape(part)).Append("</t></r>");
                 sb.Append("</si>");
             }
+            else if (item.StartsWith("furigana:", StringComparison.Ordinal))
+            {
+                // 注音 run：<si><rPh><t>…</t></rPh><r><t>…</t></r></si>，读取器应只取正文、把注音扔掉
+                var parts = item[9..].Split('|');
+                sb.Append("<si><rPh><t>").Append(Escape(parts[0])).Append("</t></rPh>");
+                if (parts.Length > 1) sb.Append("<r><t>").Append(Escape(parts[1])).Append("</t></r>");
+                sb.Append("</si>");
+            }
             else
             {
                 sb.Append("<si><t>").Append(Escape(item)).Append("</t></si>");
@@ -129,17 +160,22 @@ internal static class XlsxFixture
         return sb.ToString();
     }
 
-    /// <summary>cellXfs: 0=通用, 1=内置日期格式(numFmtId 14), 2=自定义 0.00（两位小数）。</summary>
+    /// <summary>cellXfs: 0=通用, 1=内置日期(numFmtId 14), 2=自定义 0.00, 3=内置 "0.00"(numFmtId 2),
+    /// 4=内置 "#,##0"(numFmtId 3), 5=自定义 #,##0"mm", 6=自定义 0"pcs"。</summary>
     private static string Styles() =>
         """
         <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
         <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
-          <numFmts count="1"><numFmt numFmtId="164" formatCode="0.00"/></numFmts>
+          <numFmts count="3"><numFmt numFmtId="164" formatCode="0.00"/><numFmt numFmtId="165" formatCode="#,##0&quot;mm&quot;"/><numFmt numFmtId="166" formatCode="0&quot;pcs&quot;"/></numFmts>
           <fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts>
-          <cellXfs count="3">
+          <cellXfs count="7">
             <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
             <xf numFmtId="14" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>
             <xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>
+            <xf numFmtId="2" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>
+            <xf numFmtId="3" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>
+            <xf numFmtId="165" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>
+            <xf numFmtId="166" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>
           </cellXfs>
         </styleSheet>
         """;

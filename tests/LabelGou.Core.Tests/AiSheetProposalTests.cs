@@ -73,6 +73,23 @@ public class AiSheetProposalTests
     }
 
     [Fact]
+    public void 散文里带花括号不毒死提案()
+    {
+        // 旧的「第一个 { 到最后一个 }」会被散文里的花括号夹出坏 JSON,整份提案变 Bad(第 23 棒审计-10)。
+        const string text = """
+            我的建议{注意}如下：
+            { "headerRow": 2, "totalRows": [9] }
+            以上{完毕}。
+            """;
+
+        var p = AiSheetProposal.Parse(text, null, 13, Specs);
+
+        Assert.True(p.IsUsable, string.Join("；", p.Errors));
+        Assert.Equal(2, p.HeaderRow);
+        Assert.Equal(new[] { 9 }, p.TotalValueRows);
+    }
+
+    [Fact]
     public void 软件里没有那张纸规就直接拒_不模糊换一张()
     {
         const string text = """{"sheetSpec": "A4 豪华版"}""";

@@ -17,8 +17,8 @@ namespace LabelGou.Core.Templates;
 /// </summary>
 public static class BuiltInTemplates
 {
-    /// <summary>全部内置模板（按店里常用的四档开法排在前）。</summary>
-    public static IReadOnlyList<LabelTemplate> All { get; } = new[]
+    /// <summary>全部内置模板（按店里常用的四档开法排在前）。每次访问返回新实例——与 <see cref="GetById"/> 同一个理由,别让界面拿到共享可变定义。</summary>
+    public static IReadOnlyList<LabelTemplate> All() => new[]
     {
         RowsFour140x100(),      // 一开四・28×20 纸上 4 枚
         RowsFour100x70(),       // 一开八・28×20 纸上 8 枚

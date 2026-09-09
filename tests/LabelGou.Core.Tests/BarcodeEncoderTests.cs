@@ -156,6 +156,26 @@ public class BarcodeEncoderTests
         Assert.Contains("偶数", r.Error);
     }
 
+    [Fact]
+    public void ITF14_14位校验码不符要拒_与EAN13同一口径()
+    {
+        // 旧口径 14 位直接编:GTIN 抄错一位的表会被静默印成扫不回原数的箱码(第 23 棒)。
+        // "10654321000015" 的第 14 位按前 13 位算应是 9。
+        var r = BarcodeEncoder.Encode("10654321000015", BarcodeSymbology.Itf14);
+        Assert.False(r.Ok);
+        Assert.Contains("校验码", r.Error);
+        Assert.Contains("9", r.Error);
+    }
+
+    [Fact]
+    public void ITF14_14位校验码正确就照编()
+    {
+        var r = BarcodeEncoder.Encode("10654321000019", BarcodeSymbology.Itf14);
+        Assert.True(r.Ok, r.Error);
+        Assert.Equal(14, r.Data.Length);
+        Assert.Null(r.Note);
+    }
+
     // ---------- 几何（毫米） ----------
 
     [Fact]
@@ -185,7 +205,7 @@ public class BarcodeEncoderTests
     [Fact]
     public void 框太小装不下时不返回半根条()
     {
-        var encoding = BarcodeEncoder.Encode("10654321000015", BarcodeSymbology.Itf14);
+        var encoding = BarcodeEncoder.Encode("10654321000019", BarcodeSymbology.Itf14);
         var g = BarcodeBars.Build(encoding, 0, 0, 1.5, 0, 10);      // 155 个模块铺进 1.5 mm → 一根模块不到 0.01
         Assert.Empty(g.Bars);
         Assert.Contains("装不下", g.Warning);

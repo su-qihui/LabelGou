@@ -120,7 +120,7 @@ public class CutSpecFamilyTests
             Assert.NotNull(spec);
             var template = BuiltInTemplates.GetById(templateId);
             Assert.NotNull(template);
-            Assert.Contains(template!.Id, BuiltInTemplates.All.Select(t => t.Id));   // 真的在下拉里
+            Assert.Contains(template!.Id, BuiltInTemplates.All().Select(t => t.Id));   // 真的在下拉里
             Assert.Equal(w, template.WidthMm, 6);
             Assert.Equal(h, template.HeightMm, 6);
             // 纸规的刀模尺寸 = 模板尺寸：不一致就会撞上那条「拼版将按模板尺寸落位」的告警
@@ -167,7 +167,7 @@ public class CutSpecFamilyTests
     [Fact]
     public void 旧式分格模板不再进下拉但仍可解析()
     {
-        var ids = BuiltInTemplates.All.Select(t => t.Id).ToList();
+        var ids = BuiltInTemplates.All().Select(t => t.Id).ToList();
 
         Assert.DoesNotContain(BuiltInTemplates.IdCompact, ids);
         Assert.DoesNotContain(BuiltInTemplates.IdBilingual, ids);

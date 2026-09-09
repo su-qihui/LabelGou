@@ -481,7 +481,7 @@ public class EditingTests
     [Fact]
     public void CopyOfBuiltInIsAnIndependentUserTemplate()
     {
-        var source = BuiltInTemplates.All.First();
+        var source = BuiltInTemplates.All().First();
         var copy = TemplateFactory.CopyOf(source, "客户 A 专用");
 
         Assert.False(copy.BuiltIn);

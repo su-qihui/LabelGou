@@ -152,6 +152,44 @@ public class RecordMapperTests
     }
 
     [Fact]
+    public void 千分位整串按整体读不再被当小数()
+    {
+        // "1,250 KGS" 旧口径读成 1.25:重量白名单的「克当千克」告警跟着漏(第 23 棒审计-13)。
+        Assert.True(RecordMapper.TryExtractNumber("1,250 KGS", out var kg));
+        Assert.Equal(1250, kg, 6);
+        Assert.True(RecordMapper.TryExtractNumber("1,234.56", out var mixed));
+        Assert.Equal(1234.56, mixed, 6);
+        Assert.True(RecordMapper.TryExtractNumber("12,5", out var decimalComma));   // 小数逗号是既定口径,不动
+        Assert.Equal(12.5, decimalComma, 6);
+        Assert.True(RecordMapper.TryExtractNumber("12.0", out var dot));
+        Assert.Equal(12, dot, 6);
+    }
+
+    [Fact]
+    public void 行标签按原表行号算_AI剔行后不错位()
+    {
+        // AI 剔掉原表第 2 行后,后面每条记录的「原表第 X 行」必须走 DataRowRawIndexes
+        // (第 23 棒审计-6);没有对应表的旧调用方仍退回旧公式,行为零变化。
+        var headers = new[] { "客户", "毛重" };
+        var rows = new List<IReadOnlyList<string>>
+        {
+            new[] { "A", "10" },
+            new[] { "B", "20" },
+            new[] { "C", "30" },
+        };
+        var data = new TabularData("x.xlsx", "Sheet1", headers, rows, 0,
+            dataRowRawIndexes: new[] { 0, 2, 3 });          // 原表第 2 行被 AI 剔了
+        var profile = MappingSuggester.Suggest(headers);
+
+        var result = RecordMapper.Map(data, profile);
+
+        Assert.Equal(3, result.Records.Count);
+        Assert.Equal("Sheet1 原表第 1 行", result.Records[0].SourceRef);
+        Assert.Equal("Sheet1 原表第 3 行", result.Records[1].SourceRef);
+        Assert.Equal("Sheet1 原表第 4 行", result.Records[2].SourceRef);
+    }
+
+    [Fact]
     public void 负重量报Error并标记需核对()
     {
         var headers = new[] { "客户", "毛重" };

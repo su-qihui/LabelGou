@@ -63,7 +63,11 @@ public static class LlmFieldJsonParser
         JsonDocument doc;
         try
         {
-            doc = JsonDocument.Parse(payload);
+            doc = JsonDocument.Parse(payload, new JsonDocumentOptions
+            {
+                AllowTrailingCommas = true,     // 模型爱留尾逗号,整份拒收太亏(第 23 棒)
+                CommentHandling = JsonCommentHandling.Skip,
+            });
         }
         catch (JsonException ex)
         {
@@ -126,15 +130,8 @@ public static class LlmFieldJsonParser
         return result;
     }
 
-    /// <summary>散文里抠 JSON：从第一个 <c>{</c> 配到最后一个 <c>}</c>，容忍模型加客套话或代码围栏。</summary>
-    private static string? ExtractObject(string? text)
-    {
-        if (string.IsNullOrWhiteSpace(text)) return null;
-        var start = text.IndexOf('{');
-        var end = text.LastIndexOf('}');
-        if (start < 0 || end <= start) return null;
-        return text[start..(end + 1)];
-    }
+    /// <summary>散文里抠 JSON：第 23 棒改用按深度配平的扫描(与 RowLayoutJsonParser 同一口径)，容忍客套话、围栏与花括号。</summary>
+    private static string? ExtractObject(string? text) => RowLayoutJsonParser.ExtractJsonObject(text);
 
     private static string Head(string? text)
     {

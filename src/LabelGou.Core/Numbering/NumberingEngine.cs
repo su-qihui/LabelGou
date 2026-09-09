@@ -288,10 +288,11 @@ public static class NumberingEngine
                 ? $"{name}在本行没有值（表里没这一列，或这一格是空的），本行按 1 张纸处理"
                 : $"{name}不是表格里的值（没连到列或被兜底填成整批总数），本行按 1 箱处理");
 
-        // 允许 "12"、"12 箱"、"12ctn" 这类写法：取第一个连续数字串。
+        // 允许 "12"、"12 箱"、"12ctn"、"1,234" 这类写法：取第一个连续数字串（千分位整串先剥逗号，NumericText）。
         // 不能像以前那样把所有数字字符拼起来——注释自证的 "12.0" 会被拼成 120（十倍箱数，批次一-1）。
-        var match = FirstIntegerPattern.Match(text);
-        if (!match.Success || !int.TryParse(match.Value, NumberStyles.None, CultureInfo.InvariantCulture, out var count))
+        var match = NumericText.Integer.Match(text);
+        if (!match.Success
+            || !int.TryParse(NumericText.WithoutThousandsSeparators(match.Value), NumberStyles.None, CultureInfo.InvariantCulture, out var count))
             return (1, $"{name}＝「{text}」读不出整数，按 1 张纸处理");
 
         if (count <= 0) return (1, $"{name}＝0，按 1 张纸处理");
@@ -312,10 +313,7 @@ public static class NumberingEngine
     private static string DefName(MarkFieldKey field)
         => MarkFieldCatalog.TryGet(field, out var def) ? def.ChineseName : field.ToString();
 
-    /// <summary>取第一个连续数字串（不是把所有数字拼起来）。</summary>
-    private static readonly System.Text.RegularExpressions.Regex FirstIntegerPattern = new(
-        @"\d+",
-        System.Text.RegularExpressions.RegexOptions.Compiled | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+    /// <summary>整数口径的正则收拢在 <see cref="NumericText.Integer"/>（千分位整串优先，第 23 棒）。</summary>
 
     private static int clampInt(long value) => value > int.MaxValue ? int.MaxValue : (int)value;
 

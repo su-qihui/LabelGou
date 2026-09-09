@@ -31,7 +31,7 @@ public sealed class TemplateStore
     /// <summary>全部可用模板：内置在前，用户模板按名称排序在后。</summary>
     public IReadOnlyList<LabelTemplate> ListAll()
     {
-        var list = new List<LabelTemplate>(BuiltInTemplates.All);
+        var list = new List<LabelTemplate>(BuiltInTemplates.All());
         if (System.IO.Directory.Exists(_directory))
         {
             foreach (var file in System.IO.Directory.EnumerateFiles(_directory, "*.json").OrderBy(f => f))

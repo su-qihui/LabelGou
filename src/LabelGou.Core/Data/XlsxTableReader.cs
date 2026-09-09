@@ -285,9 +285,14 @@ public static class XlsxTableReader
         var doc = XDocument.Load(stream);
         foreach (var si in doc.Descendants(Main + "si"))
         {
-            // 纯 <t> 或富文本 <r><t>…</t></r> 拼接
+            // 纯 <t> 或富文本 <r><t>…</t></r> 拼接;注音 run <rPh> 里也是 <t>,
+            // 吃进来会把拼音/furigana 拼进单元格值(第 23 棒)。
             var sb = new StringBuilder();
-            foreach (var t in si.Descendants(Main + "t")) sb.Append(t.Value);
+            foreach (var t in si.Descendants(Main + "t"))
+            {
+                if (t.Ancestors(Main + "rPh").Any()) continue;
+                sb.Append(t.Value);
+            }
             list.Add(sb.ToString());
         }
         return list;
@@ -360,12 +365,14 @@ public static class XlsxTableReader
         return false;
     }
 
-    /// <summary>去掉引号字面量与方括号条件后，看是否还剩日期/时间占位符。</summary>
+    /// <summary>去掉引号字面量与方括号条件后，看是否还剩日期/时间占位符。
+    /// <para>硬前提:剥完还剩数字占位符(<c>#</c>、<c>0</c>)就不是日期——<c>#,##0"mm"</c>、<c>0"pcs"</c>
+    /// 这类带单位后缀的数值格式剥掉单位后剩 <c>m</c>/<c>s</c>,曾命中日期判断,数值 144 被印成 1900/5/23(第 23 棒)。</para></summary>
     private static bool FormatLooksLikeDate(string formatCode)
     {
         var stripped = StripFormatLiterals(formatCode);
-        return stripped.IndexOfAny(new[] { 'y', 'Y', 'd', 'D', 'h', 'H', 'm', 's' }) >= 0
-               && !stripped.Contains("0.0", StringComparison.Ordinal);
+        if (stripped.IndexOfAny(new[] { '#', '0' }) >= 0) return false;
+        return stripped.IndexOfAny(new[] { 'y', 'Y', 'd', 'D', 'h', 'H', 'm', 's' }) >= 0;
     }
 
     private static string StripFormatLiterals(string code)
@@ -400,13 +407,20 @@ public static class XlsxTableReader
         return Math.Min(n, 8);
     }
 
+    /// <summary>
+    /// ECMA-376 内置数字格式的显示小数位。
+    /// <para>第 23 棒修正:旧表整体错位(2="0.00" 被记成零位、3="#,##0" 被记成两位)——
+    /// 毛重 5.05 印成 5、千分位列 1234 印成 1234.00。百分比(9/10,存的是 ×100 前的比率,
+    /// 不做 ×100 就不该替人格式化)、科学计数(11)、分数(12/13)一律不猜,交回原值。</para>
+    /// </summary>
     private static int BuiltinDecimalPlaces(int numFmtId)
         => numFmtId switch
         {
-            2 => 0,
-            3 or 4 => 2,
-            7 or 8 or 9 or 10 => 0,
-            11 or 12 => 2,
+            1 => 0,             // "0"
+            2 => 2,             // "0.00"
+            3 => 0,             // "#,##0"
+            4 => 2,             // "#,##0.00"
+            7 or 8 => 2,        // "$#,##0.00 类货币变体(币符丢弃,小数位保真)
             _ => -1,
         };
 
@@ -426,9 +440,17 @@ public static class XlsxTableReader
         using var stream = entry.Open();
         var doc = XDocument.Load(stream, LoadOptions.None);
 
+        // 行号接续:极简生成器会省略 row 的 r 属性,旧写法缺属性全落第 0 行、后行覆盖前行(静默丢行)。
+        // worksheet 的 row 恒按出现顺序排列,缺 r 就接上一行的下一行。
+        var expectedRowIndex = 0;
         foreach (var rowEl in doc.Descendants(Main + "row"))
         {
-            var rowIndex = ParseInt((string?)rowEl.Attribute("r"), 1) - 1;   // 行号转 0 基，与 mergeCell 解析保持一致
+            int rowIndex;
+            if (int.TryParse((string?)rowEl.Attribute("r"), out var oneBased) && oneBased >= 1)
+                rowIndex = oneBased - 1;                                    // 行号转 0 基,与 mergeCell 解析保持一致
+            else
+                rowIndex = expectedRowIndex;
+            expectedRowIndex = rowIndex + 1;
             if (rowIndex < 0) continue;
 
             Dictionary<int, string>? bucket = null;

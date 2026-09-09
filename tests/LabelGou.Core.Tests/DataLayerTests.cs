@@ -207,6 +207,102 @@ public class XlsxTableReaderTests
     }
 
     [Fact]
+    public void 内置两位小数格式的列保住小数位()
+    {
+        // numFmtId 2 是 Excel「数值・两位小数」的内置 id（工具栏最常用）。旧表把 2 记成零位，
+        // 毛重 1.5 印成 2（第 23 棒审计-1）。
+        var rows = new List<IReadOnlyList<string>>
+        {
+            new[] { "毛重" },
+            new[] { "n:1.5" },
+            new[] { "n:0.05" },
+        };
+        var path = XlsxFixture.WriteToTempFile(
+            XlsxFixture.Build(rows, twoDecimalBuiltinCells: new[] { "A2", "A3" }), "builtin-two-decimals.xlsx");
+
+        var grid = XlsxTableReader.ReadRawGrid(path);
+
+        Assert.Equal("1.50", grid[1][0]);
+        Assert.Equal("0.05", grid[2][0]);
+    }
+
+    [Fact]
+    public void 内置千分位格式不造假小数位()
+    {
+        // numFmtId 3 = "#,##0"（零位）。旧表把 3 记成两位，1234 印成 1234.00（第 23 棒审计-1）。
+        var rows = new List<IReadOnlyList<string>>
+        {
+            new[] { "数量" },
+            new[] { "n:1234" },
+        };
+        var path = XlsxFixture.WriteToTempFile(
+            XlsxFixture.Build(rows, thousandBuiltinCells: new[] { "A2" }), "builtin-thousand.xlsx");
+
+        var grid = XlsxTableReader.ReadRawGrid(path);
+
+        Assert.Equal("1234", grid[1][0]);
+    }
+
+    [Fact]
+    public void 带单位后缀的自定义格式不当日期()
+    {
+        // #,##0"mm" 剥掉引号字面量后剩 m，旧判据把它当日期，数值 144 印成 1900/5/23（第 23 棒审计-2）。
+        var rows = new List<IReadOnlyList<string>>
+        {
+            new[] { "尺寸", "件数" },
+            new[] { "n:144", "n:5" },
+        };
+        var path = XlsxFixture.WriteToTempFile(
+            XlsxFixture.Build(rows, unitSuffixCells: new[] { "A2" }, unitPcsCells: new[] { "B2" }),
+            "unit-suffix.xlsx");
+
+        var grid = XlsxTableReader.ReadRawGrid(path);
+
+        Assert.Equal("144", grid[1][0]);
+        Assert.Equal("5", grid[1][1]);
+    }
+
+    [Fact]
+    public void 缺r属性的行按出现顺序接续不被覆盖()
+    {
+        // 极简生成器会省略 row 的 r 属性：旧写法全部落到第 0 行、后行覆盖前行（第 23 棒审计）。
+        var rows = new List<IReadOnlyList<string>>
+        {
+            new[] { "客户" },
+            new[] { "金沐" },
+            new[] { "OLU" },
+        };
+        var path = XlsxFixture.WriteToTempFile(
+            XlsxFixture.Build(rows, rowsWithoutNumbers: true), "no-row-numbers.xlsx");
+
+        var grid = XlsxTableReader.ReadRawGrid(path);
+
+        Assert.Equal(3, grid.Count);
+        Assert.Equal("客户", grid[0][0]);
+        Assert.Equal("金沐", grid[1][0]);
+        Assert.Equal("OLU", grid[2][0]);
+    }
+
+    [Fact]
+    public void 共享字符串不并注音()
+    {
+        // <rPh> 是注音 run，里面也是 <t>：旧写法把拼音/furigana 拼进单元格值（第 23 棒审计）。
+        var rows = new List<IReadOnlyList<string>>
+        {
+            new[] { "s:0" },
+            new[] { "s:1" },
+        };
+        var shared = new List<string> { "furigana:カナ|客户", "furigana:ピン|金沐" };
+        var path = XlsxFixture.WriteToTempFile(
+            XlsxFixture.Build(rows, sharedStrings: shared), "furigana.xlsx");
+
+        var grid = XlsxTableReader.ReadRawGrid(path);
+
+        Assert.Equal("客户", grid[0][0]);
+        Assert.Equal("金沐", grid[1][0]);
+    }
+
+    [Fact]
     public void 空行被丢弃且尾列补齐()
     {
         var rows = new List<IReadOnlyList<string>>

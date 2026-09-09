@@ -496,20 +496,9 @@ public sealed record AiSheetProposal(
     }
 
     private static string? ExtractJsonObject(string? text)
-    {
-        var s = (text ?? string.Empty).Trim();
-        if (s.Length == 0) return null;
-        var fence = s.IndexOf("```", StringComparison.Ordinal);
-        if (fence >= 0)
-        {
-            var start = s.IndexOf('{', fence);
-            var end = s.LastIndexOf('}');
-            if (start >= 0 && end > start) return s[start..(end + 1)];
-        }
-        var first = s.IndexOf('{');
-        var last = s.LastIndexOf('}');
-        return first >= 0 && last > first ? s[first..(last + 1)] : null;
-    }
+        // 第 23 棒:改用按深度配平的扫描(与 RowLayoutJsonParser 同一口径)。
+        // 旧的「第一个 { 到最后一个 }」会被散文里的花括号毒死——模型回「建议{注意}:…{真JSON}」时整份提案变 Bad。
+        => RowLayoutJsonParser.ExtractJsonObject(text);
 
     private static Dictionary<string, JsonElement> Normalize(JsonElement root)
     {

@@ -170,9 +170,7 @@ public static class MappingSuggester
 /// </summary>
 public static class RecordMapper
 {
-    private static readonly Regex NumberPattern = new(
-        @"[-+]?\d+(?:[.,]\d+)?",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    // 数值口径收拢在 NumericText.Number（千分位整串优先；第 23 棒起不再把 "1,234" 读成 1.234）
 
     /// <summary>
     /// 取货号里 <c>*</c> 之前的一段。返回 null 表示不该动这个值（没有星号、或以星号开头）。
@@ -207,7 +205,12 @@ public static class RecordMapper
         for (var r = 0; r < data.RowCount; r++)
         {
             var rowNumber = r + 1;
-            var builder = MarkRecord.Builder().SetRow(rowNumber, $"{data.SheetName} 第 {data.HeaderRowIndex + 2 + r} 行");
+            // 「原表第 X 行」要有对应表才算得准（AI 剔行后线性公式全错位,第 23 棒改用 DataRowRawIndexes）；
+            // 旧调用方没递对应表时退回旧公式,行为零变化。
+            var rawLabel = data.DataRowRawIndexes.Count == data.RowCount
+                ? $"{data.SheetName} 原表第 {data.DataRowRawIndexes[r] + 1} 行"
+                : $"{data.SheetName} 第 {data.HeaderRowIndex + 2 + r} 行";
+            var builder = MarkRecord.Builder().SetRow(rowNumber, rawLabel);
 
             foreach (var mapping in profile.Mappings)
             {
@@ -323,16 +326,18 @@ public static class RecordMapper
         return null;
     }
 
-    /// <summary>从"12.5 kg"这类文本里抽出第一个数字。允许千分位逗号。</summary>
+    /// <summary>从"12.5 kg"这类文本里抽出第一个数字。千分位整串剥逗号（"1,250 KGS"→1250），小数逗号仍按小数点。</summary>
     public static bool TryExtractNumber(string text, out double value)
     {
         value = 0;
         if (string.IsNullOrWhiteSpace(text)) return false;
 
-        var match = NumberPattern.Match(text);
+        var match = NumericText.Number.Match(text);
         if (!match.Success) return false;
 
-        var token = match.Value.Replace(',', '.');      // "12,5" → 12.5；"1,234" 这类千分位按小数处理不了，交下面兜底
+        // "1,234" → "1234"；"12,5" 不是千分位形态 → "12.5"（§五-74 旧口径不动）
+        var token = NumericText.WithoutThousandsSeparators(match.Value);
+        if (token.Contains(',')) token = token.Replace(',', '.');
         if (double.TryParse(token, NumberStyles.Float, CultureInfo.InvariantCulture, out value)) return true;
 
         // 兜底：去掉所有非数字字符再试一次

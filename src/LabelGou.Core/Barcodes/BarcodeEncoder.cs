@@ -61,7 +61,8 @@ public static class BarcodeEncoder
             if (!IsDigit(digitsWithoutCheck[i], out var d)) return null;
             sum += d;
         }
-        return (1000 - sum) % 10;
+        // (10 - 余数) % 10:求和超 1000 时 C# 的 % 会吐负数,校验位必须是 0~9(公共 API,第 23 棒)
+        return (10 - sum % 10) % 10;
     }
 
     private static bool IsDigit(char c, out int value)
@@ -267,6 +268,16 @@ public static class BarcodeEncoder
             var check = GtinCheckDigit(text) ?? 0;
             text += check.ToString();
             note = $"ITF-14 表里给的是 13 位，已按 GTIN 规范补上第 14 位校验码 {check}";
+        }
+        else if (text.Length == 14)
+        {
+            // 与 EAN-13 同一口径(第 23 棒):14 位不再放行,校验位错=抄错一位,扫出来是别的箱
+            var expected = GtinCheckDigit(text[..13]) ?? 0;
+            if (expected != text[13] - '0')
+            {
+                return Fail(text, $"ITF-14 第 14 位校验码不对：表里是 {text[13]}，按前 13 位算出来应是 {expected}。" +
+                                  "要么表里少了一位、要么抄错了一位——请先核对原单据，软件不悄悄替你改掉。");
+            }
         }
         else if (text.Length % 2 != 0)
         {

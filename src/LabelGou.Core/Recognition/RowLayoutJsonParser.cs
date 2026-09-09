@@ -317,16 +317,30 @@ public static class RowLayoutJsonParser
     }
 
     /// <summary>
-    /// 从原文里抠出第一个花括号配平的对象：跳过字符串字面量里的花括号与转义引号。
-    /// <para>为什么不用正则：嵌套对象会把非贪婪正则截断在第一个 <c>}}</c> 上，而围栏与前后解释文字
-    /// 让「第一个 { 到最后一个 }」这种粗暴写法也不可靠。</para>
+    /// 从原文里抠出模型给的 JSON 对象：跳过字符串字面量里的花括号与转义引号，逐个起点取配平片段，
+    /// <strong>优先返回能真正解析成 JSON 对象的那段</strong>（模型爱在 JSON 前后写带花括号的解释，
+    /// 「我的建议{注意}如下：…」的第一个片段是散文碎括号）。
+    /// <para>一段能解析的都没有时，退回第一个配平片段——让调用方的解析错误说出「格式不对」，
+    /// 比笼统的「找不到 JSON」更有用。为什么不用正则：嵌套对象会把非贪婪正则截断在第一个 <c>}}</c> 上。
+    /// 第 23 棒起与 AiSheetProposal / LlmFieldJsonParser 共用同一口径。</para>
     /// </summary>
-    private static string? ExtractJsonObject(string? text)
+    internal static string? ExtractJsonObject(string? text)
     {
         var s = text ?? string.Empty;
-        var start = s.IndexOf('{');
-        if (start < 0) return null;
+        string? firstBalanced = null;
+        for (var start = s.IndexOf('{'); start >= 0; start = s.IndexOf('{', start + 1))
+        {
+            var span = BalancedSpan(s, start);
+            if (span is null) continue;             // 这个起点括号没配平 = 模型把话说到一半断了,换下一个起点
+            firstBalanced ??= span;
+            if (ParsesAsJsonObject(span)) return span;
+        }
+        return firstBalanced;
+    }
 
+    /// <summary>从 <paramref name="start"/> 起取花括号配平的片段；字符串里的括号与转义不算结构。没配平返回 null。</summary>
+    private static string? BalancedSpan(string s, int start)
+    {
         var depth = 0;
         var inString = false;
         var escaped = false;
@@ -350,7 +364,24 @@ public static class RowLayoutJsonParser
                     break;
             }
         }
-        return null;        // 花括号没配平 = 模型把话说到一半断了
+        return null;
+    }
+
+    private static bool ParsesAsJsonObject(string candidate)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(candidate, new JsonDocumentOptions
+            {
+                AllowTrailingCommas = true,
+                CommentHandling = JsonCommentHandling.Skip,
+            });
+            return doc.RootElement.ValueKind == JsonValueKind.Object;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
     }
 }
 

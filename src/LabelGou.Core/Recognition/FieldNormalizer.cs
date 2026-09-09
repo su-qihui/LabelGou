@@ -183,7 +183,9 @@ public static class FieldNormalizer
             return new NormalizedField(text, $"{label}是 0 或负数（{(negative ? "-" : string.Empty)}{number}{(unit.Length > 0 ? " " + unit : string.Empty)}），唛头上不可能，请核对");
 
         var ceiling = unit == "LBS" ? 8000 : 4000;
-        var canonical = unit.Length == 0 ? $"{value:0.###}" : $"{value:0.###} {unit}";
+        // InvariantCulture:这是要印上唛头的文本,逗号小数点的系统区域不得把 25.5 印成 25,5(第 23 棒)
+        var digits = value.ToString("0.###", CultureInfo.InvariantCulture);
+        var canonical = unit.Length == 0 ? digits : $"{digits} {unit}";
 
         if (value > ceiling)
             return new NormalizedField(canonical, $"{label} {canonical} 超出合理范围（>{ceiling}），请核对");
@@ -216,9 +218,13 @@ public static class FieldNormalizer
             return new NormalizedField(text, "体积数字读不出来，请核对");
 
         if (value <= 0) return new NormalizedField(text, "体积为 0 或负数，不可能，请核对");
-        if (value > 500) return new NormalizedField($"{value:0.###} CBM", $"体积 {value:0.###} CBM 偏大（超过 500），请核对");
+        if (value > 500)
+        {
+            var big = value.ToString("0.###", CultureInfo.InvariantCulture);
+            return new NormalizedField($"{big} CBM", $"体积 {big} CBM 偏大（超过 500），请核对");
+        }
 
-        return new NormalizedField($"{value:0.###} CBM", null);
+        return new NormalizedField($"{value.ToString("0.###", CultureInfo.InvariantCulture)} CBM", null);
     }
 
     private static NormalizedField NormalizeDate(string text)
