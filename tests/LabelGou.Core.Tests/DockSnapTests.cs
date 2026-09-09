@@ -184,10 +184,51 @@ public class DockSnapTests
     [Fact]
     public void 同一个收起按钮按三下刚好绕回展开()
     {
-        // 用户要的顺序：先缩一点（Open→Narrow），再能关掉（Narrow→Closed），然后再按一下得回来。
+        // 左栏（向导）要的顺序：先缩一点（Open→Narrow），再能关掉（Narrow→Closed），然后再按一下得回来。
         Assert.Equal(PaneMode.Narrow, DockSnap.CollapseStep(PaneMode.Open));
         Assert.Equal(PaneMode.Closed, DockSnap.CollapseStep(PaneMode.Narrow));
         Assert.Equal(PaneMode.Open, DockSnap.CollapseStep(PaneMode.Closed));
+    }
+
+    [Fact]
+    public void 右栏不给关闭那一档_按一下只在展开与窄条之间来回()
+    {
+        // 第 19 棒（用户 2026-09-09）：「我没有说 AI 不许住在一个被收掉的列里?? 就是因为用完可以收起到右侧啊??」
+        // 右栏住的是 AI，而 AI 没有别的家——关掉它住的那一栏等于把内容弄丢，所以这一档根本不给它。
+        Assert.Equal(PaneMode.Narrow, DockSnap.CollapseStep(PaneMode.Open, mayClose: false));
+        Assert.Equal(PaneMode.Open, DockSnap.CollapseStep(PaneMode.Narrow, mayClose: false));
+        // 旧状态文件里那句 Closed 走到这里也得回得来，不能卡在收不掉也展不开的那一档
+        Assert.Equal(PaneMode.Open, DockSnap.CollapseStep(PaneMode.Closed, mayClose: false));
+        // 而默认（左栏）那一档不变：向导确实可以整个不要
+        Assert.Equal(PaneMode.Closed, DockSnap.CollapseStep(PaneMode.Narrow, mayClose: true));
+    }
+
+    [Fact]
+    public void 旧状态里那句AI在底部而右栏是窄条会搬到右栏展开()
+    {
+        // 新规矩下 AI 不住右栏时那根窄条根本不该存在（搬走时会复位成展开），
+        // 所以这种组合只可能是旧版默认写出来的——而用户这次直说了默认要「右栏是 AI」。
+        var (site, pane) = DockSnap.ReconcileRightPane(DockSite.Bottom, PaneMode.Narrow);
+        Assert.Equal(DockSite.Right, site);
+        Assert.Equal(PaneMode.Open, pane);
+    }
+
+    [Fact]
+    public void 右栏那句Closed认出来就展开()
+    {
+        var (site, pane) = DockSnap.ReconcileRightPane(DockSite.Right, PaneMode.Closed);
+        Assert.Equal(DockSite.Right, site);
+        Assert.Equal(PaneMode.Open, pane);
+    }
+
+    [Fact]
+    public void 本来就合法的组合一律原样不动()
+    {
+        // 他主动把 AI 放回底部那一行（App 侧会把右栏复位成展开）：这条记录合法，不许再搬一次
+        Assert.Equal((DockSite.Bottom, PaneMode.Open), DockSnap.ReconcileRightPane(DockSite.Bottom, PaneMode.Open));
+        // 上次把 AI 收在右栏的窄条里：这就是他要的那个「用完收到右侧」，必须留住
+        Assert.Equal((DockSite.Right, PaneMode.Narrow), DockSnap.ReconcileRightPane(DockSite.Right, PaneMode.Narrow));
+        Assert.Equal((DockSite.Right, PaneMode.Open), DockSnap.ReconcileRightPane(DockSite.Right, PaneMode.Open));
     }
 
     [Fact]

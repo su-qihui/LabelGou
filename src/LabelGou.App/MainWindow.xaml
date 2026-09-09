@@ -41,16 +41,18 @@
             <MenuItem Header="视图(_V)">
                 <MenuItem Header="拆下 / 收回 AI 助手窗口(_D)" Click="OnDetachAiClick"
                           ToolTip="只把 AI 那一块拆成独立窗口（AI 在窗外、排版在窗内，摆在一起对照）；再点一下收回原位" />
-                <!-- 用户 2026-09-09：「两边稍微缩一点，然后再可以关闭左边或右边」——三个明写状态的入口，
-                     不拿一个按钮让人猜“再按一下会走到哪” -->
+                <!-- 用户 2026-09-09：「两边稍微缩一点，然后再可以关闭左边或右边」——状态明写的入口，
+                     不拿一个按钮让人猜“再按一下会走到哪”；右栏只有两档（第 19 棒：AI 的家不收，所以不给「关闭」）。 -->
                 <MenuItem Header="左栏与右栏(_P)">
                     <MenuItem Header="左侧向导栏：展开" Click="OnLeftPaneOpenClick" />
                     <MenuItem Header="左侧向导栏：收成窄条" Click="OnLeftPaneNarrowClick" />
                     <MenuItem Header="左侧向导栏：关闭" Click="OnLeftPaneCloseClick" />
                     <Separator />
-                    <MenuItem Header="右侧 AI 栏：展开（把 AI 吸回右栏）" Click="OnRightPaneOpenClick" />
-                    <MenuItem Header="右侧 AI 栏：收成窄条" Click="OnRightPaneNarrowClick" />
-                    <MenuItem Header="右侧 AI 栏：关闭" Click="OnRightPaneCloseClick" />
+                    <MenuItem Header="右侧 AI 栏：展开（AI 就在这一栏）" Click="OnRightPaneOpenClick" />
+                    <MenuItem Header="右侧 AI 栏：收成窄条（AI 留在右栏，只是不给看）" Click="OnRightPaneNarrowClick" />
+                    <Separator />
+                    <MenuItem Header="AI 助手：放回底部那一行" Click="OnAiDockBottomClick"
+                              ToolTip="不放在右栏了，放回预览下面那一行（也可以按住它顶部那条握把拖到主窗下缘）" />
                 </MenuItem>
                 <Separator />
                 <MenuItem Header="放大" Command="{Binding ZoomInCommand}" />
@@ -896,7 +898,7 @@
                         <Button Grid.Column="1" Content="回底部原位 ⇩" Click="OnAiDockBottomClick" Padding="9,1" MinWidth="124"
                                 ToolTip="把 AI 从右侧这一栏放回右下角那一行（也可以按住它顶部那条握把拖到下缘）" />
                         <Button Grid.Column="2" Content="收窄 «" Click="OnRightPaneCollapseClick" Padding="7,1" MinWidth="56" Margin="6,0,0,0"
-                                ToolTip="把右侧这一栏收成一条窄边（AI 先放回底部那一行，不会丢）；再按一次关掉" />
+                                ToolTip="把右侧这一栏收成一条窄边：AI 仍住在这一栏里，只是不给看（再按一下就回来，不搬到别处去）" />
                     </Grid>
                 </GroupBox.Header>
                 <ContentControl x:Name="AiHostRight" />
@@ -923,7 +925,7 @@
                     Background="#EDF0F4" BorderBrush="#CDD3DA" BorderThickness="1,0,0,0">
                 <StackPanel VerticalAlignment="Top" HorizontalAlignment="Center" Margin="0,8,0,0">
                     <Button Content="«" Click="OnRightPaneExpandClick" Padding="6,2" MinWidth="26"
-                            ToolTip="展开右侧 AI 栏（把 AI 从底部那一行吸回右侧）" />
+                            ToolTip="展开右侧 AI 栏（AI 一直住在这块列里，只是被收起来了）" />
                     <TextBlock Text="AI 助手" Style="{StaticResource Hint}" Margin="0,10,0,0"
                                HorizontalAlignment="Center">
                         <TextBlock.LayoutTransform>

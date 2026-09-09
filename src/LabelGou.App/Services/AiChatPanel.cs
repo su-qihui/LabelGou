@@ -135,21 +135,21 @@ public sealed class AiChatPanel : UserControl
                       "拖到主窗右缘 = 停靠成右侧一栏（预览在左、AI 在右）；拖到主窗下缘 = 回到底部原位。\n" +
                       "不想用拖的：右上角那个按钮与「视图」菜单是同一个动作。",
         };
-        var line = new StackPanel { Orientation = Orientation.Horizontal };
+        // 上下两行而不是一行横排：右栏那一档只有 420 DIP 宽（第 19 棒的新默认），横排这一句会被裁断，
+        // 而被裁掉的恰好是后半句「拖到下缘 = 回底部」——那正是他唯一还没试过的落点（本棒真图上量到的）。
+        var line = new StackPanel { Orientation = Orientation.Vertical };
         line.Children.Add(new TextBlock
         {
             Text = "≡ AI 助手",
             FontWeight = FontWeights.SemiBold,
-            VerticalAlignment = VerticalAlignment.Center,
         });
         line.Children.Add(new TextBlock
         {
             Text = "按住这里拖：拖出主窗 = 独立窗口 · 拖到右缘 = 吸成右栏 · 拖到下缘 = 回底部",
             FontSize = 11,
             Foreground = Brushes.Gray,
-            Margin = new Thickness(8, 0, 0, 0),
-            VerticalAlignment = VerticalAlignment.Center,
-            TextTrimming = TextTrimming.CharacterEllipsis,
+            Margin = new Thickness(0, 1, 0, 0),
+            TextWrapping = TextWrapping.Wrap,
         });
         grip.Child = line;
         return grip;

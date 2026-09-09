@@ -701,14 +701,17 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
 
     /// <summary>
     /// AI 那块上次停在哪个泊位，以及右栏上次多宽。
-    /// <para>认不出的字符串一律退回底部那一行（= 本棒之前的唯一行为），<strong>不拿旧状态文件拦启动、也不替人猜一个新位置</strong>。</para>
+    /// <para>认不出的字符串（包括「没记过」那句空值）一律退回<strong>右栏</strong>：用户 2026-09-09
+    /// 「调整到默认打开软件是左栏导数选模版 中栏是预览 右栏是AI 不要显示在中栏下面」，
+    /// 而上一版的默认是底部那一行（那正是他被误伤的地方）。<strong>不拿旧状态文件拦启动</strong>，
+    /// 但旧默认与新默认不同这件事得说清楚：只有「没记过 / 认不出」才走右栏，他真存过的 <c>"Bottom"</c> 仍是底部（那一栏另有搬家规则，见 <c>DockSnap.ReconcileRightPane</c>）。</para>
     /// </summary>
     public (DockSite Site, double RightWidth) LoadAiDock()
     {
         var s = _uiState.Load();
         var site = Enum.TryParse<DockSite>(s.AiDockSite, ignoreCase: true, out var parsed) && parsed != DockSite.Float
             ? parsed
-            : DockSite.Bottom;
+            : DockSite.Right;
         return (site, s.AiRightColumnWidth);
     }
 

@@ -141,16 +141,35 @@ public static class DockSnap
         };
 
     /// <summary>
-    /// 那个「收起 / 展开」按钮按一下走到哪一档（第 18 棒：用户要的是「先稍微缩一点，然后还能关掉」）。
-    /// <para>三档绕一圈而不是给两个独立开关：一个按钮按下去就是「再小一点」，回到展开只要再按两下；
-    /// 左栏与右栏用同一个规则，两边手感一致。</para>
+    /// 那个「收起 / 展开」按钮按一下走到哪一档。
+    /// <para>三档绕一圈（左栏）：一个按钮按下去就是「再小一点」，回到展开只要再按两下。</para>
+    /// <para><paramref name="mayClose"/> = false（右栏，第 19 棒）：只在展开与窄条之间来回。因为这一栏住的是 AI，
+    /// 而 AI 没有别的家——用户 2026-09-09 否掉了上一棒那条「收掉右栏就把 AI 踢回底部」的规矩
+    /// （原话：「我没有说 AI 不许住在一个被收掉的列里?? 就是因为用完可以收起到右侧啊??」）。</para>
     /// </summary>
-    public static PaneMode CollapseStep(PaneMode mode) => mode switch
+    public static PaneMode CollapseStep(PaneMode mode, bool mayClose = true) => mode switch
     {
         PaneMode.Open => PaneMode.Narrow,
-        PaneMode.Narrow => PaneMode.Closed,
+        PaneMode.Narrow => mayClose ? PaneMode.Closed : PaneMode.Open,
         _ => PaneMode.Open,
     };
+
+    /// <summary>
+    /// 把状态文件里「AI 停在哪个泊位」与「右栏停在哪一态」这两条记录对一遍，返一个合法的组合（第 19 棒）。
+    /// <para>为什么需要一个迁移而不是“认不出就退回默认”：上一棒的写法会让 <c>Bottom</c> 与 <c>Narrow</c>
+    /// 同时成立（收右栏时把 AI 踢回底部，而那一栏的形态存成了窄条）。新规矩下<strong>AI 不住右栏时那根窄条根本不该存在</strong>，
+    /// 所以这种组合只可能是旧版本写出来的，而用户这次直说了默认要「左向导 / 中预览 / 右 AI」——见到就搬回右栏展开。</para>
+    /// <para>他主动把 AI 拖到下缘（或点「回底部原位」）时，App 侧会把右栏形态复位成展开，于是那条记录是
+    /// <c>Bottom</c> + <c>Open</c>——合法，本函数不动它。</para>
+    /// </summary>
+    public static (DockSite Site, PaneMode RightPane) ReconcileRightPane(DockSite site, PaneMode rightPane)
+    {
+        // 右栏不再有 Closed 这一档：认出来就展开（不能把 AI 关进零宽的列）。
+        if (rightPane == PaneMode.Closed) return (DockSite.Right, PaneMode.Open);
+        // 旧版默认留下的矛盾组合：AI 在底部行、右栏却是一根没人住的窄条。
+        if (site == DockSite.Bottom && rightPane == PaneMode.Narrow) return (DockSite.Right, PaneMode.Open);
+        return (site, rightPane);
+    }
 
     /// <summary>物理像素 → DIP（<c>PointToScreen</c> 给的是物理像素，而窗口坐标是 DIP）。缩放数非法时原样返回，不假装换算过。</summary>
     public static double DeviceToDip(double deviceValue, double dpiScale)

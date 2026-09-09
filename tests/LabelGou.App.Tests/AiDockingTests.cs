@@ -222,7 +222,7 @@ public class AiDockingTests
     }
 
     [Fact]
-    public void 浮动不写盘而认不出的旧状态退回底部那一行()
+    public void 浮动不写盘而认不出的旧状态退回右栏()
     {
         var store = TestEnvironment.NewTempUiStateStore();
         var vm = new ViewModels.MainViewModel(store);
@@ -232,17 +232,20 @@ public class AiDockingTests
         Assert.Equal(DockSite.Right, vm.LoadAiDock().Site);
 
         var state = store.Load();
-        state.AiDockSite = "Left";                  // 本棒根本没有的泊位（旧文件/手改/新版本）
+        state.AiDockSite = "Left";                  // 根本没有的泊位（旧文件/手改/新版本）
         store.Save(state);
-        Assert.Equal(DockSite.Bottom, new ViewModels.MainViewModel(store).LoadAiDock().Site);
+        // 第 19 棒：认不出时退回的是右栏（用户：默认打开软件「右栏是 AI」），不再是底部那一行
+        Assert.Equal(DockSite.Right, new ViewModels.MainViewModel(store).LoadAiDock().Site);
     }
 
     [Fact]
-    public void 没记过状态时停在底部且右栏宽度为零()
+    public void 没记过状态时停在右栏且右栏宽度为零()
     {
         var loaded = new ViewModels.MainViewModel(TestEnvironment.NewTempUiStateStore()).LoadAiDock();
 
-        Assert.Equal(DockSite.Bottom, loaded.Site);
+        // 默认就是产品：他 2026-09-09 要的三栏布局是「左向导 / 中预览 / 右 AI」，
+        // 旧默认（底部那一行）正好把 AI 放在他说不想要的那个位置。
+        Assert.Equal(DockSite.Right, loaded.Site);
         Assert.Equal(0d, loaded.RightWidth);        // 0 = 没记过，界面上会退回 DockSnap 的默认档
     }
 
