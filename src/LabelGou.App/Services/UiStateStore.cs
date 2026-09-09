@@ -52,6 +52,16 @@ public sealed class UiState
 
     /// <summary>上次吸到右栏时那一栏多宽（0 = 没记过 = 用 <c>DockSnap.DefaultRightColumnDip</c>）。</summary>
     public double AiRightColumnWidth { get; set; }
+
+    /// <summary>
+    /// 左栏（五步向导）与右栏（吸过来的 AI）各自停在哪一态：<c>"Open"</c> / <c>"Narrow"</c> / <c>"Closed"</c>。
+    /// <para>用户 2026-09-09：「两边稍微缩一点，然后再可以关闭左边或右边」——缩与关都得留到下次启动，
+    /// 不然每天开软件都要重收一遍。</para>
+    /// <para>存名字而不是枚举值，而且<strong>空 = 没记过 = 展开</strong>：旧状态文件缺这两个字段时行为零变化。</para>
+    /// </summary>
+    public string LeftPaneMode { get; set; } = "";
+
+    public string RightPaneMode { get; set; } = "";
 }
 
 /// <summary>

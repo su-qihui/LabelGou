@@ -17,7 +17,13 @@ namespace LabelGou.App.Tests;
 /// <strong>关掉浮动窗口等于收回而不是把内容一起扔掉</strong>。</para>
 /// <para>注：<see cref="MainWindow"/> 本身在单测里造不出来（没有 Application 资源，StaticResource 找不到，
 /// §五-70/94），所以 XAML 拓扑那部分由 <c>labelgou-other\checks\check-ui-topology.py</c> 机检，这里只钉这个类。</para>
+/// <para>与 <see cref="AiDockingTests"/> 同集合并且不并行：这两个类都真 <c>Show()</c> 顶层窗口，
+/// 并着跑会把测试主机跑崩（理由与实测记录写在那里）。</para>
+/// <para><strong>每一个真开了窗的用例收尾都必须把窗关掉</strong>（第 18 棒实测）：STA 线程带着一个还活着的 HWND 退出，
+/// 那条窗消息会在 <c>MS.Win32.HwndSubclass.SubclassWndProc</c> 里撞上 <c>Thread.CurrentThread == null</c>，
+/// 抛一个进不了任何用例的 NullReferenceException → 整个测试主机进程崩。</para>
 /// </summary>
+[Collection(AiDockingTests.WpfWindowCollection)]
 public class DetachablePanelTests
 {
     private static T OnSta<T>(Func<T> work)
@@ -65,6 +71,7 @@ public class DetachablePanelTests
             Assert.Same(tabs, panel.FloatingWindow!.Content);
             Assert.Equal("测试", panel.FloatingWindow.Title);
             Assert.Equal(1, hits);
+            panel.Dock();                                    // 收尾关窗：还开着的 HWND 跟着线程退出会跑崩测试主机
             return true;
         });
     }
@@ -127,6 +134,30 @@ public class DetachablePanelTests
             Assert.NotSame(first, panel.FloatingWindow);     // 收回后再拆是新窗口（旧的已关）
             Assert.Equal(3, hits);                           // 拆、收、拆各报一次
             Assert.True(panel.IsDetached);
+            panel.Dock();                                    // 收尾关窗（同上：不留还开着的 HWND）
+            return true;
+        });
+    }
+
+    [Fact]
+    public void 主窗还没上屏时拆窗不抛而是当没有主窗()
+    {
+        OnSta(() =>
+        {
+            // WPF 不许把浮动窗的 Owner 设给一个从未 Show 过的主窗（当场抛 InvalidOperationException，本轮单测真撞上过）。
+            // 正常流程里主窗一定先上屏才可能拆窗，所以这不是“为了测试绕一下”，而是把那条隐含前提变成代码护栏。
+            var (home, tabs) = Pair();
+            var owner = new Window { Content = home };
+            var panel = new DetachablePanel(home, tabs, "测试");
+            // 先证「主窗拿得到」，否则下面那句 Owner==null 是白验的（拿不到主窗时根本走不到护栏那一步）。
+            Assert.Same(owner, Window.GetWindow(home));
+
+            panel.Float();
+
+            Assert.True(panel.IsDetached);
+            Assert.Null(panel.FloatingWindow!.Owner);         // 不认那个没上屏的主窗，但窗照常拆出来
+            panel.Dock();
+            Assert.Same(tabs, home.Content);
             return true;
         });
     }

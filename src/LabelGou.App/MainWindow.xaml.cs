@@ -56,12 +56,16 @@ public partial class MainWindow : Window
         // 按住顶部那条握把拖 = 拆出（跟手）/ 拖到右缘或下缘 = 吸附。判据在 Core 的 DockSnap，这里只接线。
         _aiDrag = new Services.PanelDragController(this, _aiPanel, ai.DragGrip,
             DockPreviewRight, DockPreviewBottom, SplitRegionWidthDip, DesiredRightWidthDip);
-        // 上次停在哪就摆回哪（浮动不记：启动不该莫名多开一个窗口）。
-        if (_viewModel.LoadAiDock().Site == DockSite.Right) _aiPanel.Dock(DockSite.Right);
+        // 上次停在右栏就摆回右栏（浮动不记：启动不该莫名多开一个窗口）。
+        // 但先读两栏形态再决定摆不摆：右栏上次是收窄/关掉的话，说明用户走的时候要的就是「不要右栏」，
+        // 那种组合下还把 AI 塞进右栏 = 把它塞进一个零宽的列里（内容凭空看不见）。
+        (_leftPane, _rightPane) = _viewModel.LoadPaneModes();
+        Services.AppLog.Info($"两栏形态接回上次那份：左={_leftPane}，右={_rightPane}");
+        if (_rightPane == PaneMode.Open && _viewModel.LoadAiDock().Site == DockSite.Right) _aiPanel.Dock(DockSite.Right);
         SyncAiPanelState();
         // 分隔条拖到哪、下次就开多宽：只在关窗那一次写盘，不跟着拖动每像素写。
         Closing += (_, _) => _viewModel.SaveAiDock(_aiPanel?.LastDockedSite ?? DockSite.Bottom,
-            AiRightCol.ActualWidth > 0 ? AiRightCol.ActualWidth : _rightWidthDip);
+            RightColumnWidthWorthRemembering());
 
         Loaded += (_, _) =>
         {
@@ -126,6 +130,13 @@ public partial class MainWindow : Window
         return saved > 0 ? saved : DockSnap.DefaultRightColumnDip;
     }
 
+    /// <summary>关窗时右栏那个宽度值不值得存下来：只有「展开且 AI 真住在里面」的那一栏宽度才算数。
+    /// <para>不收这条口，窄条那一档的 44 会被当成上次记的右栏宽度存走，下次展开就开成一根柱子。</para></summary>
+    private double RightColumnWidthWorthRemembering()
+        => _rightPane == PaneMode.Open && _aiPanel?.Site == DockSite.Right && AiRightCol.ActualWidth >= DockSnap.MinRightColumnDip
+            ? AiRightCol.ActualWidth
+            : _rightWidthDip;
+
     /// <summary>拆/收/换泊位之后同步：两块宿主谁可见、行与列的宽、按钮文字、原位那句实话。</summary>
     private void SyncAiPanelState()
     {
@@ -135,23 +146,19 @@ public partial class MainWindow : Window
 
         AiBox.Visibility = site == DockSite.Bottom ? Visibility.Visible : Visibility.Collapsed;
         AiRightBox.Visibility = site == DockSite.Right ? Visibility.Visible : Visibility.Collapsed;
-        AiRightSplitter.Visibility = site == DockSite.Right ? Visibility.Visible : Visibility.Collapsed;
-        AiRightSplitCol.Width = new GridLength(site == DockSite.Right ? DockSnap.SplitterDip : 0);
         DetachedHint.Visibility = detached ? Visibility.Visible : Visibility.Collapsed;
 
         // AI 不挂在下面那一行时，那一行的高度必须真让给预览（Height 与 MinHeight 成对改，§五-107）。
         AiRow.Height = site == DockSite.Bottom ? new GridLength(DockedAiHeight) : GridLength.Auto;
         AiRow.MinHeight = site == DockSite.Bottom ? DockedAiMinHeight : 0;
 
-        var rightWidth = 0d;
-        if (site == DockSite.Right)
-        {
-            // 夹一道：地方不够就是 0，那时宁可不撑这一栏也不把预览挤没（判据在 DockSnap）。
-            rightWidth = DockSnap.ClampRightColumnDip(DesiredRightWidthDip(), SplitRegionWidthDip());
-            if (rightWidth > 0) _rightWidthDip = rightWidth;
-        }
-        // 不吸右栏时这一列必须真的收回 0：列宽是「预留空间」，只藏 GroupBox 不藏列会把预览挤短一截。
-        AiRightCol.Width = new GridLength(rightWidth > 0 ? rightWidth : 0);
+        // AI 真住在右栏 = 右栏就是展开态（拖到右缘吸上来、点菜单选展开，走的都是这一条）。
+        // 反过来的那个方向（展开→收窄）由 SetPaneMode 先把 AI 放回底部，两边都不会出现「栏收了而 AI 还在里面」。
+        if (site == DockSite.Right && _rightPane != PaneMode.Open) _rightPane = PaneMode.Open;
+
+        // 两列的宽与两条分隔条全在 ApplyPaneModes 里算：那里同时看「泊位」和「栏形态」两个输入，
+        // 两处各写一半迟早打架（谁后跑谁赢，界面上就是一栏忽宽忽窄）。
+        ApplyPaneModes();
 
         DetachAiButton.Content = detached ? "收回主窗口 ⇤" : "把 AI 拆成独立窗口 ⇱";
         // 原位那句话要说的是真让出去的那一块，而不是固定写死「这一行」。
@@ -166,6 +173,103 @@ public partial class MainWindow : Window
     }
 
     private void OnExitClick(object sender, RoutedEventArgs e) => Close();
+
+    // ===== 左栏与右栏的三态：展开 / 收成窄条 / 关掉（用户 2026-09-09，形状参照他发来的第二段录屏） =====
+
+    /// <summary>左栏展开时的默认宽度（XAML 里那一个 470；收回来按它复原）。</summary>
+    internal const double DefaultLeftPaneWidthDip = 470;
+
+    /// <summary>左栏展开时的下限：不许拖成一条缝；收窄/关掉时这个下限必须一起抹掉。</summary>
+    internal const double LeftPaneOpenMinWidthDip = 320;
+
+    private PaneMode _leftPane = PaneMode.Open;
+    private PaneMode _rightPane = PaneMode.Open;
+    private double _leftOpenWidthDip = DefaultLeftPaneWidthDip;
+
+    /// <summary>
+    /// 把两栏的形态落到列宽、分隔条与窄条上（三态的宽度一律问 <see cref="DockSnap.WidthForPane"/>）。
+    /// <para><strong>为什么 MinWidth 也要跟着改</strong>：<c>ColumnDefinition.MinWidth</c> 会把列钉住，
+    /// 光把 Width 设成 44 或 0 是收不起来的（左栏那个 320 下限就是干这个的）——不收下限 = 假收窄。</para>
+    /// <para><strong>为什么右栏要听两个输入</strong>：「AI 住在哪个泊位」与「右栏这一态给多宽」是两件事：
+    /// AI 飘在窗外时右栏没内容可摆（给 0），而 AI 吸到右栏时哪怕上次是收窄态也得展开。</para>
+    /// </summary>
+    private void ApplyPaneModes()
+    {
+        var leftOpen = _leftPane == PaneMode.Open;
+        WizardCol.MinWidth = leftOpen ? LeftPaneOpenMinWidthDip : 0;
+        WizardCol.Width = new GridLength(DockSnap.WidthForPane(_leftPane, _leftOpenWidthDip));
+        WizardBody.Visibility = leftOpen ? Visibility.Visible : Visibility.Collapsed;
+        WizardRail.Visibility = _leftPane == PaneMode.Narrow ? Visibility.Visible : Visibility.Collapsed;
+        WizardSplitter.Visibility = leftOpen ? Visibility.Visible : Visibility.Collapsed;
+        WizardSplitCol.Width = new GridLength(leftOpen ? DockSnap.SplitterDip : 0);
+
+        var rightLive = _rightPane == PaneMode.Open && _aiPanel?.Site == DockSite.Right;
+        var rightWidth = 0d;
+        if (rightLive)
+        {
+            // 夹一道：地方不够就是 0，那时宁可不撑这一栏也不把预览挤没（判据在 DockSnap）。
+            rightWidth = DockSnap.ClampRightColumnDip(DesiredRightWidthDip(), SplitRegionWidthDip());
+            if (rightWidth > 0) _rightWidthDip = rightWidth;
+        }
+        else if (_rightPane == PaneMode.Narrow)
+        {
+            rightWidth = DockSnap.WidthForPane(PaneMode.Narrow, 0);    // 窄条那一档不关心展开宽是多少
+        }
+        // 不吸右栏（或只收成窄条）时剩下的宽度必须真收：列宽是「预留空间」，只藏 GroupBox 不藏列会把预览挤短一截。
+        AiRightCol.Width = new GridLength(rightWidth);
+        AiRightRail.Visibility = _rightPane == PaneMode.Narrow && !rightLive ? Visibility.Visible : Visibility.Collapsed;
+        AiRightSplitter.Visibility = rightWidth > 0 ? Visibility.Visible : Visibility.Collapsed;
+        AiRightSplitCol.Width = new GridLength(rightWidth > 0 ? DockSnap.SplitterDip : 0);
+    }
+
+    /// <summary>
+    /// 换某一栏的形态：先改状态，再处理「AI 不能住在一个收掉的列里」，最后落列宽并写盘。
+    /// <para>展开右栏时顺手把 AI 吸回来（菜单那一句写的就是「展开（把 AI 吸回右栏）」）；
+    /// 但地方挤不出合法右栏时不兑这个诺：只改形态，并把实话放进状态栏。</para>
+    /// </summary>
+    private void SetPaneMode(bool left, PaneMode mode)
+    {
+        if (left)
+        {
+            // 收之前先把用户拖出来的那一档宽度抄走，展开时原样还回去（不然每次都跳回 470）。
+            if (mode != PaneMode.Open && WizardCol.ActualWidth >= LeftPaneOpenMinWidthDip)
+                _leftOpenWidthDip = WizardCol.ActualWidth;
+            _leftPane = mode;
+        }
+        else
+        {
+            _rightPane = mode;
+            if (mode != PaneMode.Open && _aiPanel?.Site == DockSite.Right) _aiPanel.Dock(DockSite.Bottom);
+            if (mode == PaneMode.Open && _aiPanel is { } p && p.Site != DockSite.Right)
+            {
+                if (DockSnap.CanDockRight(SplitRegionWidthDip())) p.Dock(DockSite.Right);
+                else _viewModel.ReportStatus("右侧现在挤不出合法的一栏（预览最少要留 360）：AI 先留在底部那一行。");
+            }
+        }
+        ApplyPaneModes();
+        _viewModel.SavePaneModes(_leftPane, _rightPane);
+        Services.AppLog.Info($"两栏形态改为：左={_leftPane}，右={_rightPane}");
+    }
+
+    private void OnLeftPaneCollapseClick(object sender, RoutedEventArgs e) => SetPaneMode(true, DockSnap.CollapseStep(_leftPane));
+
+    private void OnLeftPaneExpandClick(object sender, RoutedEventArgs e) => SetPaneMode(true, PaneMode.Open);
+
+    private void OnLeftPaneOpenClick(object sender, RoutedEventArgs e) => SetPaneMode(true, PaneMode.Open);
+
+    private void OnLeftPaneNarrowClick(object sender, RoutedEventArgs e) => SetPaneMode(true, PaneMode.Narrow);
+
+    private void OnLeftPaneCloseClick(object sender, RoutedEventArgs e) => SetPaneMode(true, PaneMode.Closed);
+
+    private void OnRightPaneCollapseClick(object sender, RoutedEventArgs e) => SetPaneMode(false, DockSnap.CollapseStep(_rightPane));
+
+    private void OnRightPaneExpandClick(object sender, RoutedEventArgs e) => SetPaneMode(false, PaneMode.Open);
+
+    private void OnRightPaneOpenClick(object sender, RoutedEventArgs e) => SetPaneMode(false, PaneMode.Open);
+
+    private void OnRightPaneNarrowClick(object sender, RoutedEventArgs e) => SetPaneMode(false, PaneMode.Narrow);
+
+    private void OnRightPaneCloseClick(object sender, RoutedEventArgs e) => SetPaneMode(false, PaneMode.Closed);
 
     private void OnAboutClick(object sender, RoutedEventArgs e)
         => MessageBox.Show(this, AboutText, "关于 LabelGou", MessageBoxButton.OK, MessageBoxImage.Information);

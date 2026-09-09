@@ -41,6 +41,17 @@
             <MenuItem Header="视图(_V)">
                 <MenuItem Header="拆下 / 收回 AI 助手窗口(_D)" Click="OnDetachAiClick"
                           ToolTip="只把 AI 那一块拆成独立窗口（AI 在窗外、排版在窗内，摆在一起对照）；再点一下收回原位" />
+                <!-- 用户 2026-09-09：「两边稍微缩一点，然后再可以关闭左边或右边」——三个明写状态的入口，
+                     不拿一个按钮让人猜“再按一下会走到哪” -->
+                <MenuItem Header="左栏与右栏(_P)">
+                    <MenuItem Header="左侧向导栏：展开" Click="OnLeftPaneOpenClick" />
+                    <MenuItem Header="左侧向导栏：收成窄条" Click="OnLeftPaneNarrowClick" />
+                    <MenuItem Header="左侧向导栏：关闭" Click="OnLeftPaneCloseClick" />
+                    <Separator />
+                    <MenuItem Header="右侧 AI 栏：展开（把 AI 吸回右栏）" Click="OnRightPaneOpenClick" />
+                    <MenuItem Header="右侧 AI 栏：收成窄条" Click="OnRightPaneNarrowClick" />
+                    <MenuItem Header="右侧 AI 栏：关闭" Click="OnRightPaneCloseClick" />
+                </MenuItem>
                 <Separator />
                 <MenuItem Header="放大" Command="{Binding ZoomInCommand}" />
                 <MenuItem Header="缩小" Command="{Binding ZoomOutCommand}" />
@@ -69,24 +80,26 @@
 
         <Grid Margin="10" x:Name="RootColumns">
             <Grid.ColumnDefinitions>
-                <!-- 左栏可以拖宽了（用户 2026-09-08：表格显示区太小）：给个下限，免得拖成一条缝再也不会调 -->
+                <!-- 左栏可以拖宽了（用户 2026-09-08：表格显示区太小）：给个下限，免得拖成一条缝再也不会调。
+                     但这个下限只在「展开」那一态成立：收成窄条/关掉时代码里会把它抹成 0（见 ApplyPaneModes）。 -->
                 <ColumnDefinition x:Name="WizardCol" Width="470" MinWidth="320" />
-                <ColumnDefinition Width="6" />
+                <ColumnDefinition x:Name="WizardSplitCol" Width="6" />
                 <ColumnDefinition Width="*" MinWidth="360" />
                 <!-- AI 吸到右侧（用户 2026-09-09：「拉到右侧可以吸附」）才用得上这两列；
                      平时宽 0 + 分隔条收起，在界面上等于不存在，旧布局一格也没动。 -->
                 <ColumnDefinition x:Name="AiRightSplitCol" Width="0" />
                 <ColumnDefinition x:Name="AiRightCol" Width="0" />
             </Grid.ColumnDefinitions>
-            <GridSplitter Grid.Column="1" Width="6" HorizontalAlignment="Stretch"
+            <GridSplitter Grid.Column="1" x:Name="WizardSplitter" Width="6" HorizontalAlignment="Stretch"
                           Background="#E1E5EA" ShowsPreview="False"
                           ToolTip="按住左右拖：改左侧向导区的宽度（表格列多看不全时就往右拖）" />
 
             <!-- ==================== 左侧：五步向导（一次只露一步） ====================
                  以前六个 GroupBox 从上到下全摊在一个滚动条里：想改纸规得滚过整屏字段，新加的能力
                  （行式模板、整批固定值）全藏在中部，用户打开软件看不出任何变化。现在步骤条钉在顶上、
-                 内容区一步一块、上一步 / 下一步钉在底下，三样都不跟着内容滚。 -->
-            <Grid Grid.Column="0">
+                 内容区一步一块、上一步 / 下一步钉在底下，三样都不跟着内容滚。
+                 第 18 棒：整块编个号，因为左右两栏能各自收成窄条/关掉时要把这一块真藏掉（不是只藏子元素）。 -->
+            <Grid Grid.Column="0" x:Name="WizardBody">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
@@ -701,12 +714,17 @@
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
                     <Button Grid.Column="0" Content="← 上一步" Command="{Binding PrevStepCommand}" MinWidth="86" />
                     <TextBlock Grid.Column="1" Text="{Binding StepHint}" Style="{StaticResource Hint}"
                                VerticalAlignment="Center" HorizontalAlignment="Center" TextTrimming="CharacterEllipsis" />
                     <Button Grid.Column="2" Content="下一步 →" Command="{Binding NextStepCommand}" MinWidth="86"
                             Margin="0" FontWeight="Bold" />
+                    <!-- 用户 2026-09-09：「两边稍微缩一点，然后再可以关闭左边或右边」——左边这个入口就钉在底栏右下角 -->
+                    <Button Grid.Column="3" x:Name="WizardCollapseButton" Content="收起 «" Click="OnLeftPaneCollapseClick"
+                            Margin="6,0,0,0" Padding="7,1" MinWidth="56"
+                            ToolTip="把左侧向导栏收成一条窄边（也可以从菜单：视图 → 左栏与右栏 里直接选展开/收窄/关闭）；想让用户区与预览占满整屏时用它" />
                 </Grid>
             </Grid>
 
@@ -872,14 +890,48 @@
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Text="AI 助手（右栏）" Style="{StaticResource StepTitle}" />
                         <Button Grid.Column="1" Content="回底部原位 ⇩" Click="OnAiDockBottomClick" Padding="9,1" MinWidth="124"
                                 ToolTip="把 AI 从右侧这一栏放回右下角那一行（也可以按住它顶部那条握把拖到下缘）" />
+                        <Button Grid.Column="2" Content="收窄 «" Click="OnRightPaneCollapseClick" Padding="7,1" MinWidth="56" Margin="6,0,0,0"
+                                ToolTip="把右侧这一栏收成一条窄边（AI 先放回底部那一行，不会丢）；再按一次关掉" />
                     </Grid>
                 </GroupBox.Header>
                 <ContentControl x:Name="AiHostRight" />
             </GroupBox>
+
+            <!-- ==================== 两栏收窄后剩下的那条窄边（用户 2026-09-09：「两边稍微缩一点，然后再可以关闭」） ====================
+                 收成窄条时列宽真的只有 RailDip（44），中间预览真的变大——只藏内容不收列宽算假收窄（那条反向机检钉的就是它）。
+                 窄条上只放两个动作：一按回来（展开）；不放“再缩一档”因为那一档就是关掉，菜单里有。 -->
+            <Border Grid.Column="0" x:Name="WizardRail" Visibility="Collapsed"
+                    Background="#EDF0F4" BorderBrush="#CDD3DA" BorderThickness="0,0,1,0">
+                <StackPanel VerticalAlignment="Top" HorizontalAlignment="Center" Margin="0,8,0,0">
+                    <Button Content="»" Click="OnLeftPaneExpandClick" Padding="6,2" MinWidth="26"
+                            ToolTip="展开左侧向导栏" />
+                    <TextBlock Text="向导五步" Style="{StaticResource Hint}" Margin="0,10,0,0"
+                               HorizontalAlignment="Center">
+                        <TextBlock.LayoutTransform>
+                            <RotateTransform Angle="90" />
+                        </TextBlock.LayoutTransform>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <Border Grid.Column="4" x:Name="AiRightRail" Visibility="Collapsed"
+                    Background="#EDF0F4" BorderBrush="#CDD3DA" BorderThickness="1,0,0,0">
+                <StackPanel VerticalAlignment="Top" HorizontalAlignment="Center" Margin="0,8,0,0">
+                    <Button Content="«" Click="OnRightPaneExpandClick" Padding="6,2" MinWidth="26"
+                            ToolTip="展开右侧 AI 栏（把 AI 从底部那一行吸回右侧）" />
+                    <TextBlock Text="AI 助手" Style="{StaticResource Hint}" Margin="0,10,0,0"
+                               HorizontalAlignment="Center">
+                        <TextBlock.LayoutTransform>
+                            <RotateTransform Angle="90" />
+                        </TextBlock.LayoutTransform>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
 
             <!-- 拖动中的落点预览：画在最上面、不吃鼠标；判据说吸不上（含右栏挤不下）就根本不画 -->
             <Rectangle Grid.Column="4" x:Name="DockPreviewRight" Width="420" HorizontalAlignment="Right"

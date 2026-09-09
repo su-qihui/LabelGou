@@ -114,4 +114,86 @@ public class DockSnapTests
         Assert.Equal(360, DockSnap.MinPreviewDip);
         Assert.Equal(56, DockSnap.EdgeBandDip);
     }
+
+    // ===== 第 18 棒：拿「浮动窗自己的矩形」判落点 =====
+    // 用户真拖之后反馈「拼不到右边」：他拆下来之后是拖那块窗的标题条，那一路由操作系统接管，
+    // 光标版的判据根本没人跑。所以下面这些用例钉的是「只看几何能不能得出同样的结论」。
+
+    /// <summary>浮动窗：宽 900、高 700，左上角递进来。</summary>
+    static DockSite AtRect(double fl, double ft) => DockSnap.DecideFromWindowRect(fl, ft, fl + 900, ft + 700, L, T, W, H);
+
+    [Fact]
+    public void 浮动窗右缘越到主窗右缘上就吸右栏()
+        => Assert.Equal(DockSite.Right, AtRect(Right - 400, T + 100));
+
+    [Fact]
+    public void 浮动窗拖到屏右外面仍然吸右栏_这是用户真正做的那个手势()
+    {
+        // 录屏里那一帧：窗已挂到屏右缘之外（左缘在主窗内、右缘超出主窗右缘）。
+        Assert.Equal(DockSite.Right, AtRect(Right - 100, T + 100));
+        Assert.Equal(DockSite.Right, AtRect(Right + 40, T + 100));
+    }
+
+    [Fact]
+    public void 只差一丝没进带就不吸()
+        => Assert.Equal(DockSite.Float, AtRect(Right - 900 - DockSnap.EdgeBandDip - 0.01, T + 100));
+
+    [Fact]
+    public void 窗与主窗纵向不重叠时不许吸右栏()
+    {
+        // 拖到主窗上方老远再往右靠：右缘进了带，但两块矩形纵向不叠 → 吸上去只会挡住顶部菜单。
+        Assert.Equal(DockSite.Float, AtRect(Right - 100, T - 800));
+    }
+
+    [Fact]
+    public void 窗左缘跑得太远也不吸()
+        => Assert.Equal(DockSite.Float, AtRect(Right + DockSnap.OutsideSlackDip + 1, T + 100));
+
+    [Fact]
+    public void 拖到下缘吸回底部那一行()
+        => Assert.Equal(DockSite.Bottom, AtRect(L + 200, Bottom - 600));
+
+    [Fact]
+    public void 右下角重叠时听进带更深的那条边()
+    {
+        // 右缘进了带 800、下缘只进了 20 → 右；反过来 → 下。
+        Assert.Equal(DockSite.Right, AtRect(Right - 100, Bottom - 680));
+        Assert.Equal(DockSite.Bottom, AtRect(L, Bottom - 100));
+    }
+
+    [Fact]
+    public void 主窗或浮动窗尺寸非法时一律不吸()
+    {
+        Assert.Equal(DockSite.Float, DockSnap.DecideFromWindowRect(0, 0, 100, 100, 0, 0, 0, 0));
+        Assert.Equal(DockSite.Float, DockSnap.DecideFromWindowRect(0, 0, 0, 0, L, T, W, H));
+        Assert.Equal(DockSite.Float, DockSnap.DecideFromWindowRect(100, 100, 50, 50, L, T, W, H));   // 宽高为负（还没量出来）
+    }
+
+    [Fact]
+    public void 一栏三态的宽度_展开给正经宽_收窄给窄条_关闭给零()
+    {
+        Assert.Equal(470, DockSnap.WidthForPane(PaneMode.Open, 470), 6);
+        Assert.Equal(DockSnap.RailDip, DockSnap.WidthForPane(PaneMode.Narrow, 470), 6);
+        Assert.Equal(0, DockSnap.WidthForPane(PaneMode.Closed, 470), 6);
+    }
+
+    [Fact]
+    public void 展开态递个零宽度当场报错而不是默默藏起来()
+        => Assert.Throws<ArgumentOutOfRangeException>(() => DockSnap.WidthForPane(PaneMode.Open, 0));
+
+    [Fact]
+    public void 同一个收起按钮按三下刚好绕回展开()
+    {
+        // 用户要的顺序：先缩一点（Open→Narrow），再能关掉（Narrow→Closed），然后再按一下得回来。
+        Assert.Equal(PaneMode.Narrow, DockSnap.CollapseStep(PaneMode.Open));
+        Assert.Equal(PaneMode.Closed, DockSnap.CollapseStep(PaneMode.Narrow));
+        Assert.Equal(PaneMode.Open, DockSnap.CollapseStep(PaneMode.Closed));
+    }
+
+    [Fact]
+    public void 收窄那一档比展开窄但装得下一个按钮()
+    {
+        Assert.True(DockSnap.RailDip < DockSnap.MinRightColumnDip);   // 不收窄就不算另一档
+        Assert.True(DockSnap.RailDip >= 40);                           // 再窄就只剩一条线，看不出那里还有东西
+    }
 }

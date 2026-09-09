@@ -725,6 +725,31 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         _uiState.Save(s);
     }
 
+    /// <summary>读左右两栏各自停在哪一态（第 18 棒：收起与关闭都得留到下次启动）。没记过/认不出 = 展开。</summary>
+    public (PaneMode Left, PaneMode Right) LoadPaneModes()
+    {
+        var s = _uiState.Load();
+        return (ParsePaneMode(s.LeftPaneMode), ParsePaneMode(s.RightPaneMode));
+    }
+
+    /// <summary>按名字认，认不出退回展开——与 <c>AiDockSite</c> 同一个口径。再多校一道 <c>Enum.IsDefined</c>：
+    /// <c>Enum.TryParse</c> 对「99」这种没定义的数字也返回 true（越界的枚举值要到用的时候才露馅）。</summary>
+    private static PaneMode ParsePaneMode(string raw)
+        => Enum.TryParse<PaneMode>(raw, ignoreCase: true, out var parsed) && Enum.IsDefined(parsed) ? parsed : PaneMode.Open;
+
+    /// <summary>写下两栏形态（按一下那格按钮就写一次，不跟着布局每像素写盘）。</summary>
+    public void SavePaneModes(PaneMode left, PaneMode right)
+    {
+        var s = _uiState.Load();
+        var l = left.ToString();
+        var r = right.ToString();
+        if (string.Equals(s.LeftPaneMode, l, StringComparison.Ordinal)
+            && string.Equals(s.RightPaneMode, r, StringComparison.Ordinal)) return;
+        s.LeftPaneMode = l;
+        s.RightPaneMode = r;
+        _uiState.Save(s);
+    }
+
     /// <summary><see cref="ILabelSource"/>：拼版 VM 用它拿当前模板。</summary>
     LabelTemplate? ILabelSource.Template => SelectedTemplate?.Template;
 

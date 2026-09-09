@@ -103,6 +103,9 @@ public sealed class DetachablePanel
     /// <summary>被搬的那块内容本体（拖拽控制器要靠它量「面板左上角在屏幕哪儿」，好让抓点粘在光标下）。</summary>
     public UIElement Content => _content;
 
+    /// <summary>浮动窗的基准标题（拖拽控制器靠它往上拼「→ 松手吸成右栏」那句预告，落点消失时再擦掉）。</summary>
+    public string Title => _title;
+
     /// <summary>拆出去 / 收回时通知宿主（宿主拿它切换按钮文字与原位提示）。</summary>
     public event Action? StateChanged;
 
@@ -126,6 +129,9 @@ public sealed class DetachablePanel
 
         var home = HostAt(Site);
         var owner = home is null ? null : Window.GetWindow(home);
+        // 只拿「已经上过屏」的主窗当 Owner：WPF 不许把 Owner 设给一个从未 Show 过的窗（当场抛
+        // InvalidOperationException，本轮单测真撞上过），而这种窗上拆窗本来也无从发生——宁可不认这个主窗。
+        if (owner is not null && !owner.IsLoaded) owner = null;
         // 先把家里那份引用摘干净再挂过去：不摘的话家里与浮动窗口同时指着一块内容（单测
         // 「拆出去后家里不再持有」就是钉这一条）。WPF 会不会当场抛「已是另一元素逻辑子」取决于
         // 当时是否已建立视觉父（本机实测：未渲染的 ContentControl 不抛）——**不赌它，一律先摘**。
