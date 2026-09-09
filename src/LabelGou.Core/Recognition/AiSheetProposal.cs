@@ -75,32 +75,62 @@ public sealed record AiSheetProposal(
             excluded.Count == 0 ? null : excluded);
     }
 
-    /// <summary>确认窗上那几行人话（一条一项，勾不勾由人决定）。</summary>
+    /// <summary>
+    /// 确认窗上的「会改这几件事」清单（一条一项，人点头前谁也不生效）。
+    /// <para><strong>为什么字字都是大白话</strong>（2026-09-09 用户圈图反馈）：「你需要理解使用者不是技术人员，
+    /// 他们不知道 rows 什么的需要简洁明了」。所以这里不出现 rows、JSON、字段英文名、
+    /// 「数据行」这类口径；提醒与软件改动不挤在这一段里（见 <see cref="Explain"/>），
+    /// 否则一屏全是「⚠」，人反而一个都不会去看。</para>
+    /// </summary>
     public IReadOnlyList<string> DescribeItems(int rawRowCount)
     {
         var items = new List<string>();
-        if (HasHeader == false) items.Add("这张表没有表头行：第一行也当数据（不再少印一张）");
-        else if (HeaderRow is int hr) items.Add($"表头固定在原表第 {hr} 行（软件原先猜的是另一行）");
+        if (HasHeader == false) items.Add("这张表第一行不是列名，是货 —— 改成它也出一张标签（会多出 1 张）");
+        else if (HeaderRow is int hr) items.Add($"列名按你说的算：在原来那张表的第 {hr} 行");
         if (TotalValueRows.Count > 0)
-            items.Add("当合计/批注行剔除：" + string.Join("、", TotalValueRows.Select(r => $"原表第 {r} 行")) + $"（共 {TotalValueRows.Count} 行）");
+            items.Add("这几行不当货印（它们不是箱子，是合计或备注）：第 " + string.Join("、", TotalValueRows) + " 行");
         if (Layout is { } spec)
-            items.Add($"标签 {spec.WidthMm:0.#}×{spec.HeightMm:0.#} mm，版式 {spec.Rows.Count} 行：「{string.Join(" / ", spec.Rows.Select(r => r.Content))}」");
-        if (SheetSpecName is not null) items.Add($"纸规换成「{SheetSpecName}」");
+        {
+            var lines = string.Join("；", spec.Rows.Select(r => r.Content));
+            items.Add($"标签上印这几行：{Shrink(lines, 120)}（标签大小 {spec.WidthMm:0.#}×{spec.HeightMm:0.#} 毫米）");
+        }
+        if (SheetSpecName is not null) items.Add($"一张纸怎么摆：换成「{SheetSpecName}」这一张");
         else if (PaperWidthMm is double pw && PaperHeightMm is double ph)
         {
-            // 内插里不能直接放条件表达式（C# 的，不是风格问题），先算成文字再拼
-            var perRow = (Columns ?? 0) <= 0 ? "自动算" : Columns + " 枚";
-            var perPage = (Rows ?? 0) <= 0 ? "自动算" : Rows + " 行";
-            var follow = FollowsLabel == true ? "（纸面跟标签走）" : string.Empty;
-            items.Add($"整张纸 {pw:0.#}×{ph:0.#} mm，每行 {perRow}、每页 {perPage}{follow}");
+            var perRow = (Columns ?? 0) <= 0 ? "自己算" : Columns + " 张";
+            var perPage = (Rows ?? 0) <= 0 ? "自己算" : Rows + " 行";
+            var follow = FollowsLabel == true ? "（纸跟着标签走，一张纸一张标签）" : string.Empty;
+            items.Add($"一张纸 {pw / 10:0.#}×{ph / 10:0.#} 厘米，每行摆 {perRow}、每页 {perPage}{follow}");
         }
-        foreach (var w in Warnings) items.Add("⚠ " + w);
-        if (Reason is not null) items.Add("它的理由：" + Reason);
-        foreach (var n in Notes) items.Add("（软件改动）" + n);
         if (rawRowCount > 0 && TotalValueRows.Count > 0)
-            items.Add($"剔除后应剩 {Math.Max(0, rawRowCount - (HasHeader == false ? 0 : 1) - TotalValueRows.Count)} 行数据（以软件重切结果为准）");
+            items.Add($"改完之后会出 {Math.Max(0, rawRowCount - (HasHeader == false ? 0 : 1) - TotalValueRows.Count)} 张标签（以软件重切结果为准）");
         return items;
     }
+
+    /// <summary>
+    /// 它自己说的话：提醒（去重、最多 <see cref="MaxExplainLines"/> 条）加一句理由。
+    /// <para>与改动清单分开，是为了让人先看清「要改哪几件事」，再看「它担心什么」。</para>
+    /// </summary>
+    public IReadOnlyList<string> Explain()
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var unique = new List<string>();
+        foreach (var w in Warnings)
+        {
+            var key = w.Trim();
+            if (key.Length == 0 || !seen.Add(key)) continue;
+            unique.Add(Shrink(key, 90));
+        }
+        var list = unique.Take(MaxExplainLines).ToList();
+        if (unique.Count > list.Count) list.Add($"（还有 {unique.Count - list.Count} 条提醒，点「复制全部」能看到）");
+        if (!string.IsNullOrWhiteSpace(Reason)) list.Add("它的说法：" + Shrink(Reason.Trim(), 90));
+        return list;
+    }
+
+    /// <summary>提醒最多列几条（多了等于没有，没人会逐字看）。</summary>
+    public const int MaxExplainLines = 5;
+
+    private static string Shrink(string text, int max) => text.Length <= max ? text : text[..max] + "…";
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -149,7 +179,7 @@ public sealed record AiSheetProposal(
 
         var json = ExtractJsonObject(modelText);
         if (json is null)
-            return Bad("模型的回答里没有 JSON 对象，没法当提案用。");
+            return Bad("它这次回的话里没有可执行的方案，什么都没改。你可以再点一次，或把图附上让它重看。");
 
         JsonDocument doc;
         try
@@ -162,13 +192,13 @@ public sealed record AiSheetProposal(
         }
         catch (JsonException ex)
         {
-            return Bad($"那段 JSON 读不开：{ex.Message}");
+            return Bad($"它回的那段方案没读完（格式不对），什么都没改：{ex.Message}");
         }
 
         using (doc)
         {
             if (doc.RootElement.ValueKind != JsonValueKind.Object)
-                return Bad("JSON 的根不是对象，没法当提案用。");
+                return Bad("它回的内容不是可执行的方案，什么都没改。");
 
             var fields = Normalize(doc.RootElement);
 
@@ -180,10 +210,10 @@ public sealed record AiSheetProposal(
             {
                 // 模型常给 0 起的下标。0 不可能是合法的 Excel 行号（那等于第 0 行），
                 // 而它又确实想指第一行，所以 0 折算成 1 并说明——这比拒掉一条提案有用，也不静默。
-                if (hr == 0) { headerRow = 1; notes.Add("把 headerRow=0 折成第 1 行（原表没有第 0 行）"); }
+                if (hr == 0) { headerRow = 1; notes.Add("它把行号写成 0 了，按第一行算（表里没有第 0 行）"); }
                 if (hr > rawRowCount)
                 {
-                    notes.Add($"它说表头在原表第 {hr} 行，可这张表只有 {rawRowCount} 行 —— 这条忽略");
+                    notes.Add($"它说列名在表里第 {hr} 行，可这张表一共只有 {rawRowCount} 行 —— 这条没采纳");
                     headerRow = null;
                 }
             }
@@ -192,14 +222,14 @@ public sealed record AiSheetProposal(
             var totalRows = new List<int>();
             foreach (var v in IntListField(fields, "totalRows"))
             {
-                if (v <= 0) { notes.Add($"忽略一个非正数的行号（{v}）"); continue; }
-                if (v > rawRowCount) { notes.Add($"它要剔除原表第 {v} 行，可这张表只有 {rawRowCount} 行 —— 这一条忽略"); continue; }
+                if (v <= 0) { notes.Add($"它给了一个不存在的行号（{v}），这条没采纳"); continue; }
+                if (v > rawRowCount) { notes.Add($"它要去掉表里第 {v} 行，可这张表一共只有 {rawRowCount} 行 —— 这条没采纳"); continue; }
                 if (!totalRows.Contains(v)) totalRows.Add(v);
             }
             if (headerRow is int h && totalRows.Contains(h))
             {
                 totalRows.Remove(h);
-                notes.Add($"第 {h} 行是表头，不能又当合计行剔掉 —— 已从剔除名单去掉");
+                notes.Add($"第 {h} 行是列名那一行，不能又当合计行去掉 —— 这条没采纳");
             }
 
             // ── 版式（含标签尺寸）：交给那一份已有的解析 ──
@@ -209,12 +239,12 @@ public sealed record AiSheetProposal(
             var layout = hasRows ? RowLayoutJsonParser.Parse(modelText, columns) : null;
             if (layout is not null)
             {
-                foreach (var n in layout.Notes) notes.Add("版式：" + n);
-                foreach (var e in layout.Errors) errors.Add("版式：" + e);
+                foreach (var n in layout.Notes) notes.Add("标签内容：" + n);
+                foreach (var e in layout.Errors) errors.Add("标签内容：" + e);
             }
             else
             {
-                notes.Add("没给行式版式（rows 那段），模板保持你现在用的那张");
+                notes.Add("这次没重排你的标签内容（它没说标签上该印哪几行），模板还是你现在用的那张");
             }
 
             // ── 纸规：只能选真有的，或给一张合法的新纸 ──
@@ -223,11 +253,11 @@ public sealed record AiSheetProposal(
             {
                 var hit = MatchSpec(specName, sheetSpecNames);
                 if (hit is null)
-                    errors.Add($"它点的纸规「{specName}」这台机器上没有，不能凭空造一个。" +
-                               $"现有可选：{string.Join("、", sheetSpecNames.Take(8))}");
+                    errors.Add($"你说的那张纸「{specName}」这台机器上没有，不能凭空造一张。" +
+                               $"现在能选的：{string.Join("、", sheetSpecNames.Take(8))}");
                 else if (!string.Equals(hit, specName, StringComparison.Ordinal))
                 {
-                    notes.Add($"纸规名按「{specName}」模糊对到「{hit}」");
+                    notes.Add($"它写的纸规名字有点差，按你机器上那张「{hit}」算");
                     specName = hit;
                 }
             }
@@ -238,7 +268,7 @@ public sealed record AiSheetProposal(
             {
                 if (val is null) continue;
                 if (val is < 30 or > 2000)
-                    notes.Add($"{name} {val:0.#} mm 超出 30~2000 的合法范围 —— 这条忽略");
+                    notes.Add($"{name} {val:0.#} 毫米不在合理范围（30~2000），这条没采纳");
             }
             if (paperW is < 30 or > 2000 || paperH is < 30 or > 2000) { paperW = null; paperH = null; }
 
@@ -261,7 +291,7 @@ public sealed record AiSheetProposal(
         if (value is null) return null;
         if (value < min || value > max)
         {
-            notes.Add($"{what} {value} 超出 {min}~{max} —— 这条忽略");
+            notes.Add($"{what} {value} 不在合理范围（{min}~{max}），这条没采纳");
             return null;
         }
         return value;

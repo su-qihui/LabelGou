@@ -69,7 +69,7 @@ public class AiSheetProposalTests
         var p = AiSheetProposal.Parse(text, null, 13, Specs);
 
         Assert.Equal(new[] { 9 }, p.TotalValueRows);
-        Assert.Contains(p.Notes, n => n.Contains("表头", StringComparison.Ordinal));
+        Assert.Contains(p.Notes, n => n.Contains("列名", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -164,6 +164,32 @@ public class AiSheetProposalTests
         Assert.Equal(old.DataRows.Count, now.DataRows.Count);
         Assert.Equal(old.Headers, now.Headers);
         Assert.True(SheetLayoutChoice.Auto.IsDefault);
+    }
+
+    [Fact]
+    public void 摊给人的那几行不许出现技术黑话()
+    {
+        var p = AiSheetProposal.Parse(FullJson, null, 13, Specs);
+        var text = string.Join("\n", p.DescribeItems(13)) + "\n" + string.Join("\n", p.Explain());
+
+        // 用户 2026-09-09：「使用者不是技术人员，他们不知道 rows 什么的」
+        foreach (var jargon in new[] { "rows", "JSON", "mm", "版式", "数据行", "剔除名单", "sizePt" })
+            Assert.DoesNotContain(jargon, text, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("标签上印这几行", text, StringComparison.Ordinal);
+        Assert.Contains("一张纸怎么摆", text, StringComparison.Ordinal);
+        Assert.Contains("改完之后会出", text, StringComparison.Ordinal);   // 数量用「几张标签」说，不说「多少行数据」
+    }
+
+    [Fact]
+    public void 提醒去重并且封顶_不会一屏全是感叹号()
+    {
+        var many = "{ \"warnings\": [" + string.Join(",", Enumerable.Range(1, 9).Select(i => $"\"疑点 {i}\"")) + ", \"疑点 1\"] }";
+
+        var p = AiSheetProposal.Parse(many, null, 13, Specs);
+        var explain = p.Explain();
+
+        Assert.Equal(6, explain.Count);                       // 5 条 + 一句「还有 N 条」（去重后 9 条只列 5 条，重复那条不排第二遍）
+        Assert.Contains(explain, e => e.Contains("还有 4 条提醒", StringComparison.Ordinal));
     }
 
     [Fact]

@@ -93,6 +93,25 @@ public sealed class AiChatPanel : UserControl
                   " 字。「让 AI 出一版排版」用的是同一条通道，不另设密钥。",
     };
     private readonly TextBlock _attachment = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 6) };
+
+    /// <summary>
+    /// 等回来的那一句（含已等秒数）。用户 2026-09-09 圈的第一个问题：
+    /// 「把图片/表格给 AI 时没有思考过程或等待结果的 UI，会以为卡了」。
+    /// <para>所以这一行不是装饰：没动静的那几十秒里，人唯一能怀疑的就是程序死了或图发丢了。</para>
+    /// </summary>
+    private readonly TextBlock _waitLine = new()
+    {
+        TextWrapping = TextWrapping.Wrap,
+        Margin = new Thickness(0, 0, 0, 4),
+        FontSize = 12,
+        FontWeight = FontWeights.SemiBold,
+        Foreground = OkBrush,
+        Visibility = Visibility.Collapsed,
+    };
+
+    private readonly System.Windows.Threading.DispatcherTimer _waitTimer = new() { Interval = TimeSpan.FromSeconds(1) };
+    private DateTime _waitSince;
+    private string _waitingFor = "AI";
     private readonly Button _send = new() { Content = "发送（Ctrl+Enter）", Padding = new Thickness(12, 6, 12, 6), Margin = new Thickness(0, 0, 8, 0) };
     private readonly Button _stop = new() { Content = "停止", Padding = new Thickness(12, 6, 12, 6), Margin = new Thickness(0, 0, 8, 0), IsEnabled = false };
     private readonly Button _attach = new() { Content = "附上图片…", Padding = new Thickness(12, 6, 12, 6), Margin = new Thickness(0, 0, 8, 0) };
@@ -240,8 +259,13 @@ public sealed class AiChatPanel : UserControl
         Grid.SetRow(_transcript, 2);
         root.Children.Add(_transcript);
 
-        Grid.SetRow(_attachment, 3);
-        root.Children.Add(_attachment);
+        Grid.SetRow(_waitLine, 3);
+        // 等的那一句与附图那一行同一格堆着：窄栏里多一行固定高就是从对话区扣一块，StackPanel 只在需要时占高。
+        var status = new StackPanel();
+        status.Children.Add(_waitLine);
+        status.Children.Add(_attachment);
+        Grid.SetRow(status, 3);
+        root.Children.Add(status);
 
         // 两排按钮合成一排 WrapPanel：窄的时候自己换行，不再固定吃掉两行高。
         var buttons = new WrapPanel { Margin = new Thickness(0, 0, 0, 2) };
@@ -296,6 +320,7 @@ public sealed class AiChatPanel : UserControl
         };
 
         Content = root;
+        _waitTimer.Tick += (_, _) => UpdateWaitLine();
         RefreshChannel();
     }
 
@@ -393,6 +418,34 @@ public sealed class AiChatPanel : UserControl
         _input.IsEnabled = !busy;
         _askLayout.IsEnabled = !busy;
         _askProposal.IsEnabled = !busy && GetLayoutContext?.Invoke() is not null;
+        if (busy)
+        {
+            _waitSince = DateTime.Now;
+            _waitLine.Visibility = Visibility.Visible;
+            _waitTimer.Start();
+            UpdateWaitLine();
+        }
+        else
+        {
+            _waitTimer.Stop();
+            _waitLine.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    /// <summary>这一轮在等什么（发文字 / 读这张表 / 出一版模板），秒数那句就挂谁的名字。</summary>
+    private void SetBusy(bool busy, string waitingFor)
+    {
+        _waitingFor = waitingFor;
+        SetBusy(busy);
+    }
+
+    private void UpdateWaitLine()
+    {
+        var secs = Math.Max(0, (int)(DateTime.Now - _waitSince).TotalSeconds);
+        _waitLine.Text = $"● {_waitingFor}，已经等了 {secs} 秒…"
+            + (secs < 45
+                ? "（云端一般几秒到半分钟；本机模型要一两分钟。这段时间里你的表、模板和数据一个字都没动）"
+                : "（等得有点久了：可能图太大、模型在冷启动，或通道超时。点「停止」不会改动任何东西，可以再试一次或少附几张图）");
     }
 
     /// <summary>
@@ -444,7 +497,7 @@ public sealed class AiChatPanel : UserControl
         ShowAttachment();
 
         _running = new CancellationTokenSource();
-        SetBusy(true);
+        SetBusy(true, "AI 在看你这句话");
         try
         {
             var outcome = await OllamaVisionClient.ChatAsync(
@@ -543,7 +596,7 @@ public sealed class AiChatPanel : UserControl
                                     (skippedImages > 0 ? $"，另有 {skippedImages} 张没发" : string.Empty) + "）") + "…");
 
         _running = new CancellationTokenSource();
-        SetBusy(true);
+        SetBusy(true, "AI 在照着这张表出一版模板");
         try
         {
             var outcome = await OllamaVisionClient.ChatWithImagesAsync(
@@ -664,10 +717,11 @@ public sealed class AiChatPanel : UserControl
             new(AiChatTurn.System, AiSheetProposalPrompt.SystemText),
             new(AiChatTurn.User, prompt),
         };
-        Append($"让它读这张表：原表 {_lastRawRowCount} 行、纸规清单 {_lastSpecNames.Count} 张、随附 {images.Count} 张图…");
+        Append($"开始读这张表：表里 {_lastRawRowCount} 行，这台机器上有 {_lastSpecNames.Count} 张纸可选，"
+               + (images.Count == 0 ? "没带图（那它只能看字）。" : $"带上 {images.Count} 张图。"));
 
         _running = new CancellationTokenSource();
-        SetBusy(true);
+        SetBusy(true, "AI 在读这张表（行多的表会慢一点）");
         try
         {
             var outcome = await OllamaVisionClient.ChatWithImagesAsync(
@@ -707,16 +761,27 @@ public sealed class AiChatPanel : UserControl
         foreach (var note in proposal.Notes) Append($"（已修正：{note}）");
         if (proposal.Errors.Count > 0)
         {
-            Append("这份提案有不能用的地方：" + string.Join("；", proposal.Errors));
+            Append("这次没采纳它的方案：" + string.Join("；", proposal.Errors));
             Append("表、模板与纸规都保持原样。");
             return;
         }
         if (proposal.IsEmpty)
         {
-            Append("它没给出任何可执行的指令（可能只回了话）。表、模板与纸规保持原样。");
+            Append("它没给出任何可执行的改动（可能只回了话）。表、模板与纸规保持原样。");
             return;
         }
-        foreach (var item in proposal.DescribeItems(rawRows)) Append(item);
+        var items = proposal.DescribeItems(rawRows);
+        var explain = proposal.Explain();
+        Append($"看完了。它建议改 {items.Count} 件事"
+               + (explain.Count > 0 ? $"，另有 {explain.Count} 句提醒得你看一眼。" : "。"));
+        foreach (var item in items) Append("　· " + item);
+        if (explain.Count > 0)
+        {
+            Append("它提醒（不采纳也能用，但你得知道）：");
+            foreach (var e in explain) Append("　· " + e);
+        }
+        // 软件自己改过什么单独收尾：以前它跟改动清单挤在一起，同一句会印两遍（用户圈图那屏就是这个）。
+        foreach (var n in proposal.Notes) Append("（软件这边：" + n + "）");
         _pendingProposal = proposal;
         _applyLayout.Content = "用这个（按提案重切这张表）";
         _applyLayout.IsEnabled = ApplyProposal is not null;
