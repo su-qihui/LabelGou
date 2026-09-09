@@ -18,7 +18,9 @@ public sealed class TabularData
         IReadOnlyList<string> headers,
         IReadOnlyList<IReadOnlyList<string>> rows,
         int headerRowIndex,
-        Encoding? encoding = null)
+        Encoding? encoding = null,
+        IReadOnlyList<IReadOnlyList<string>>? preamble = null,
+        IReadOnlyList<SheetImage>? images = null)
     {
         SourceFile = sourceFile;
         SheetName = sheetName;
@@ -26,6 +28,8 @@ public sealed class TabularData
         Rows = rows;
         HeaderRowIndex = headerRowIndex;
         Encoding = encoding;
+        Preamble = preamble ?? Array.Empty<IReadOnlyList<string>>();
+        Images = images ?? Array.Empty<SheetImage>();
     }
 
     /// <summary>来源文件完整路径。</summary>
@@ -43,6 +47,22 @@ public sealed class TabularData
 
     /// <summary>CSV 实际使用的编码；XLSX 为 null。</summary>
     public Encoding? Encoding { get; }
+
+    /// <summary>
+    /// 表头以上的行（原样，行号 = 原始网格行号）。<strong>不参与映射、不出标签</strong>，
+    /// 但必须能摊给 AI 看：纸规、总件数、客户名这类批注就写在这些地方（第 20 棒）。
+    /// </summary>
+    public IReadOnlyList<IReadOnlyList<string>> Preamble { get; }
+
+    /// <summary>
+    /// 工作表里贴着的图（模板截图 / 效果照片）。CSV 恒为空。
+    /// <para>为什么归到数据层：用户 2026-09-09 定的主路径是「AI 先看整张表再出模板」，
+    /// 而那张贴图是表的一部分，不是附件。</para>
+    /// </summary>
+    public IReadOnlyList<SheetImage> Images { get; }
+
+    /// <summary>这张表里有没有可供 AI 对照的视觉参照（没图时 AI 不许造模板，只能要参照）。</summary>
+    public bool HasVisualReference => Images.Count > 0;
 
     public int ColumnCount => Headers.Count;
 

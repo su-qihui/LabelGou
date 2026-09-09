@@ -121,6 +121,158 @@ public static class XlsxTableReader
         return string.Join('/', segments);
     }
 
+    // ---------- 工作表里贴的图（模板截图 / 效果照片） ----------
+
+    private static readonly XNamespace Xdr = "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing";
+    private static readonly XNamespace DrawingMain = "http://schemas.openxmlformats.org/drawingml/2006/main";
+
+    /// <summary>一张表最多认几张图（真样件表贴十几张截图是常态，上百张说明这文件不是给唛头用的）。</summary>
+    public const int MaxSheetImages = 40;
+
+    /// <summary>
+    /// 读出工作表里贴着的图片及其锚点。缺任何一环（没 drawing、没媒体）就返回空表，
+    /// <strong>绝不抛</strong>：一张表没图是常态，不是文件坏了，不能因为它读不到图就把数据导入挡掉。
+    /// </summary>
+    public static IReadOnlyList<SheetImage> ReadSheetImages(string filePath, string? sheetName = null)
+    {
+        using var zip = ZipFile.OpenRead(filePath);
+
+        var sheets = ReadWorkbook(zip);
+        if (sheets.Count == 0) return Array.Empty<SheetImage>();
+        var target = sheetName is null
+            ? sheets[0]
+            : sheets.FirstOrDefault(s => string.Equals(s.Name, sheetName, StringComparison.OrdinalIgnoreCase));
+        if (target is null) return Array.Empty<SheetImage>();
+
+        // 链路是 sheet -> drawing -> media，两张关系表都得走一遍
+        var drawingRel = ReadPartRelationships(zip, target.EntryPath)
+            .FirstOrDefault(r => r.Type.EndsWith("/drawing", StringComparison.OrdinalIgnoreCase));
+        if (drawingRel.Target is null || drawingRel.Target.Length == 0) return Array.Empty<SheetImage>();
+
+        var mediaByRid = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var rel in ReadPartRelationships(zip, drawingRel.Target))
+            if (rel.Type.EndsWith("/image", StringComparison.OrdinalIgnoreCase)) mediaByRid[rel.Id] = rel.Target;
+        if (mediaByRid.Count == 0) return Array.Empty<SheetImage>();
+
+        var drawingEntry = FindEntry(zip, drawingRel.Target);
+        if (drawingEntry is null) return Array.Empty<SheetImage>();
+        XDocument drawing;
+        using (var stream = drawingEntry.Open()) drawing = XDocument.Load(stream);
+        if (drawing.Root is null) return Array.Empty<SheetImage>();
+
+        var list = new List<SheetImage>();
+        var bytesByPart = new Dictionary<string, byte[]>(StringComparer.Ordinal);
+        foreach (var anchor in drawing.Root.Elements())
+        {
+            if (list.Count >= MaxSheetImages) break;
+            var embed = anchor.Descendants(DrawingMain + "blip")
+                .Select(b => (string?)b.Attribute(RelDoc + "embed"))
+                .FirstOrDefault(id => !string.IsNullOrEmpty(id));
+            if (embed is null || !mediaByRid.TryGetValue(embed, out var mediaPath)) continue;
+
+            var bytes = LoadBytes(zip, mediaPath, bytesByPart);
+            if (bytes is null || bytes.Length == 0) continue;
+
+            var from = anchor.Element(Xdr + "from");
+            var col = from is null ? -1 : ParseInt((string?)from.Element(Xdr + "col"), -1);
+            var row = from is null ? -1 : ParseInt((string?)from.Element(Xdr + "row"), -1);
+            var altName = anchor.Descendants(Xdr + "cNvPr").FirstOrDefault()?.Attribute("name")?.Value;
+
+            list.Add(new SheetImage(
+                mediaPath,
+                Path.GetFileName(mediaPath),
+                MimeOf(mediaPath),
+                bytes,
+                row,
+                col,
+                string.IsNullOrWhiteSpace(altName) ? null : altName.Trim()));
+        }
+        return list;
+    }
+
+    private static byte[]? LoadBytes(ZipArchive zip, string partPath, Dictionary<string, byte[]> cache)
+    {
+        if (cache.TryGetValue(partPath, out var hit)) return hit;
+        var entry = FindEntry(zip, partPath);
+        if (entry is null) return null;
+        using var ms = new MemoryStream();
+        using (var stream = entry.Open()) stream.CopyTo(ms);
+        var bytes = ms.ToArray();
+        cache[partPath] = bytes;
+        return bytes;
+    }
+
+    /// <summary>按扩展名给真实 MIME：写死 png 的话，严格的云端遇到 .jpg 会直接拒收。</summary>
+    private static string MimeOf(string partPath)
+    {
+        var ext = Path.GetExtension(partPath).ToLowerInvariant();
+        return ext switch
+        {
+            ".png" => "image/png",
+            ".jpg" or ".jpeg" => "image/jpeg",
+            ".gif" => "image/gif",
+            ".bmp" => "image/bmp",
+            ".webp" => "image/webp",
+            ".tif" or ".tiff" => "image/tiff",
+            _ => "application/octet-stream",
+        };
+    }
+
+    /// <summary>
+    /// 读某个部件（sheet / drawing）自己的关系表。Target 按<strong>该部件所在目录</strong>解析：
+    /// drawing 里的 <c>../media/image1.png</c> 要落成 <c>xl/media/image1.png</c>，
+    /// 沿用按 <c>xl/</c> 解析的那一份会算出 <c>media/image1.png</c> 这个不存在的条目（图就凭空消失）。
+    /// </summary>
+    private static List<(string Id, string Type, string Target)> ReadPartRelationships(ZipArchive zip, string partPath)
+    {
+        var result = new List<(string, string, string)>();
+        var dir = ParentDirOf(partPath);
+        var fileName = partPath.Replace('\\', '/').Split('/')[^1];
+        var relsPath = (dir.Length == 0 ? string.Empty : dir + "/") + "_rels/" + fileName + ".rels";
+        var entry = FindEntry(zip, relsPath);
+        if (entry is null) return result;
+
+        using var stream = entry.Open();
+        var doc = XDocument.Load(stream);
+        foreach (var rel in doc.Descendants(RelPackage + "Relationship"))
+        {
+            var id = (string?)rel.Attribute("Id");
+            var type = (string?)rel.Attribute("Type") ?? string.Empty;
+            var rawTarget = (string?)rel.Attribute("Target");
+            if (id is null || rawTarget is null) continue;
+            if (string.Equals((string?)rel.Attribute("TargetMode"), "External", StringComparison.OrdinalIgnoreCase)) continue;
+            result.Add((id, type, ResolvePartPath(rawTarget, dir)));
+        }
+        return result;
+    }
+
+    private static string ParentDirOf(string path)
+    {
+        var normalized = path.Replace('\\', '/');
+        var i = normalized.LastIndexOf('/');
+        return i <= 0 ? string.Empty : normalized[..i];
+    }
+
+    private static string ResolvePartPath(string target, string baseDir)
+    {
+        var t = target.Replace('\\', '/');
+        if (t.StartsWith("/xl/", StringComparison.OrdinalIgnoreCase)) return t.TrimStart('/');
+        if (t.StartsWith('/') || t.StartsWith("xl/", StringComparison.OrdinalIgnoreCase)) return t.TrimStart('/');
+        var segments = new List<string>();
+        foreach (var seg in baseDir.Split('/', StringSplitOptions.RemoveEmptyEntries)) segments.Add(seg);
+        foreach (var seg in t.Split('/', StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (seg == ".") continue;
+            if (seg == "..")
+            {
+                if (segments.Count > 0) segments.RemoveAt(segments.Count - 1);
+                continue;
+            }
+            segments.Add(seg);
+        }
+        return string.Join('/', segments);
+    }
+
     // ---------- shared strings ----------
 
     private static List<string> ReadSharedStrings(ZipArchive zip)

@@ -102,6 +102,27 @@ public static class TableImporter
             detection.Headers,
             detection.DataRows,
             detection.HeaderRowIndex,
-            encoding);
+            encoding,
+            detection.PreambleRows,
+            ReadImagesSafely(filePath, lower, actualSheet));
+    }
+
+    /// <summary>
+    /// 读贴图。单独包一层 <c>try</c>：图是「锦上添花」（让 AI 看得见参照），
+    /// 而 drawing 部分长得不规范（WPS、老版 Excel、改过后缀的 .xlsm）是常态，
+    /// 绝不允许因为它读不到就把一份能用的表拒在门外。
+    /// </summary>
+    private static IReadOnlyList<SheetImage> ReadImagesSafely(string filePath, string extension, string sheetName)
+    {
+        if (extension is not (".xlsx" or ".xlsm")) return Array.Empty<SheetImage>();
+        try
+        {
+            return XlsxTableReader.ReadSheetImages(filePath, sheetName);
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[TableImporter] 工作表贴图读不到，已按「没图」继续：{ex.Message}");
+            return Array.Empty<SheetImage>();
+        }
     }
 }

@@ -521,8 +521,26 @@ public partial class MainWindow : Window
                 .Select(r => (r.FieldKey, r.DisplayName, r.SampleValue)).ToList();
             // 已连字段只是一半：没连上的列也要摊给模型看，否则它只能按我们的猜测排（用户 2026-09-08 圈的 TOP/郑小姐两条）。
             var portrait = _viewModel.BuildTablePortrait();
+            // 表里贴的那张效果图/模板截图也一起递过去（第 20 棒）：它才是「这枚唛头该长什么样」的唯一说明。
+            var sheetImages = new List<Services.AiChatImage>();
+            foreach (var img in _viewModel.SheetImages)
+            {
+                if (sheetImages.Count >= Services.AiChatPanel.MaxImagesPerRequest) break;
+                try
+                {
+                    var (b64, mime) = Services.Recognition.ImageForModel.Encode(img.Bytes, img.MimeType);
+                    sheetImages.Add(new Services.AiChatImage(b64, mime, img.Describe()));
+                }
+                catch (Exception ex)
+                {
+                    // 一张图编码失败不能挡整次请求（EMF/WMF 这类 Office 矢量图 WPF 解不了就是这条）
+                    System.Diagnostics.Debug.WriteLine($"[WireAi] 表内贴图发不出去，已跳过：{img.FileName} {ex.Message}");
+                }
+            }
+            var hasArtwork = template.Elements.Any(e => e.Kind is LabelGou.Core.Templates.ElementKind.Image
+                                                        or LabelGou.Core.Templates.ElementKind.Vector);
             return new Services.AiLayoutContext(fields, template.WidthMm, template.HeightMm, _viewModel.StatusMessage,
-                portrait?.Columns, portrait?.Portrait);
+                portrait?.Columns, portrait?.Portrait, sheetImages, hasArtwork);
         };
         panel.ApplyLayout = ApplyAiLayout;
         panel.GoPrint = PrintFromAi;

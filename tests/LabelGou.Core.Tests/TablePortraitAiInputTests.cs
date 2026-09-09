@@ -37,6 +37,59 @@ public class TablePortraitAiInputTests
         },
     };
 
+    /// <summary>
+    /// 第 20 棒（用户 2026-09-09：「先让软件内的 AI 查看表格，而不是根据程序写的自动来」）：
+    /// 表头以上的批注行与右侧贴图必须进了画像，否则模型只能凭列名猜。
+    /// </summary>
+    [Fact]
+    public void 表头以上的批注行摊给模型_不再被扔掉()
+    {
+        var grid = new List<string[]>
+        {
+            new[] { "纸规：280×200", string.Empty, string.Empty, string.Empty },
+            new[] { string.Empty, string.Empty, string.Empty, string.Empty },
+            new[] { "件数\nCTN", "货号 ITEM NO", "备注", string.Empty },
+            new[] { "3", "b5003", "开二", string.Empty },
+            new[] { "5", "b5004", string.Empty, string.Empty },
+        };
+
+        var detection = HeaderRowDetector.Detect(grid);
+
+        Assert.Equal(2, detection.HeaderRowIndex);              // 认的还是那行真表头（行为没变）
+        Assert.Equal(2, detection.PreambleRows.Count);         // 但上方两行不再消失
+        Assert.Equal("3", detection.DataRows[0][0]);
+
+        var data = new TabularData("带批注的表.xlsx", "Sheet1", detection.Headers, detection.DataRows,
+            detection.HeaderRowIndex, preamble: detection.PreambleRows);
+        var text = TablePortrait.Describe(TablePortrait.Build(data, Bound), data.RowCount, data.Preamble, data.Images);
+
+        Assert.Contains("纸规：280×200", text, StringComparison.Ordinal);   // 纸规格总算能递到模型眼前
+        Assert.Contains("原表第 1 行", text, StringComparison.Ordinal);
+        Assert.Contains("没有贴任何效果图", text, StringComparison.Ordinal);   // 没图也要明说（无参照闸门靠它）
+    }
+
+    [Fact]
+    public void 表里贴的图连锚点一起摊_没图时判定为无参照()
+    {
+        var withImages = new TabularData("有样张的表.xlsx", "Sheet1", new[] { "件数\nCTN" },
+            new List<IReadOnlyList<string>> { new List<string> { "3" } }, 0,
+            images: new List<SheetImage>
+            {
+                new("xl/media/image1.png", "image1.png", "image/png", new byte[40 * 1024], 1, 12, "模板截图"),
+            });
+        var noImages = new TabularData("光表的表.xlsx", "Sheet1", new[] { "件数\nCTN" },
+            new List<IReadOnlyList<string>> { new List<string> { "3" } }, 0);
+
+        var text = TablePortrait.Describe(TablePortrait.Build(withImages, null), withImages.RowCount,
+            withImages.Preamble, withImages.Images);
+
+        Assert.True(withImages.HasVisualReference);
+        Assert.False(noImages.HasVisualReference);
+        Assert.Contains("贴了 1 张图", text, StringComparison.Ordinal);
+        Assert.Contains("第 2 行、第 13 列", text, StringComparison.Ordinal);   // 锚点报原表行号（1 起）
+        Assert.Contains("模板截图", text, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void 没连上字段的列也进画像而且标明没连()
     {

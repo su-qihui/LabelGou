@@ -12,10 +12,18 @@ using Microsoft.Win32;
 
 namespace LabelGou.App.Services;
 
+/// <summary>一张准备发给模型的图（已降采样与编码）。</summary>
+/// <param name="Base64">不含 data: 前缀的 base64。</param>
+/// <param name="MimeType">真实 MIME（写错会被严格的云端拒收）。</param>
+/// <param name="Name">给人看的那一句（如「贴在原表第 3 行、第 12 列那一格起，88 KB」），日志与界面用。</param>
+public sealed record AiChatImage(string Base64, string MimeType, string Name);
+
 /// <summary>
 /// 要 AI 排版时得先知道「这张表里真有什么、标签多大」——这些只有主界面知道，所以由它端过来。
 /// <para><paramref name="Columns"/> 与 <paramref name="Portrait"/> 是第 15 棒加的：<strong>整张表</strong>的画像（含没连上字段的列）。
 /// 只递已连字段会让「先做了自动绑定」把 AI 的视野锁死在绑对的那几列上（用户 2026-09-08 点出的根因）。</para>
+/// <para><paramref name="SheetImages"/> 与 <paramref name="TemplateHasArtwork"/> 是第 20 棒加的：表里贴的效果照片
+/// 与当前模板自带的底稿。用户 2026-09-09 定的规矩：<strong>没参照就不得造</strong>，所以面板得先知道有没有参照。</para>
 /// </summary>
 public sealed record AiLayoutContext(
     IReadOnlyList<(string Key, string Name, string Sample)> Fields,
@@ -23,10 +31,20 @@ public sealed record AiLayoutContext(
     double HeightMm,
     string? Note,
     IReadOnlyList<ColumnPortrait>? Columns = null,
-    string? Portrait = null)
+    string? Portrait = null,
+    IReadOnlyList<AiChatImage>? SheetImages = null,
+    bool TemplateHasArtwork = false)
 {
     /// <summary>能问的东西有没有：已连字段与整表画像一个都没才算真的没得可给（第 15 棒：不能再把「没连上字段」当门槛）。</summary>
     public bool HasAnythingToAsk => (Fields is { Count: > 0 }) || !string.IsNullOrWhiteSpace(Portrait);
+
+    /// <summary>
+    /// 这张表到底有没有可对照的实物长相：表里贴的图、当前模板的底稿/图片元素、或用户这一条附的照片。
+    /// <para>三样都没时 <see cref="AskLayoutAsync"/> 就不得把请求发出去：让模型凭列名造一版，
+    /// 本质上是拿语法猜设计，错的东西会一路走到纸上。</para>
+    /// </summary>
+    public bool HasVisualReference(bool attachedPhoto) =>
+        SheetImages is { Count: > 0 } || TemplateHasArtwork || attachedPhoto;
 }
 
 /// <summary>
@@ -84,6 +102,9 @@ public sealed class AiChatPanel : UserControl
 
     /// <summary>本次要附的图（base64 + 真实 MIME）：只随下一条消息发出去，发完就清，不每轮重发。</summary>
     private (string Base64, string MimeType, string Name)? _image;
+
+    /// <summary>一次最多发几张图（云端按时长与流量收费，而且一张表贴十几张时只有靠前那几张才是本次的样张）。</summary>
+    public const int MaxImagesPerRequest = 4;
 
     /// <summary>AI 刚出的那版方案，等人点头。没点「用这个」之前它不落盘、不进模板库、不进预览。</summary>
     private RowLayoutSpec? _pending;
@@ -363,6 +384,12 @@ public sealed class AiChatPanel : UserControl
               .Append("（常见表头写法：").Append(string.Join(" / ", d.Aliases.Take(4))).Append("）\n");
         sb.Append("回答要求：简短、给可操作的步骤；涉及数值时提醒用户必须以原始单据为准、要人工核对；")
           .Append("不要编造图上或表里没有的数据，也不要输出毫米坐标。\n")
+          .Append("你能调的东西包括：表头在第几行（或这张表没表头）、哪几行是合计行该剔除、小标签尺寸、行式版式、整张纸的纸规与每页枚数——用户 2026-09-09 已把这几样的调整权交给你，但要他点「用这个」才落地。\n")
+          .Append("三件必须主动提醒的事，碰到相关场景就开口，不要等用户问：\n")
+          .Append("  ① 模板里写死的文字（不是 {{字段}} 那类空位）会跟着模板跑到别家客户头上，换客户时必须逐字核对；\n")
+          .Append("  ② 没有表头的工厂表，首行会被当成表头吃掉，那一行就少印一张；要用户确认「表头在第几行/确实没表头」；\n")
+          .Append("  ③ 表底部的「合计/TOTAL/小计」行会被当成一条真实货物排进版面，多出一张没意义的唛头。\n")
+          .Append("还有一条红线：没看到效果图、模板截图或底稿时，不要凭列名编一版设计出来，先让用户给你一张参照。\n")
           .Append("注意：软件是中文界面，请一律用中文回答。");
         return new AiChatTurn(AiChatTurn.System, sb.ToString());
     }
@@ -442,18 +469,43 @@ public sealed class AiChatPanel : UserControl
         }
         if (ctx.Fields.Count == 0)
             AppendNotice("一个字段都没连上，那就把整张表原样交给它（含没连上的列），让它照样张排——软件不替你猜哪列是什么。");
+
+        // 没有参照就不发这一趟请求（用户 2026-09-09 原话：「表格里没有效果图或者模版的时候，AI 识别到不应该直接制作，
+        // 应该等人先做出模版导入照片然后再理解做出模版对照表格」）。拦在发送之前：
+        // 一发就是几十秒与一笔钱，回来还是一版凭列名猜的样张。
+        var attached = _image;
+        if (!ctx.HasVisualReference(attached is not null))
+        {
+            AppendNotice("没有参照，我不出模板。这张表里没有贴效果图或模板截图，当前模板也不带底稿，你这一条也没附照片——" +
+                "让我在这种条件下排版就是凭列名猜设计，猜错要重印。请先做其中一件：" +
+                "① 在 ③ 步「导入底稿」把 CorelDRAW/AI 导出的 SVG 或 .cdr 递过来；" +
+                "② 或点本面板「附上图片…」，把这枚唛头拍下来或截图给我。" +
+                "参照到了我再对照整张表出模板（那一步不用改数据，只要给我看一眼）。现在你可以先把字段连好。");
+            return;
+        }
+
+        var images = new List<AiChatImage>(MaxImagesPerRequest);
+        if (attached is { } shot) images.Add(new AiChatImage(shot.Base64, shot.MimeType, shot.Name));
+        var skippedImages = 0;
+        foreach (var img in ctx.SheetImages ?? Array.Empty<AiChatImage>())
+        {
+            if (images.Count >= MaxImagesPerRequest) { skippedImages++; continue; }
+            images.Add(img);
+        }
+
         RefreshChannel();
         _pending = null;
         _applyLayout.IsEnabled = false;
 
-        var prompt = RowLayoutPrompt.Build(ctx.Fields, ctx.WidthMm, ctx.HeightMm, ctx.Note, ctx.Portrait);
+        var prompt = RowLayoutPrompt.Build(ctx.Fields, ctx.WidthMm, ctx.HeightMm, ctx.Note, ctx.Portrait)
+            + (images.Count == 0 ? string.Empty : $"\n本条随附 {images.Count} 张图：它们是这张表里贴的效果照片/模板截图，或用户拍的样张。" +
+              "版式必须照图上的行序与字面排，图上没有的行不要造，图与表格文字冲突时以图为准。");
         _lastColumns = ctx.Columns;
         var payload = new List<AiChatTurn>
         {
             new(AiChatTurn.System, "你是唛头行式版式生成器。只输出一个 JSON 对象，不要解释文字、不要 Markdown 围栏、不要毫米坐标。"),
             new(AiChatTurn.User, prompt),
         };
-        var image = _image;
         _image = null;
         ShowAttachment();
 
@@ -462,14 +514,17 @@ public sealed class AiChatPanel : UserControl
                    ? $"、整张表 {cols.Count} 列全给了它（含没连上的）"
                    : "（没拿到整张表，只给了已连字段）")
                + $"、标签 {ctx.WidthMm:0.#}×{ctx.HeightMm:0.#} mm" +
-               (image is null ? "（没附图，它只能按表里的东西排）" : "（附上样张给它看）") + "…");
+               (images.Count == 0 ? "（没附图，它只能按表里的东西排）"
+                                  : $"（附图 {images.Count} 张：表里贴的样张一起发了" +
+                                    (skippedImages > 0 ? $"，另有 {skippedImages} 张没发" : string.Empty) + "）") + "…");
 
         _running = new CancellationTokenSource();
         SetBusy(true);
         try
         {
-            var outcome = await OllamaVisionClient.ChatAsync(
-                _settings, payload, image is { } shot ? (shot.Base64, shot.MimeType) : null, _running.Token);
+            var outcome = await OllamaVisionClient.ChatWithImagesAsync(
+                _settings, payload,
+                images.Count == 0 ? null : images.Select(x => (x.Base64, x.MimeType)).ToList(), _running.Token);
             if (!outcome.Ok)
             {
                 if (_running.IsCancellationRequested) Append("已停止，版式没回来，当前用的模板没被改动。");

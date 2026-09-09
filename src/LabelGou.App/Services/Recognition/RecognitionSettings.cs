@@ -209,8 +209,19 @@ public sealed class RecognitionSettings
         return parts.Count == 0 ? "未启用任何识别通道" : string.Join(" + ", parts);
     }
 
-    /// <summary>界面走这条：除了读盘，还把本次运行里用户刚填的密钥接上（<see cref="SessionApiKey"/>）。</summary>
-    public static RecognitionSettings Load() => LoadFrom(FilePath, SecretStore.DefaultFilePath, mergeSessionKey: true);
+    /// <summary>
+    /// 界面走这条：除了读盘，还把本次运行里用户刚填的密钥接上（<see cref="SessionApiKey"/>）。
+    /// <para>还要一项（第 20 棒，用户 2026-09-09 定「云端优先，Ollama 太慢」）：这台电脑上一个设置文件都没存过、
+    /// 又确实有密钥可用时，直接就用云端预设。有密钥才改是因为没密钥就切云端等于把
+    /// 所有 AI 功能变成「缺密钥」错；而用户存过配置就是他自己选过的，不抢方向盘。</para>
+    /// </summary>
+    public static RecognitionSettings Load()
+    {
+        var settings = LoadFrom(FilePath, SecretStore.DefaultFilePath, mergeSessionKey: true);
+        if (!File.Exists(FilePath) && !string.IsNullOrWhiteSpace(settings.ResolveApiKey()))
+            settings.ApplyPreset(CloudPresets[0]);
+        return settings;
+    }
 
     /// <summary>从指定文件读。<b>单测走这条</b>，不往真用户的 <c>%APPDATA%</c> 里写东西（也不碰密钥文件、不接静态会话密钥）。</summary>
     public static RecognitionSettings LoadFrom(string path) => LoadFrom(path, keyPath: null);

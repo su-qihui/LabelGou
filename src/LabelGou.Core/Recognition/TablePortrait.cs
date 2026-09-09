@@ -45,6 +45,9 @@ public static class TablePortrait
     /// <summary>提示词里最多摊多少列（超了就说明这张表本身有问题，先让人看）。</summary>
     public const int MaxColumnsInPrompt = 30;
 
+    /// <summary>前导批注最多摊几行（再多就不是批注而是另一张表了）。</summary>
+    public const int MaxPreambleRowsInPrompt = 12;
+
     /// <summary>
     /// 逐列造画像。<paramref name="profile"/> 是「自动绑定目前连成什么样」，
     /// 连上与否都<strong>如实标出来</strong>——模型需要知道我们的猜测，才谈得上纠正它。
@@ -96,6 +99,20 @@ public static class TablePortrait
     /// 还知道我们没连上它，于是它可以用 <c>{{col:列名}}</c> 直取。</para>
     /// </summary>
     public static string Describe(IReadOnlyList<ColumnPortrait> columns, int rowCount)
+        => Describe(columns, rowCount, null, null);
+
+    /// <summary>
+    /// 同上，但把【表头以上的批注行】与【贴着的图】也摊进去（第 20 棒）。
+    /// <para>为什么这两块必须给模型：用户 2026-09-09 定的主路径是「AI 自己看表」，
+    /// 而纸规、总件数、客户名常写在表头以上的行里，标签该长什么样常以贴图形式挂在右侧。
+    /// 不给这两样，模型就只能凭列名猜——猜错就是印错货。</para>
+    /// <para>没图也要写明「没图」：这是“不许造模板”那道闸门的判据（§十-A-27 新增）。</para>
+    /// </summary>
+    public static string Describe(
+        IReadOnlyList<ColumnPortrait> columns,
+        int rowCount,
+        IReadOnlyList<IReadOnlyList<string>>? preamble,
+        IReadOnlyList<SheetImage>? images)
     {
         if (columns is null || columns.Count == 0) return "（这张表一列都没读出来）";
         var sb = new System.Text.StringBuilder();
@@ -113,6 +130,31 @@ public static class TablePortrait
             sb.Append(col.Samples.Count == 0 ? "；一个样例值都没有"
                                              : "；样例 " + string.Join(" ｜ ", col.Samples));
             sb.Append('\n');
+        }
+
+        if (preamble is { Count: > 0 })
+        {
+            sb.Append("表头以上还有 ").Append(preamble.Count).Append(" 行（软件没拿它当数据，但批注常写在这里，原文照录）：\n");
+            foreach (var (row, i) in preamble.Take(MaxPreambleRowsInPrompt).Select((r, i) => (r, i)))
+            {
+                var cells = row
+                    .Select((cell, c) => (cell, c))
+                    .Where(t => !string.IsNullOrWhiteSpace(t.cell))
+                    .Select(t => HeaderRowDetector.ColumnLetter(t.c) + "「" + Shrink(ColumnLabel.SingleLine(t.cell)) + "」");
+                if (!cells.Any()) continue;
+                sb.Append("  - 原表第 ").Append(i + 1).Append(" 行：").Append(string.Join(" ｜ ", cells)).Append('\n');
+            }
+        }
+
+        if (images is { Count: > 0 })
+        {
+            sb.Append("这张表里还贴了 ").Append(images.Count).Append(" 张图（可能就是模板或效果照片，已随本条消息发给你看）：\n");
+            foreach (var img in images.Take(6))
+                sb.Append("  - ").Append(img.Describe()).Append('\n');
+        }
+        else
+        {
+            sb.Append("这张表里没有贴任何效果图或模板截图。\n");
         }
         return sb.ToString().TrimEnd('\n');
     }

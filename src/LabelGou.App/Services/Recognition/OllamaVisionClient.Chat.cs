@@ -21,10 +21,23 @@ public static partial class OllamaVisionClient
     /// <param name="settings">通道设置（端点/模型/密钥/超时），与识别用的是同一份，不另建配置。</param>
     /// <param name="turns">对话历史，顺序即时间顺序；<c>system</c> 只认第一条。</param>
     /// <param name="image">本次要附的图（base64 + 真实 MIME），只挂在最后一条 user 上。</param>
-    public static async Task<ChatOutcome> ChatAsync(
+    public static Task<ChatOutcome> ChatAsync(
         RecognitionSettings settings,
         IReadOnlyList<AiChatTurn> turns,
         (string Base64, string MimeType)? image = null,
+        CancellationToken cancel = default,
+        HttpMessageHandler? handler = null)
+        => ChatWithImagesAsync(settings, turns,
+            image is null ? null : new[] { image.Value }, cancel, handler);
+
+    /// <summary>
+    /// 多图版（第 20 棒）：一张表右侧常贴两三张不同客户/不同面的样张，
+    /// 只挑一张发过去等于让模型看半边拼图，它还当自己看全了。
+    /// </summary>
+    public static async Task<ChatOutcome> ChatWithImagesAsync(
+        RecognitionSettings settings,
+        IReadOnlyList<AiChatTurn> turns,
+        IReadOnlyList<(string Base64, string MimeType)>? images,
         CancellationToken cancel = default,
         HttpMessageHandler? handler = null)
     {
@@ -33,21 +46,21 @@ public static partial class OllamaVisionClient
             return new ChatOutcome { Error = "没有填服务地址或模型名（先在「模型（AI）设置与调试」里选好）。" };
 
         return settings.Provider == RecognitionSettings.Providers.OpenAi
-            ? await ChatOpenAiAsync(settings, turns, image, cancel, handler).ConfigureAwait(false)
-            : await ChatOllamaAsync(settings, turns, image, cancel, handler).ConfigureAwait(false);
+            ? await ChatOpenAiAsync(settings, turns, images, cancel, handler).ConfigureAwait(false)
+            : await ChatOllamaAsync(settings, turns, images, cancel, handler).ConfigureAwait(false);
     }
 
     /// <summary>OpenAI 兼容协议：messages 里每条一个 role，带图时最后一条 user 的 content 是数组。</summary>
     private static async Task<ChatOutcome> ChatOpenAiAsync(
         RecognitionSettings settings, IReadOnlyList<AiChatTurn> turns,
-        (string Base64, string MimeType)? image, CancellationToken cancel, HttpMessageHandler? handler)
+        IReadOnlyList<(string Base64, string MimeType)>? images, CancellationToken cancel, HttpMessageHandler? handler)
     {
         var key = settings.ResolveApiKey();
         if (key is null)
             return new ChatOutcome { Error = settings.MissingKeyHint };
 
         var lastUser = -1;
-        if (image is not null)
+        if (images is { Count: > 0 })
             for (var i = turns.Count - 1; i >= 0; i--)
                 if (turns[i].Role == AiChatTurn.User) { lastUser = i; break; }
 
@@ -56,20 +69,18 @@ public static partial class OllamaVisionClient
         {
             if (i == lastUser)
             {
-                var (b64, mime) = image!.Value;
-                messages.Add(new Dictionary<string, object?>
+                var content = new List<object?>
                 {
-                    ["role"] = turns[i].Role,
-                    ["content"] = new List<object?>
+                    new Dictionary<string, object?> { ["type"] = "text", ["text"] = turns[i].Text },
+                };
+                // 先文字后图：云端按内容顺序读，把「这是你看到的表」那句摆在像素前面
+                foreach (var (b64, mime) in images!)
+                    content.Add(new Dictionary<string, object?>
                     {
-                        new Dictionary<string, object?> { ["type"] = "text", ["text"] = turns[i].Text },
-                        new Dictionary<string, object?>
-                        {
-                            ["type"] = "image_url",
-                            ["image_url"] = new Dictionary<string, object?> { ["url"] = $"data:{mime};base64,{b64}" },
-                        },
-                    },
-                });
+                        ["type"] = "image_url",
+                        ["image_url"] = new Dictionary<string, object?> { ["url"] = $"data:{mime};base64,{b64}" },
+                    });
+                messages.Add(new Dictionary<string, object?> { ["role"] = turns[i].Role, ["content"] = content });
             }
             else
             {
@@ -91,10 +102,10 @@ public static partial class OllamaVisionClient
     /// <summary>本机 Ollama：<c>/api/chat</c> 收 messages，回 <c>message.content</c>。</summary>
     private static async Task<ChatOutcome> ChatOllamaAsync(
         RecognitionSettings settings, IReadOnlyList<AiChatTurn> turns,
-        (string Base64, string MimeType)? image, CancellationToken cancel, HttpMessageHandler? handler)
+        IReadOnlyList<(string Base64, string MimeType)>? images, CancellationToken cancel, HttpMessageHandler? handler)
     {
         var lastUser = -1;
-        if (image is not null)
+        if (images is { Count: > 0 })
             for (var i = turns.Count - 1; i >= 0; i--)
                 if (turns[i].Role == AiChatTurn.User) { lastUser = i; break; }
 
@@ -102,7 +113,8 @@ public static partial class OllamaVisionClient
         for (var i = 0; i < turns.Count; i++)
         {
             var msg = new Dictionary<string, object?> { ["role"] = turns[i].Role, ["content"] = turns[i].Text };
-            if (i == lastUser) msg["images"] = new[] { image!.Value.Base64 };   // Ollama 的图挂在消息上，不走 data URL
+            // Ollama 的图挂在消息上（本来就是一个数组），不走 data URL
+            if (i == lastUser) msg["images"] = images!.Select(x => x.Base64).ToArray();
             messages.Add(msg);
         }
 

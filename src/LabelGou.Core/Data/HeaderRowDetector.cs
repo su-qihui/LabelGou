@@ -8,7 +8,10 @@ namespace LabelGou.Core.Data;
 /// <para>
 /// 工厂发来的表极少"第一行就是干净表头"：常见前导标题行、空行、多行复合表头。
 /// 因此在候选前几行中按<strong>字段别名命中数</strong>为主、非空覆盖率与"像不像标签"为辅打分，
-/// 选出最可能是表头的那一行，其上方的行一律丢弃。
+/// 选出最可能是表头的那一行。<strong>其上方的行原样留着</strong>（第 20 棒改）：
+/// 工厂爱把「纸规 280×200」「外箱尺寸 60×40×30」「共 155 件」这类话写在前几行，
+/// 以前一律丢弃，于是 AI 想看也看不到，人想知道它凭什么猜也无处查。
+/// 这些行仍然<strong>不参与字段映射、不出标签</strong>，只是从「扔掉」变成「摊出来」。
 /// </para>
 /// </summary>
 public static class HeaderRowDetector
@@ -20,11 +23,17 @@ public static class HeaderRowDetector
     /// <param name="HeaderRowIndex">表头所在行（0 起）。</param>
     /// <param name="Headers">归一化后的表头（空标题补成 "列 A"，重复标题加序号）。</param>
     /// <param name="DataRows">表头之下的数据行（已按表头列宽补齐）。</param>
-    public sealed record DetectionResult(int HeaderRowIndex, IReadOnlyList<string> Headers, IReadOnlyList<IReadOnlyList<string>> DataRows);
+    /// <param name="PreambleRows">表头<strong>以上</strong>那几行原样（含空行，行号就是原始网格行号），给 AI 与人看批注用。</param>
+    public sealed record DetectionResult(
+        int HeaderRowIndex,
+        IReadOnlyList<string> Headers,
+        IReadOnlyList<IReadOnlyList<string>> DataRows,
+        IReadOnlyList<IReadOnlyList<string>> PreambleRows);
 
     public static DetectionResult Detect(IReadOnlyList<string[]> grid)
     {
-        if (grid.Count == 0) return new DetectionResult(0, Array.Empty<string>(), Array.Empty<IReadOnlyList<string>>());
+        if (grid.Count == 0)
+            return new DetectionResult(0, Array.Empty<string>(), Array.Empty<IReadOnlyList<string>>(), Array.Empty<IReadOnlyList<string>>());
 
         var width = grid.Max(r => r.Length);
         var candidates = Math.Min(ScanWindow, grid.Count);
@@ -42,6 +51,14 @@ public static class HeaderRowDetector
         }
 
         var headers = NormalizeHeaders(grid[bestIndex], width);
+        var preamble = new List<IReadOnlyList<string>>(bestIndex);
+        for (var r = 0; r < bestIndex; r++)
+        {
+            var above = new string[width];
+            Array.Copy(grid[r], above, Math.Min(grid[r].Length, width));
+            for (var c = grid[r].Length; c < width; c++) above[c] = string.Empty;
+            preamble.Add(above);
+        }
         var dataRows = new List<IReadOnlyList<string>>(Math.Max(0, grid.Count - bestIndex - 1));
         for (var r = bestIndex + 1; r < grid.Count; r++)
         {
@@ -58,7 +75,7 @@ public static class HeaderRowDetector
             dataRows.Add(padded);
         }
 
-        return new DetectionResult(bestIndex, headers, dataRows);
+        return new DetectionResult(bestIndex, headers, dataRows, preamble);
     }
 
     /// <summary>

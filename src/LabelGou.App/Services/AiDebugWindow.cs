@@ -184,16 +184,16 @@ public sealed class AiDebugWindow : Window
 
     private static List<ChannelItem> ChannelItems()
     {
-        var items = new List<ChannelItem>
-        {
-            new("本机 Ollama（默认，数据不出这台电脑）", new RecognitionSettings()),
-        };
+        // 云端预设排在最前（用户 2026-09-09：Ollama 太慢，而且这些数据没有实际价值，云端优先）。
+        // 但没密钥时不替用户选：这里只是下拉列表的顺序，真默认通道仍由 RecognitionSettings.Load() 定。
+        var items = new List<ChannelItem>();
         foreach (var preset in RecognitionSettings.CloudPresets)
         {
             var s = new RecognitionSettings();
             s.ApplyPreset(preset);
-            items.Add(new ChannelItem(preset.Name, s));
+            items.Add(new ChannelItem(preset.Name + "（推荐：比本机快得多，订单数据会离开这台电脑）", s));
         }
+        items.Add(new ChannelItem("本机 Ollama（离线退路，数据不出这台电脑，慢）", new RecognitionSettings()));
         items.Add(new ChannelItem("自定义 OpenAI 兼容端点（vLLM 等）", new RecognitionSettings
         {
             Provider = RecognitionSettings.Providers.OpenAi,

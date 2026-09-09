@@ -1082,8 +1082,13 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         var data = _data;
         if (data is null) return null;
         var columns = TablePortrait.Build(data, _working);
-        return (columns, TablePortrait.Describe(columns, data.RowCount));
+        // 前导批注行与贴图也一并摊出去（第 20 棒）：纸规常写在表头以上，样张常贴在右侧，
+        // 不递过去模型就只能凭列名猜，而用户 2026-09-09 定的主路径是「AI 自己看这张表」。
+        return (columns, TablePortrait.Describe(columns, data.RowCount, data.Preamble, data.Images));
     }
+
+    /// <summary>这张表里贴着的图（模板截图 / 效果照片）。CSV 与没图的表是空表。</summary>
+    public IReadOnlyList<SheetImage> SheetImages => _data?.Images ?? Array.Empty<SheetImage>();
 
     private void AutoSuggest()
     {
