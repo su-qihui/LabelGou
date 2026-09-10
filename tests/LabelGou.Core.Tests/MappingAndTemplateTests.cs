@@ -1,4 +1,4 @@
-using LabelGou.Core.Data;
+﻿using LabelGou.Core.Data;
 using LabelGou.Core.Layout;
 using LabelGou.Core.Mapping;
 using LabelGou.Core.Marks;
@@ -594,4 +594,23 @@ public class LayoutEngineTests
             },
         },
     };
+
+    [Fact]
+    public void 已绑定的列也能用col直取_否则模板会静默变空()
+    {
+        // 老 bug（用户 2026-09-10 截图 6 那张白纸）：造数据时**只给"没绑定的列"写 col: 值**
+        // （`if (bound.Contains(c)) continue;`），而提示词却对模型说"没连上的列也能用 col: 直取那一列"
+        // ——两套口径。模型一旦对**已绑定的列**用它（那版就是 `{{col:ITEM NO}}`、`{{col:QTY}}`），
+        // 取值全空 → 那一条整条隐藏 → 严重时整张标签空白。
+        var headers = new[] { "ITEM NO", "QTY" };
+        var data = new TabularData("x.xlsx", "Sheet1", headers, new[] { new[] { "b5011*16 INVISTUC", "16" } }, 0);
+        var profile = MappingSuggester.Suggest(headers);      // 自动绑：ITEM NO→ItemNo、QTY→Quantity
+
+        var record = RecordMapper.Map(data, profile).Records.Single();
+
+        Assert.NotNull(record.GetCustom("col:ITEM NO"));      // 已绑定的列也必须取得到
+        Assert.NotNull(record.GetCustom("col:QTY"));
+        // 而且走的是**同一条字段处理**：货号 * 后面那截照样按规则切掉（用户定过的规则不许被换种取法绕过去）
+        Assert.Equal("b5011", record.GetCustom("col:ITEM NO")!.Text);
+    }
 }

@@ -247,6 +247,16 @@ public static class RecordMapper
                     };
                 }
                 builder.Set(mapping.Field, value);
+
+                // 第 36 棒修 bug：**已绑定的列也要能用 {{col:列名}} 取到值**。
+                // 以前下面那个循环只给"没绑定的列"写 col: 值（`if (bound.Contains(c)) continue;`），
+                // 而提示词却对模型说"没连上的列也能用 col: 直取那一列"——**两套口径**。
+                // 模型一旦对已绑定的列用它（用户 2026-09-10 那版就是这样：`{{col:ITEM NO}}`、`{{col:QTY}}`，
+                // 而这两列恰好都绑了），取值全空 → 那一条整条隐藏 → 严重时**整张标签空白**（截图 6 那张白纸）。
+                // 值用**同一个 MarkValue**：字段级处理（货号切 * 尾巴、大小写、待核标记）照样生效，
+                // 不会因为换了取法就把用户定过的规则绕过去。
+                if (mapping.ColumnIndex >= 0 && mapping.ColumnIndex < data.ColumnCount)
+                    builder.SetCustom("col:" + data.Headers[mapping.ColumnIndex], value);
             }
 
             // 未映射的列也留下，模板里可用 {{col:列标题}} 引用（唛头常有客户自定义行）
