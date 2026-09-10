@@ -163,4 +163,24 @@ public sealed class AiProposalFlowTests : IDisposable
         // 用户的原话是「选择后将回答注入思考」：他的决定必须让 AI 下一轮知道，否则下一次读表还是老判断。
         Assert.Contains(probe.turns, t => t.Text.Contains("我对你这一问的决定", StringComparison.Ordinal));
     }
+
+    [Fact]
+    public void 提案没给可改动的东西_也照样给出下一步按钮()
+    {
+        var probe = OnSta(() =>
+        {
+            var panel = new AiChatPanel { GetChangeContext = CurrentState };
+            // 只有一句 reason 的提案 = 什么都没提（IsEmpty）。
+            panel.FeedProposalAnswer("""{"reason":"这张表我没看出要改的"}""");
+            return (again: Buttons(panel).Count(b => (b.Content as string)?.Contains("重出方案") == true),
+                    layout: Buttons(panel).Count(b => (b.Content as string) == "只让它排一版版式"),
+                    text: panel.Transcript);
+        });
+
+        // 用户 2026-09-10：「即使是它觉得没问题，那不应该出现下一步的按键让 AI 来排版和绑定列吗」
+        // ——以前这里只有一句技术话，人被晾在死路上。
+        Assert.Equal(1, probe.again);
+        Assert.Equal(1, probe.layout);
+        Assert.Contains("没给可落地的改动", probe.text);
+    }
 }

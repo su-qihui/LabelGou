@@ -1011,11 +1011,17 @@ public sealed class AiChatPanel : UserControl
         {
             Append("这次没采纳它的方案：" + string.Join("；", proposal.Errors));
             Append("表、模板与纸规都保持原样。");
+            ClearChangesBlock();
+            ShowNextSteps(applied: false);
             return;
         }
         if (proposal.IsEmpty)
         {
-            Append("它没给出任何可执行的改动（可能只回了话）。表、模板与纸规保持原样。");
+            // 第 34 棒：这句以前是「它没给出任何可执行的改动（可能只回了话）」——技术话，而且**是死路**
+            // （用户 2026-09-10 的原话：「思考完回答啥也没做……那不应该出现下一步的按键让 AI 来排版和绑定列吗」）。
+            Append("它这次没给可落地的改动（只说了话，没给能改的项）。表、模板与纸规都保持原样。");
+            ClearChangesBlock();
+            ShowNextSteps(applied: false);
             return;
         }
         var items = proposal.DescribeItems(rawRows);
@@ -1066,6 +1072,56 @@ public sealed class AiChatPanel : UserControl
         // 第 33 棒：整份已经自动落过了，这颗按钮改成"再落一次"没有意义 —— 收起来不用。
         _applyLayout.Content = "重落一次（一般不用点）";
         _applyLayout.IsEnabled = false;
+        // 第 34 棒：**任何一条路都收在"下一步"**（哪怕它这次什么都没动）。
+        ShowNextSteps(applied: shownAsList);
+    }
+
+    /// <summary>清掉「它改了什么」那一块（提案没回来可落地的东西时用，免得留着上一轮的清单）。</summary>
+    private void ClearChangesBlock()
+    {
+        _changes.Children.Clear();
+        _changes.Visibility = Visibility.Collapsed;
+    }
+
+    /// <summary>
+    /// **下一步那颗按钮**（第 34 棒）。
+    /// <para>用户 2026-09-10 的原话：「*号后删不删也不问，那**即使是它觉得没问题**，
+    /// 那不应该出现下一步的按键让 AI 来排版和绑定列吗」——之前提案回来没有可落地的东西时，
+    /// 面板只剩一句技术话，人被晾在死路上。现在**任何结局都收在这里**：
+    /// 重出方案（带上他刚答的、接着上下文再来一次）或只让它排一版版式。</para>
+    /// </summary>
+    private void ShowNextSteps(bool applied)
+    {
+        _changes.Visibility = Visibility.Visible;
+        _changes.Children.Add(new TextBlock
+        {
+            Text = applied ? "下一步（不满意就撤回，或者让它重出一版）：" : "下一步（它没动手，那就再来一次）：",
+            FontSize = 12,
+            FontWeight = FontWeights.SemiBold,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 8, 0, 2),
+        });
+        var again = new Button
+        {
+            Content = "让 AI 重出方案（排版 + 绑定列）",
+            FontSize = 11,
+            Padding = new Thickness(8, 2, 8, 2),
+            ToolTip = "把整张表再交给它一次：切表 + 绑定列 + 版式 + 纸规一起出；你刚答过的问题也在上下文里",
+        };
+        again.Click += async (_, _) => await AskProposalAsync();
+        var layoutOnly = new Button
+        {
+            Content = "只让它排一版版式",
+            FontSize = 11,
+            Padding = new Thickness(8, 2, 8, 2),
+            Margin = new Thickness(6, 0, 0, 0),
+        };
+        layoutOnly.Click += async (_, _) => await AskLayoutAsync();
+        var row = new WrapPanel { Margin = new Thickness(0, 2, 0, 0) };
+        row.Children.Add(again);
+        row.Children.Add(layoutOnly);
+        _changes.Children.Add(row);
+        _changes.BringIntoView();
     }
 
     /// <summary>

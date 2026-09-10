@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.Text.Json;
 using LabelGou.Core.Data;
 using LabelGou.Core.Marks;
@@ -571,6 +571,11 @@ public sealed record AiSheetProposal(
             if (qtyWanted is not null && qtyHeader is null)
                 notes.Add($"它说按「{qtyWanted}」这一列数张数，可表里没对上这一列 —— 这条没采纳");
 
+            var mappings = ParseMappings(fields, columns, notes);
+            var questions = ParseQuestions(fields, rawRowCount, notes);
+            // 第 34 棒：软件兜底问那条该问的（货号列里带 * 就问"* 后那截留不留"）。
+            AddMissingTailQuestion(questions, columns, mappings, layout?.Spec, notes);
+
             return new AiSheetProposal(
                 headerRow, hasHeader, totalRows, layout?.Spec, specName,
                 paperW, paperH, cols, rowsPerPage, BoolField(fields, "followsLabel"),
@@ -579,8 +584,8 @@ public sealed record AiSheetProposal(
                 new SheetReadout(dataCols, TextField(fields, "templateSource", 20),
                     layout?.Spec is { } spec ? FriendlyTemplateLines(spec, columns) : Array.Empty<string>(),
                     qtyHeader, qtyIndex, TextField(fields, "paperText", 60)),
-                ParseQuestions(fields, rawRowCount, notes),
-                ParseMappings(fields, columns, notes),
+                questions,
+                mappings,
                 StringListField(fields, "facts"));
         }
 
@@ -689,11 +694,45 @@ public sealed record AiSheetProposal(
     };
 
     /// <summary>
+    /// **软件兜底问那条该问的**（第 34 棒）：货号那一列里带 <c>*</c>，就问"* 号后面那截留不留"。
+    /// <para>为什么要有它：用户 2026-09-10 的抱怨是「**\* 号后删不删也不问**」——这条问题第 22 棒就定成了
+    /// 标准动作（<c>itemno-tail</c>），但"要不要问"全看模型心情；它这次没问，用户就什么都被没问到，
+    /// 而货号里那截 <c>*16</c> 该不该印上纸是**必须有人拍板**的事（印错了是印错货）。</para>
+    /// <para>改成本地**确定性判定**：货号那列的样例里真出现 <c>*</c> 就问，哪怕模型没提。</para>
+    /// <para>只在**真有版式可改**时才问：没有 rows 的话点了也办不成，问了等于挖坑
+    /// （与「不许点了报成功其实没改」是同一条纪律）。模型已经问过就不重复问。</para>
+    /// </summary>
+    private static void AddMissingTailQuestion(
+        List<AiSheetQuestion> questions,
+        IReadOnlyList<ColumnPortrait>? columns,
+        IReadOnlyList<AiFieldBinding> mappings,
+        RowLayoutSpec? layout,
+        List<string> notes)
+    {
+        if (layout is null) return;
+        if (questions.Any(q => q.Action == AiSheetQuestion.ActionItemNoTail)) return;
+        if (columns is null || columns.Count == 0) return;
+
+        // 货号那一列：优先用它自己报的绑定；没绑就找样例里带 * 的那一列（模型没绑也兜得住）。
+        var itemNoIndex = mappings.FirstOrDefault(m => m.Field == MarkFieldKey.ItemNo)?.ColumnIndex;
+        var column = itemNoIndex is int idx
+            ? columns.FirstOrDefault(c => c.Index == idx)
+            : columns.FirstOrDefault(c => c.Samples.Any(s => s.Contains('*')));
+        if (column is null) return;
+        if (!column.Samples.Any(s => s.Contains('*'))) return;   // 没有 * 就别拿一条没头没脑的问题去烦人
+
+        questions.Add(new AiSheetQuestion(
+            $"{HeaderRowDetector.ColumnLetter(column.Index)} 列的货号里带 * 号，* 号和后面那一截要不要印？",
+            "不用", "要", AiSheetQuestion.ActionItemNoTail, 0, null));
+        notes.Add($"{HeaderRowDetector.ColumnLetter(column.Index)} 列的货号里带 * 号，软件替你补问了一条（模型这次没问）");
+    }
+
+    /// <summary>
     /// 解「要人二选一」那一段。接不住的动作不假装能办：不进问题列表，只留一句 Note 说清楚。
     /// <para>行号越界、没给动作、超过 <see cref="MaxExplainLines"/> 条，都是丢掉那一条而不是拒整份提案——
     /// 一条问不对不该连带把切表与换纸也挡掉。</para>
     /// </summary>
-    private static IReadOnlyList<AiSheetQuestion> ParseQuestions(
+    private static List<AiSheetQuestion> ParseQuestions(
         Dictionary<string, JsonElement> fields, int rawRowCount, List<string> notes)
     {
         var list = new List<AiSheetQuestion>();

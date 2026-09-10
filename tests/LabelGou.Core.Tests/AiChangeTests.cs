@@ -1,4 +1,4 @@
-using LabelGou.Core.Data;
+﻿using LabelGou.Core.Data;
 using LabelGou.Core.Marks;
 using LabelGou.Core.Recognition;
 using Xunit;
@@ -333,5 +333,52 @@ public class AiChangeTests
 
         Assert.Single(lines);
         Assert.Contains("核不了", lines[0]);              // 拿不到列清单就说不确定，不编一个"对得上"
+    }
+
+    // ───────── 软件兜底问那条该问的（第 34 棒：用户抱怨「* 号后删不删也不问」） ─────────
+
+    /// <summary>货号那一列的样例里带 *（真实现场：<c>b5011*16 INVISTUC</c>）。</summary>
+    private static readonly IReadOnlyList<ColumnPortrait> StarColumns = new[]
+    {
+        new ColumnPortrait(0, "ITEM NO", "ITEM NO", null, null, new[] { "b5011*16 INVISTUC" }, 2),
+    };
+
+    [Fact]
+    public void 货号列里带星号_模型没问软件也替你问()
+    {
+        // 有版式才问（没版式点了也办不成，问了等于挖坑）；这里给一行 rows 让它可办。
+        const string json = """{ "rows": [ { "content": "ITEM No: {{col:ITEM NO}}" } ] }""";
+
+        var p = AiSheetProposal.Parse(json, StarColumns, 13, null);
+
+        var q = Assert.Single(p.Questions);
+        Assert.Equal(AiSheetQuestion.ActionItemNoTail, q.Action);
+        Assert.Contains("* 号", q.Text);
+        Assert.Contains(p.Notes, n => n.Contains("软件替你补问"));
+    }
+
+    [Fact]
+    public void 模型自己问过了就不重复问()
+    {
+        const string json = """
+            {
+              "rows": [ { "content": "ITEM No: {{col:ITEM NO}}" } ],
+              "questions": [ { "text": "货号里*号要不要保留", "action": "itemno-tail" } ]
+            }
+            """;
+
+        var p = AiSheetProposal.Parse(json, StarColumns, 13, null);
+
+        Assert.Single(p.Questions);     // 只留模型问的那一条，不叠加成两条
+    }
+
+    [Fact]
+    public void 没有版式可改时不问那条_问了也办不成()
+    {
+        const string json = """{ "headerRow": 1 }""";
+
+        var p = AiSheetProposal.Parse(json, StarColumns, 13, null);
+
+        Assert.Empty(p.Questions);
     }
 }

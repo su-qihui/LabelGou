@@ -89,6 +89,11 @@ public static class AiSheetProposalPrompt
           .Append("  paper（要不要换成你点的那张纸）/ itemno-tail（货号里 * 后面那截留不留）。\n");
         sb.Append("问题与方案要配套：questions 里问「要不要重排」（retemplate）就必须同时给出 rows——\n")
           .Append("老板点了「要」而你没有 rows，软件只能报一句空话；给不出 rows 就别问这条，把事实写在 reason 里。\n");
+        // 第 34 棒：用户 2026-09-10 的抱怨是「思考完回答啥也没做」——后台它想了一大段（表格里某一列混了几样东西），
+        // 但最终回的那段 JSON 里 facts 与 questions 都是空的，软件就没有任何东西摆给他看，只剩一句"它没给可执行的改动"。
+        sb.Append("**哪怕你一个字段都不改，也必须回 facts**（你从这张表看出来的判断，一条一件，最多 5 条）。")
+          .Append("表里有毛病（某列混了几样东西、缺列、列名对不上、数字列里有文字）就写成 questions 让老板拍板——")
+          .Append("**只写在思考过程里等于没给**：软件只把你最终回的那段 JSON 摆给老板看。\n");
 
         if (sheetSpecNames.Count > 0)
         {

@@ -254,7 +254,10 @@ public class AiSheetProposalTests
         Assert.Equal("张数:绑定B列（件数）", lines[3]);
         Assert.Equal("预览:31个模板,155张", lines[4]);
 
-        Assert.Equal(new[] { "row-keep" }, p.Questions.Select(q => q.Action));
+        // 第 34 棒起这一列会**多一条**：货号列的样例里带 *（olu830-35*144），软件按确定性判定补问
+        // 「* 号后面那截要不要印」——模型这次问的是 row-keep，那条兜底问题照样补上
+        // （用户 2026-09-10 抱怨过「* 号后删不删也不问」）。顺序：模型先、软件兜底后。
+        Assert.Equal(new[] { "row-keep", "itemno-tail" }, p.Questions.Select(q => q.Action));
         Assert.Equal(34, p.Questions[0].Row);
         Assert.Equal(("不需要", "需要"), (p.Questions[0].NoLabel, p.Questions[0].YesLabel));
     }
