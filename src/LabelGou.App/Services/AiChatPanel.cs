@@ -129,6 +129,30 @@ public sealed class AiChatPanel : UserControl
 
     private readonly System.Windows.Threading.DispatcherTimer _waitTimer = new() { Interval = TimeSpan.FromSeconds(1) };
 
+    // ───────── 思考过程（第 31 棒：用户要"边想边滚、可展开可关"） ─────────
+    // 为什么它是面板的一部分而不是另开一个窗：他当时正在追"AI 排版为什么这么差"，
+    // 思考过程就是判断"它到底有没有读懂这张表"的唯一材料——和等待那一行是同一件事的两面。
+
+    private readonly StackPanel _think = new() { Visibility = Visibility.Collapsed };
+    private readonly TextBlock _thinkTitle = new() { FontSize = 12, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap };
+    private readonly Button _thinkToggle = new() { Content = "收起", FontSize = 11, Padding = new Thickness(6, 1, 6, 1), Margin = new Thickness(6, 0, 0, 0) };
+    private readonly TextBox _thinkBox = new()
+    {
+        IsReadOnly = true,
+        AcceptsReturn = true,
+        TextWrapping = TextWrapping.Wrap,
+        VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+        HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,   // 思考里会出现长 token，理由同对话区
+        FontSize = 12,
+        Height = 108,
+        Margin = new Thickness(0, 2, 0, 4),
+    };
+
+    /// <summary>攒 150ms 再刷一次思考框：思考片是几个字一片来的，逐片写控件会把 UI 线程刷爆。</summary>
+    private readonly System.Windows.Threading.DispatcherTimer _thinkTimer = new() { Interval = TimeSpan.FromMilliseconds(150) };
+    private readonly StringBuilder _thinkPending = new();
+    private bool _thinkCollapsed;
+
     /// <summary>逐条问题那一块：一条一行，行尾挂 ❌/✅ 两颗小按钮（第 22 棒）。</summary>
     private readonly StackPanel _questions = new() { Visibility = Visibility.Collapsed };
 
@@ -319,8 +343,18 @@ public sealed class AiChatPanel : UserControl
 
         Grid.SetRow(_waitLine, 3);
         // 等的那一句、附图那一行、逐条问题同一格堆着：窄栏里多一行固定高就是从对话区扣一块，StackPanel 只在需要时占高。
+        // 思考那一块的标题行：一句话 + 一颗「收起/展开」（用户要的"可以选择展开或者关闭"）。
+        var thinkHead = new WrapPanel { Margin = new Thickness(0, 2, 0, 0) };
+        thinkHead.Children.Add(_thinkTitle);
+        thinkHead.Children.Add(_thinkToggle);
+        _think.Children.Add(thinkHead);
+        _think.Children.Add(_thinkBox);
+        _thinkToggle.Click += (_, _) => ToggleThinking();
+        _thinkTimer.Tick += (_, _) => FlushThinking();
+
         var status = new StackPanel();
         status.Children.Add(_waitLine);
+        status.Children.Add(_think);
         status.Children.Add(_questions);
         status.Children.Add(_changes);
         status.Children.Add(_attachment);
@@ -578,8 +612,9 @@ public sealed class AiChatPanel : UserControl
         SetBusy(true, "AI 在看你这句话");
         try
         {
-            var outcome = await OllamaVisionClient.ChatAsync(
-                _settings, payload, image is { } shot ? (shot.Base64, shot.MimeType) : null,
+            var outcome = await SendStreamingAsync(
+                payload,
+                image is { } one ? new List<(string Base64, string MimeType)> { (one.Base64, one.MimeType) } : null,
                 _running.Token);
             if (outcome.Ok)
             {
@@ -678,9 +713,8 @@ public sealed class AiChatPanel : UserControl
         SetBusy(true, "AI 在照着这张表出一版模板");
         try
         {
-            var outcome = await OllamaVisionClient.ChatWithImagesAsync(
-                _settings, payload,
-                images.Count == 0 ? null : images.Select(x => (x.Base64, x.MimeType)).ToList(), _running.Token);
+            var outcome = await SendStreamingAsync(
+                payload, images.Count == 0 ? null : images.Select(x => (x.Base64, x.MimeType)).ToList(), _running.Token);
             if (!outcome.Ok)
             {
                 if (_running.IsCancellationRequested) Append("已停止，版式没回来，当前用的模板没被改动。");
@@ -755,6 +789,79 @@ public sealed class AiChatPanel : UserControl
     }
 
     /// <summary>
+    /// 面板发出去的请求**统一走这里**（第 31 棒）：流式 + 思考过程实时上屏。
+    /// <para>为什么收口成一处：三条路（自由聊天 / 出一版排版 / 读表提案）都要"边想边看"，
+    /// 各写一遍就等于三份流式纪律（停止、超时、收尾打点），迟早漏一份。</para>
+    /// <para>正文片段刻意不逐字上屏：提案那一枪回的是 JSON，逐字写进对话区纯属噪音——
+    /// 正文仍由各条调用方在拿到整段之后按自己的格式呈现。这里只把**思考**摊给人看。</para>
+    /// </summary>
+    private async Task<ChatOutcome> SendStreamingAsync(
+        List<AiChatTurn> payload, List<(string Base64, string MimeType)>? images, CancellationToken token)
+    {
+        BeginThinking();
+        // Progress<T> 在构造它的线程上捕获同步上下文——这里就是 UI 线程，所以片段回来时会回到 UI 线程。
+        var reasoning = new Progress<string>(AppendThinking);
+        var outcome = await OllamaVisionClient.ChatWithImagesStreamAsync(
+            _settings, payload, images, reasoning, onContent: null, token);
+        EndThinking(outcome);
+        return outcome;
+    }
+
+    /// <summary>开始一次流式请求：清空思考框、把它摆出来（**默认展开**——用户要的就是"看它在想什么"）。</summary>
+    private void BeginThinking()
+    {
+        lock (_thinkPending) _thinkPending.Clear();
+        _thinkBox.Clear();
+        _thinkTitle.Text = "它的思考过程（正在想…）";
+        _thinkBox.Visibility = _thinkCollapsed ? Visibility.Collapsed : Visibility.Visible;
+        _think.Visibility = Visibility.Visible;
+        _thinkTimer.Start();
+    }
+
+    /// <summary>
+    /// 思考片段到达（**从请求那条线程回来**）：只攒着，不碰控件。
+    /// <para>攒 150ms 再刷的理由见 <see cref="_thinkTimer"/>：一次读表两分钟、思考片上千片，
+    /// 逐片 AppendText + ScrollToEnd 会把 UI 线程刷爆（那是"界面卡住"的另一种成因）。</para>
+    /// </summary>
+    private void AppendThinking(string piece)
+    {
+        lock (_thinkPending) _thinkPending.Append(piece);
+    }
+
+    private void FlushThinking()
+    {
+        string pending;
+        lock (_thinkPending)
+        {
+            if (_thinkPending.Length == 0) return;
+            pending = _thinkPending.ToString();
+            _thinkPending.Clear();
+        }
+        _thinkBox.AppendText(pending);
+        _thinkBox.ScrollToEnd();
+    }
+
+    /// <summary>请求结束：停表、把最后一片刷完，并如实说清这次到底有没有思考内容。</summary>
+    private void EndThinking(ChatOutcome outcome)
+    {
+        _thinkTimer.Stop();
+        FlushThinking();
+        _thinkTitle.Text = outcome.Reasoning is { Length: > 0 } reason
+            ? $"它的思考过程（{reason.Length} 字 · 点右边可以收起）"
+            : _thinkBox.Text.Length > 0
+                ? "它的思考过程（已结束）"
+                : "这次没有思考内容（模型不吐思考，或通道设置里思考档关着）";
+    }
+
+    /// <summary>收起 / 展开思考框（用户 2026-09-10 要的"可以选择展开或者关闭"）。</summary>
+    private void ToggleThinking()
+    {
+        _thinkCollapsed = !_thinkCollapsed;
+        _thinkBox.Visibility = _thinkCollapsed ? Visibility.Collapsed : Visibility.Visible;
+        _thinkToggle.Content = _thinkCollapsed ? "展开" : "收起";
+    }
+
+    /// <summary>
     /// 「读这张表并提案」：把整张表（画像 + 贴图 + 纸规清单 + 原表行数）一次交给模型，
     /// 要它回一份「这张表该怎么切、这张纸该怎么摆」的 JSON 提案（第 21 棒）。
     /// <para>与 <see cref="AskLayoutAsync"/> 的分工：那条只要一版模板；这条管切表与选纸——
@@ -809,9 +916,8 @@ public sealed class AiChatPanel : UserControl
         SetBusy(true, "AI 在读这张表（行多的表会慢一点）");
         try
         {
-            var outcome = await OllamaVisionClient.ChatWithImagesAsync(
-                _settings, payload,
-                images.Count == 0 ? null : images.Select(x => (x.Base64, x.MimeType)).ToList(), _running.Token);
+            var outcome = await SendStreamingAsync(
+                payload, images.Count == 0 ? null : images.Select(x => (x.Base64, x.MimeType)).ToList(), _running.Token);
             if (!outcome.Ok)
             {
                 if (_running.IsCancellationRequested) Append("已停止，提案没回来，表与纸规都没动。");

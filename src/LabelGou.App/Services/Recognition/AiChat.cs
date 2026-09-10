@@ -24,6 +24,14 @@ public sealed class ChatOutcome
     /// <summary>模型/服务原话，出错时也留着，方便当场判断是端点错了还是模型在编。</summary>
     public string? Raw { get; init; }
 
+    /// <summary>
+    /// 模型的**思考内容**（第 31 棒）。
+    /// <para>为什么要它：用户 2026-09-10 实测要求「AI 再思考时可以选择展开或者关闭思考内容」，
+    /// 而且那时他正在判断"AI 排版为什么这么差"——<strong>思考过程就是判断它有没有读懂这张表的唯一材料</strong>。
+    /// 不流式时它只在回答回来后才拿得到（对"以为卡住了"没用），所以这一条是配着流式一起加的。</para>
+    /// </summary>
+    public string? Reasoning { get; init; }
+
     public bool Ok => Error is null && Text is not null;
 }
 

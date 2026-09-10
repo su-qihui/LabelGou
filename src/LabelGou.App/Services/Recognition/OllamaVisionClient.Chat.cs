@@ -59,6 +59,20 @@ public static partial class OllamaVisionClient
         if (key is null)
             return new ChatOutcome { Error = settings.MissingKeyHint };
 
+        var payload = JsonSerializer.Serialize(BuildOpenAiBody(settings, turns, images, stream: false));
+
+        return await PostChatAsync(settings, OpenAiUrl(settings.Endpoint, "chat/completions"), payload,
+            extractOpenAi, $"Bearer {key}", cancel, handler).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// OpenAI 兼容协议的请求体：**流式与非流式共用这一份**（第 31 棒抽出来的）。
+    /// <para>两处各写一份必定长得不一样（改了一处忘了另一处），那正是 §五-62 那类"换路复发"的根。</para>
+    /// </summary>
+    private static Dictionary<string, object?> BuildOpenAiBody(
+        RecognitionSettings settings, IReadOnlyList<AiChatTurn> turns,
+        IReadOnlyList<(string Base64, string MimeType)>? images, bool stream)
+    {
         var lastUser = -1;
         if (images is { Count: > 0 })
             for (var i = turns.Count - 1; i >= 0; i--)
@@ -96,16 +110,25 @@ public static partial class OllamaVisionClient
             ["messages"] = messages,
         };
         settings.ApplyThinkingTo(body);
-        var payload = JsonSerializer.Serialize(body);
-
-        return await PostChatAsync(settings, OpenAiUrl(settings.Endpoint, "chat/completions"), payload,
-            extractOpenAi, $"Bearer {key}", cancel, handler).ConfigureAwait(false);
+        if (stream) body["stream"] = true;
+        return body;
     }
 
-    /// <summary>本机 Ollama：<c>/api/chat</c> 收 messages，回 <c>message.content</c>。</summary>
+    /// <summary>本机 Ollama：<c>/api/chat</c> 收 messages，回 <c>message.content</c>（流式时逐行 JSON）。</summary>
     private static async Task<ChatOutcome> ChatOllamaAsync(
         RecognitionSettings settings, IReadOnlyList<AiChatTurn> turns,
         IReadOnlyList<(string Base64, string MimeType)>? images, CancellationToken cancel, HttpMessageHandler? handler)
+    {
+        var payload = JsonSerializer.Serialize(BuildOllamaBody(settings, turns, images, stream: false));
+
+        return await PostChatAsync(settings, settings.Endpoint.TrimEnd('/') + "/api/chat", payload,
+            extractOllama, authorization: null, cancel, handler).ConfigureAwait(false);
+    }
+
+    /// <summary>本机 Ollama 的请求体（同样流式与非流式共用一份，理由同 <see cref="BuildOpenAiBody"/>）。</summary>
+    private static Dictionary<string, object?> BuildOllamaBody(
+        RecognitionSettings settings, IReadOnlyList<AiChatTurn> turns,
+        IReadOnlyList<(string Base64, string MimeType)>? images, bool stream)
     {
         var lastUser = -1;
         if (images is { Count: > 0 })
@@ -121,15 +144,12 @@ public static partial class OllamaVisionClient
             messages.Add(msg);
         }
 
-        var payload = JsonSerializer.Serialize(new Dictionary<string, object?>
+        return new Dictionary<string, object?>
         {
             ["model"] = settings.Model,
             ["messages"] = messages,
-            ["stream"] = false,
-        });
-
-        return await PostChatAsync(settings, settings.Endpoint.TrimEnd('/') + "/api/chat", payload,
-            extractOllama, authorization: null, cancel, handler).ConfigureAwait(false);
+            ["stream"] = stream,
+        };
     }
 
     private static async Task<ChatOutcome> PostChatAsync(
