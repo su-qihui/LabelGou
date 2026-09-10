@@ -134,8 +134,13 @@ public static partial class OllamaVisionClient
         Func<string, (string? Text, string? ServerError)> extract,
         string? authorization, CancellationToken cancel, HttpMessageHandler? handler)
     {
-        var seconds = Math.Max(10, settings.TimeoutSeconds);
+        // 180 秒硬顶（第 25 棒）：用户存的更大值用的时候夹住——旧版直接吃 TimeoutSeconds，
+        // 而它被错误文案诱导到了 900，「读这张表」就真挂满 900 秒。超时就报明确失败，不自动重试。
+        var seconds = settings.EffectiveTimeoutSeconds;
+        var host = Uri.TryCreate(url, UriKind.Absolute, out var uri) ? uri.Host : url;
         var sw = Stopwatch.StartNew();
+        ChatOutcome outcome;
+        AppLog.Info($"AI 聊天/提案请求发出 → {host}（请求体约 {payload.Length / 1024} KB，上限 {seconds} 秒）");
         try
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancel);
@@ -152,37 +157,52 @@ public static partial class OllamaVisionClient
             sw.Stop();
 
             if (!response.IsSuccessStatusCode)
-                return new ChatOutcome { Error = $"服务返回 {(int)response.StatusCode}：{Brief(body)}", Elapsed = sw.Elapsed, Raw = body };
-
-            var (text, serverError) = extract(body);
-            if (serverError is not null)
-                return new ChatOutcome { Error = serverError, Elapsed = sw.Elapsed, Raw = text };
-            if (string.IsNullOrWhiteSpace(text))
-                return new ChatOutcome { Error = "模型没回话（返回里没有 content）。", Elapsed = sw.Elapsed, Raw = body };
-            return new ChatOutcome { Text = text, Elapsed = sw.Elapsed, Raw = text };
+                outcome = new ChatOutcome { Error = $"服务返回 {(int)response.StatusCode}：{Brief(body)}", Elapsed = sw.Elapsed, Raw = body };
+            else
+            {
+                var (text, serverError) = extract(body);
+                outcome = serverError is not null
+                    ? new ChatOutcome { Error = serverError, Elapsed = sw.Elapsed, Raw = text }
+                    : string.IsNullOrWhiteSpace(text)
+                        ? new ChatOutcome { Error = "模型没回话（返回里没有 content）。", Elapsed = sw.Elapsed, Raw = body }
+                        : new ChatOutcome { Text = text, Elapsed = sw.Elapsed, Raw = text };
+            }
         }
         catch (OperationCanceledException) when (cancel.IsCancellationRequested)
         {
             sw.Stop();
             // 用户点了「停止」：正常返回（不报错），调用方那句「已停止这一轮…」才有机会接手。
             // 旧过滤器把用户取消的 OCE 放出去，面板的 async void 没人接，直接弹 App 级错误框（第 23 棒）。
-            return new ChatOutcome { Elapsed = sw.Elapsed };
+            outcome = new ChatOutcome { Elapsed = sw.Elapsed };
         }
         catch (OperationCanceledException)
         {
             sw.Stop();
-            return new ChatOutcome { Error = $"{seconds} 秒内没等到 {url} 的回答（云端慢就把超时调大）。", Elapsed = sw.Elapsed };
+            outcome = new ChatOutcome
+            {
+                Error = $"{seconds} 秒内没等到 {host} 的回答。180 秒是定死的上限，不再往大调：等不起就把附的图减少几张或换更快的模型；"
+                      + "第一次就这么久多半是云端排队，隔几秒再点一次（不自动重试，重试也得人手点）。",
+                Elapsed = sw.Elapsed,
+            };
         }
         catch (HttpRequestException ex)
         {
             sw.Stop();
-            return new ChatOutcome { Error = DualStackConnect.Talk(ex), Elapsed = sw.Elapsed };
+            outcome = new ChatOutcome { Error = DualStackConnect.Talk(ex), Elapsed = sw.Elapsed };
         }
         catch (Exception ex)
         {
             sw.Stop();
-            return new ChatOutcome { Error = $"对话请求失败：{ex.Message}", Elapsed = sw.Elapsed };
+            outcome = new ChatOutcome { Error = $"对话请求失败：{ex.Message}", Elapsed = sw.Elapsed };
         }
+        // 收尾必收账（第 25 棒）：旧版这条链路一条日志不打，卡死了无从分诊「没发出」还是「没回来」。
+        if (outcome.Error is null)
+            AppLog.Info(cancel.IsCancellationRequested
+                ? $"AI 聊天/提案被手动停止：{host} 跑了 {outcome.Elapsed.TotalSeconds:0.0} 秒。"
+                : $"AI 聊天/提案完成：{host} 用了 {outcome.Elapsed.TotalSeconds:0.0} 秒，回了约 {(outcome.Text?.Length ?? 0) / 1024} KB。");
+        else
+            AppLog.Info($"AI 聊天/提案未成：{host} 用了 {outcome.Elapsed.TotalSeconds:0.0} 秒 —— {outcome.Error}");
+        return outcome;
     }
 
     private static (string? Text, string? ServerError) extractOpenAi(string body)

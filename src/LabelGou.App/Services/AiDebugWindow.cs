@@ -79,7 +79,7 @@ public sealed class AiDebugWindow : Window
         form.Children.Add(_useVision);
         form.Children.Add(_clearApiKey);
         form.Children.Add(Labeled("OCR 语言（留空用系统里第一个可用包，如 zh-Hans-CN / en-US）", _ocrLanguage));
-        form.Children.Add(Labeled("单次请求超时（秒，5~900）", _timeout));
+        form.Children.Add(Labeled("单次请求超时（秒，5~180；180 是硬顶，超时就报明确失败）", _timeout));
         form.Children.Add(_networkNotice);
 
         var buttons = new StackPanel { Orientation = Orientation.Horizontal };
@@ -328,13 +328,13 @@ public sealed class AiDebugWindow : Window
         _settings.UseLocalOcr = _useLocalOcr.IsChecked == true;
         _settings.OcrLanguage = string.IsNullOrWhiteSpace(_ocrLanguage.Text) ? null : _ocrLanguage.Text.Trim();
         if (int.TryParse(_timeout.Text.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var seconds)
-            && seconds is >= 5 and <= 900)
+            && seconds is >= 5 and <= 180)
         {
             _settings.TimeoutSeconds = seconds;
         }
         else
         {
-            WriteLine($"超时那个数（{_timeout.Text.Trim()}）不在 5~900 秒之间，这次沿用 {_settings.TimeoutSeconds} 秒。");
+            WriteLine($"超时那个数（{_timeout.Text.Trim()}）不在 5~180 秒之间（180 是硬顶），这次沿用 {_settings.TimeoutSeconds} 秒。");
         }
         return _settings;
     }

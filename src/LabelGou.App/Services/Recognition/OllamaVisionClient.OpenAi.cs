@@ -91,7 +91,7 @@ public static partial class OllamaVisionClient
         }
         catch (OperationCanceledException) when (!cancel.IsCancellationRequested)
         {
-            return (empty, $"{seconds} 秒内没等到 {url} 的回答（地址填的是云端就把它调大一点，填的是本机 Ollama 先确认它在跑）。");
+            return (empty, $"{seconds} 秒内没等到 {url} 的回答（这类请求封顶就等 60 秒，调大超时没用）：先看网线和地址，云端挤的话过会儿再点一次。");
         }
         catch (HttpRequestException ex)
         {
@@ -177,7 +177,7 @@ public static partial class OllamaVisionClient
         }
         catch (OperationCanceledException) when (!cancel.IsCancellationRequested)
         {
-            return (false, $"{seconds} 秒内没等到云端回答，检查网络，或在设置里把超时调大。");
+            return (false, $"{seconds} 秒内没等到云端回答（探活封顶就等 60 秒，调大超时没用）：检查网络与地址，过会儿再试。");
         }
         catch (HttpRequestException ex)
         {
@@ -266,7 +266,7 @@ public static partial class OllamaVisionClient
         try
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancel);
-            timeout.CancelAfter(TimeSpan.FromSeconds(Math.Max(10, settings.TimeoutSeconds)));
+            timeout.CancelAfter(TimeSpan.FromSeconds(settings.EffectiveTimeoutSeconds));   // 180 秒硬顶（第 25 棒）
             using var request = new HttpRequestMessage(HttpMethod.Post, OpenAiUrl(settings.Endpoint, "chat/completions"))
             {
                 Content = new StringContent(payload, Encoding.UTF8, "application/json"),
@@ -317,7 +317,7 @@ public static partial class OllamaVisionClient
         catch (OperationCanceledException) when (!cancel.IsCancellationRequested)
         {
             sw.Stop();
-            return new ModelOutcome { Error = $"云端响应超时（超过 {settings.TimeoutSeconds} 秒）。", Elapsed = sw.Elapsed };
+            return new ModelOutcome { Error = $"云端响应超时（上限 {settings.EffectiveTimeoutSeconds} 秒；180 秒是硬顶，不往大调；等不起就减图或换快模型）。要重试就人手再点一次。", Elapsed = sw.Elapsed };
         }
         catch (Exception ex)
         {

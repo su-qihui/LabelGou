@@ -37,8 +37,16 @@ public sealed class RecognitionSettings
     /// <summary>本机实测可用的视觉模型名（3.3GB）。没有它时识别会降级为纯 OCR，不报错。</summary>
     public string Model { get; set; } = "qwen3-vl:4b";
 
-    /// <summary>单次请求上限。实测 4B 视觉模型约 34 秒/张，冷启动加载模型还要更久。</summary>
+    /// <summary>单次请求上限（用户填的那格）。真生效的是 <see cref="EffectiveTimeoutSeconds"/>。</summary>
     public int TimeoutSeconds { get; set; } = 180;
+
+    /// <summary>
+    /// 真正生效的超时：<b>10…180 秒硬顶</b>（用户 2026-09-09 定的纪律：180 秒不到就报明确失败，
+    /// 不许自动重试、不许把界面吊在一条没希望的请求上）。
+    /// <para>为什么要单独这一格：上一版请求层直接吃 <see cref="TimeoutSeconds"/>，而设置窗允许到 900——
+    /// 用户照错误文案「云端慢就把超时调大」填了 900，「读这张表」就真挂满 900 秒没回应（第 25 棒现场取证）。
+    /// 存着的 900 不改用户的文件，用的时候夹到 180。</para></summary>
+    public int EffectiveTimeoutSeconds => Math.Clamp(TimeoutSeconds, 10, 180);
 
     /// <summary>
     /// 协议：<c>ollama</c> 走本机原生接口（/api/tags、/api/generate）；

@@ -26,11 +26,21 @@ public static class DualStackConnect
     /// <summary>单个地址的连接预算：到点就放弃它去看别的，不让一个黑洞吃满整次请求。</summary>
     public static readonly TimeSpan PerAddressBudget = TimeSpan.FromSeconds(8);
 
+    /// <summary>连接复用寿命硬顶（第 25 棒）：超过这个数就整条丢弃换新，不再拿旧线发下一个请求。
+    /// <para>为什么是 30 秒：百炼这类网关会掐掉闲置连接（TCP 层静默，客户端探不到），
+    /// 旧版默认无限复用 → 隔几分钟再点「读这张表」，POST 落在死线上挂到超时（现场报障 900 秒）。
+    /// 交互级低频调用下重建连接的 TLS 握手（本机实测 0.27 秒拿 401）可忽略，缩复用窗口比探活对症。</para></summary>
+    public static readonly TimeSpan ConnectionLifetime = TimeSpan.FromSeconds(30);
+
     /// <summary>带双栈回退连接的处理器。只给真发 HTTP 的共享客户端用；单测注入假 handler 时不走这里。
     /// <para>签名事实（编译器实测，不是凭印象）：.NET 8 的 <c>ConnectCallback</c> 是
     /// <c>Func&lt;SocketsHttpConnectionContext, CancellationToken, ValueTask&lt;Stream&gt;&gt;</c>；
     /// 带 <c>ConnectCallbackContext</c> 的重载是 .NET 9 才有的，本机 SDK = 8.0.424 用不了。</para></summary>
-    public static SocketsHttpHandler NewHandler() => new() { ConnectCallback = OpenStreamAsync };
+    public static SocketsHttpHandler NewHandler() => new()
+    {
+        ConnectCallback = OpenStreamAsync,
+        PooledConnectionLifetime = ConnectionLifetime,
+    };
 
     /// <summary>
     /// 连接顺序：IPv4 全部排在 IPv6 前面，同族内保持 DNS 给的顺序（<c>OrderBy</c> 是稳定排序）。
