@@ -275,7 +275,11 @@ public static class RowLayoutJsonParser
             || text == "1" || text.Equals("yes", StringComparison.OrdinalIgnoreCase) || text == "是" || text == "有");
     }
 
-    private static HorizontalAlign ParseAlign(string? text) => text?.Trim().ToLowerInvariant() switch
+    /// <summary>
+    /// 对齐字符串 → <see cref="HorizontalAlign"/>。<strong>internal 是给第 39 棒的 <c>RowFormatEvidence</c> 用的</strong>：
+    /// 表格里量到的对齐也是这几个词（<c>center</c>/<c>right</c>/…），两处各写一份映射必然长歪。
+    /// </summary>
+    internal static HorizontalAlign ParseAlign(string? text) => text?.Trim().ToLowerInvariant() switch
     {
         "center" or "middle" or "居中" or "中" => HorizontalAlign.Center,
         "right" or "far" or "右" => HorizontalAlign.Right,

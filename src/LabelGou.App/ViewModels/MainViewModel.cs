@@ -1549,7 +1549,7 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
     /// ② 流水号 / 每箱品名这类没连上的列对它干脆不存在 ③ 一张全没连上的表（TOP 那种）直接把它挡在门外
     /// （用户 2026-09-08：「即使我把正确的排版给它，它也按表格的来」）。这里只摊事实，不替模型裁决。</para>
     /// </summary>
-    public (IReadOnlyList<ColumnPortrait> Columns, string Portrait)? BuildTablePortrait()
+    public (IReadOnlyList<ColumnPortrait> Columns, string Portrait, IReadOnlyList<CellFormat>? CellFormats)? BuildTablePortrait()
     {
         var data = _data;
         if (data is null) return null;
@@ -1557,13 +1557,19 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         // 第 31 棒：把「哪几块的字长得跟别处不一样」也递过去——这是字号/粗体/居中的**唯一依据**。
         // 用户 2026-09-10 实测指出「AI 排版效果差，差在字体大小」，并自己判断出根因是「AI 读不到表格中
         // 字体、粗细、居中」；确实如此（styles.xml 以前只用来看日期与小数位）。CSV 没有格式可言，跳过。
+        // 第 39 棒补一句：读是读到了，可**接着让模型把数字猜回来**才是真错处——所以现在同一份 xlsx 多读一份
+        // 结构化的（ReadCellFormats）留给软件自己算，散文那一份照旧发出去（它还负责告诉模型哪一块是抄标签的样例）。
         var ext = Path.GetExtension(SourcePath ?? string.Empty).ToLowerInvariant();
-        IReadOnlyList<string>? formats = ext is ".xlsx" or ".xlsm"
+        var isXlsx = ext is ".xlsx" or ".xlsm";
+        IReadOnlyList<string>? formats = isXlsx
             ? XlsxTableReader.DescribeCellFormats(SourcePath!, SelectedSheet)
+            : null;
+        var cellFormats = isXlsx
+            ? XlsxTableReader.ReadCellFormats(SourcePath!, SelectedSheet)
             : null;
         // 前导批注行与贴图也一并摊出去（第 20 棒）：纸规常写在表头以上，样张常贴在右侧，
         // 不递过去模型就只能凭列名猜，而用户 2026-09-09 定的主路径是「AI 自己看这张表」。
-        return (columns, TablePortrait.Describe(columns, data.RowCount, data.Preamble, data.Images, formats));
+        return (columns, TablePortrait.Describe(columns, data.RowCount, data.Preamble, data.Images, formats), cellFormats);
     }
 
     /// <summary>这张表里贴着的图（模板截图 / 效果照片）。CSV 与没图的表是空表。</summary>

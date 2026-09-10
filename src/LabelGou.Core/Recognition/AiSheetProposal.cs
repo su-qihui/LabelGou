@@ -457,11 +457,17 @@ public sealed record AiSheetProposal(
     /// <param name="columns">列画像，透传给版式解析（用来把 <c>{{col:列名}}</c> 对回真表头）。</param>
     /// <param name="rawRowCount">原表总行数（1 起口径的边界，用来挡越界行号）。</param>
     /// <param name="sheetSpecNames">软件里真有的纸规名（不在这份清单里的名字一律拒，见 <see cref="Errors"/>）。</param>
+    /// <param name="cellFormats">
+    /// 逐格量到的字号/粗体/居中（<see cref="XlsxTableReader.ReadCellFormats"/>），第 39 棒加。
+    /// <strong>给了就由软件照它算标签上每行字该多大</strong>，不再用模型填的那几个数（见 <see cref="RowFormatEvidence"/>）；
+    /// CSV 与量不到的场合传 null，照旧用模型填的。
+    /// </param>
     public static AiSheetProposal Parse(
         string? modelText,
         IReadOnlyList<ColumnPortrait>? columns,
         int rawRowCount,
-        IReadOnlyList<string>? sheetSpecNames = null)
+        IReadOnlyList<string>? sheetSpecNames = null,
+        IReadOnlyList<CellFormat>? cellFormats = null)
     {
         var notes = new List<string>();
         var errors = new List<string>();
@@ -536,6 +542,22 @@ public sealed record AiSheetProposal(
                 notes.Add("这次没重排你的标签内容（它没说标签上该印哪几行），模板还是你现在用的那张");
             }
 
+            // ── 字号/粗细/居中：由软件照表里量到的算，不用模型填的（第 39 棒）──
+            // 必须排在下面 FriendlyTemplateLines 之前：那是把这份 spec 念给人听的一段话，
+            // 先念后改就又是「面板说的一套、落地的一套」两张皮（§五 里这类账不止一笔）。
+            // templateSource 也顺势提到这里读——原来它在末尾构造 SheetReadout 时才读，
+            // 一份 JSON 里同一个键读两次，早晚有一处改了另一处忘。
+            var templateSource = TextField(fields, "templateSource", 20);
+            if (layout?.Spec is { } evidenceSpec && cellFormats is { Count: > 0 })
+            {
+                var (_, templateColumn) = ResolveColumn(templateSource, columns);
+                // 抄标签那块通常就贴在列名下面，连着量会多出一格（1 格列名 + 4 行标签读成 5 行），
+                // 于是跟标签的 4 行对不上、整块证据白量。列名在第几行上面已经解析过了，
+                // 传下去不是猜；它没说或说这张表没有列名，就传 -1 让那边按"认不出就整块不改"走。
+                var headerIndex0 = hasHeader == false || headerRow is null ? -1 : headerRow.Value - 1;
+                RowFormatEvidence.TryApply(evidenceSpec, cellFormats, templateColumn ?? -1, notes, headerIndex0);
+            }
+
             // ── 纸规：只能选真有的，或给一张合法的新纸 ──
             var specName = TextField(fields, "sheetSpec", 60);
             if (specName is not null && sheetSpecNames is { Count: > 0 })
@@ -581,7 +603,7 @@ public sealed record AiSheetProposal(
                 paperW, paperH, cols, rowsPerPage, BoolField(fields, "followsLabel"),
                 StringListField(fields, "warnings"), TextField(fields, "reason", 400),
                 notes, errors,
-                new SheetReadout(dataCols, TextField(fields, "templateSource", 20),
+                new SheetReadout(dataCols, templateSource,
                     layout?.Spec is { } spec ? FriendlyTemplateLines(spec, columns) : Array.Empty<string>(),
                     qtyHeader, qtyIndex, TextField(fields, "paperText", 60)),
                 questions,

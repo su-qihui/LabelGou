@@ -69,20 +69,44 @@ public sealed class RowLayoutSpec
     public List<RowSpec> Rows { get; } = new();
 
     /// <summary>
+    /// 每一行的行带高度（毫米），顺序与 <see cref="Rows"/> 一致；排不出来（行数 0、留白与行距把版面吃光）返回空表。
+    /// <para><strong>为什么单独抽出来</strong>：<see cref="Build"/> 与「照表格里量到的字号反算行字号」
+    /// （<c>RowFormatEvidence</c>）必须用同一份几何——两处各算一遍，本仓已经踩过好几次
+    /// （两套算术各自长歪，谁也不知道对方改了什么）。</para>
+    /// </summary>
+    public IReadOnlyList<double> BandHeightsMm()
+    {
+        if (Rows.Count == 0) return Array.Empty<double>();
+        if (WidthMm - PaddingMm * 2 <= 1) return Array.Empty<double>();
+        var usableH = HeightMm - PaddingMm * 2 - GapMm * (Rows.Count - 1);
+        if (usableH <= 1) return Array.Empty<double>();
+
+        var totalWeight = Rows.Sum(r => Math.Max(0.05, r.Weight));
+        var perWeightMm = usableH / totalWeight;
+        return Rows.Select(r => perWeightMm * Math.Max(0.05, r.Weight)).ToArray();
+    }
+
+    /// <summary>
+    /// 行带高度 → 撑满这一带的字号（磅），并夹到可印范围。
+    /// <para>这一条公式就是房里那个「真件 2.08 pt/mm」的出处：
+    /// <c>StretchEmPerBand(0.74) × MmToPoint(1mm) = 0.74 × 72/25.4 = 2.0976</c>。
+    /// 金沐那张验算：140×100、留白 4、行距 1.5 → 明细行带 19.886mm → 41.7pt，
+    /// 与内置模板按真件量到的 41.4pt 对得上。<strong>所以不需要第二个常数。</strong></para>
+    /// </summary>
+    public static double StretchPointForBand(double bandMm)
+        => Math.Clamp(Mm.MmToPoint(bandMm * StretchEmPerBand), TemplateValidator.MinFontPt, TemplateValidator.MaxFontPt);
+
+    /// <summary>
     /// 算成一份 <see cref="LabelTemplate"/>。行带高度按权重分配，剩余高度分给行距。
     /// <para>行数 0、或留白/行距把版面吃光（可用高 ≤ 0）时返回 null：宁可让调用方看到"排不出来"，
     /// 也不产出一份会越界的模板。</para>
     /// </summary>
     public LabelTemplate? Build()
     {
-        if (Rows.Count == 0) return null;
+        var bands = BandHeightsMm();
+        if (bands.Count == 0) return null;
 
         var usableW = WidthMm - PaddingMm * 2;
-        var usableH = HeightMm - PaddingMm * 2 - GapMm * (Rows.Count - 1);
-        if (usableW <= 1 || usableH <= 1) return null;
-
-        var totalWeight = Rows.Sum(r => Math.Max(0.05, r.Weight));
-        var perWeightMm = usableH / totalWeight;
 
         var template = new LabelTemplate
         {
@@ -110,13 +134,13 @@ public sealed class RowLayoutSpec
         }
 
         var y = PaddingMm;
-        foreach (var row in Rows)
+        for (var i = 0; i < Rows.Count; i++)
         {
-            var band = perWeightMm * Math.Max(0.05, row.Weight);
+            var row = Rows[i];
+            var band = bands[i];
             var sizePt = row.Stretch
-                ? Mm.MmToPoint(band * StretchEmPerBand)
-                : row.SizePt;
-            sizePt = Math.Clamp(sizePt, TemplateValidator.MinFontPt, TemplateValidator.MaxFontPt);
+                ? StretchPointForBand(band)
+                : Math.Clamp(row.SizePt, TemplateValidator.MinFontPt, TemplateValidator.MaxFontPt);
 
             template.Elements.Add(new TemplateElement
             {

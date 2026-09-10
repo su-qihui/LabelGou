@@ -571,7 +571,10 @@ public partial class MainWindow : Window
                 portrait?.Columns, portrait?.Portrait, sheetImages, hasArtwork,
                 // 提案那一枪要的东西：真有的纸规清单（它只能从这份里选）、原表行数（行号边界）、
                 // 软件目前猜的表头行（告诉它现在错在哪，它才知道要不要改）。
-                _viewModel.SheetSpecNames, _viewModel.RawRowCount, _viewModel.DetectedHeaderRow);
+                _viewModel.SheetSpecNames, _viewModel.RawRowCount, _viewModel.DetectedHeaderRow,
+                // 第 39 棒：逐格量到的字号/粗体/居中。这一份**不发出去**，是软件自己留着算标签字号的
+                // （模型回提案时由 RowFormatEvidence 照它改 spec），所以它不在提示词里出现。
+                portrait?.CellFormats);
         };
         panel.ApplyLayout = ApplyAiLayout;
         panel.ApplyProposal = ApplyAiProposal;

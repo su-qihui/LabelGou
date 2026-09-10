@@ -5,6 +5,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using LabelGou.App.Services.Recognition;
+using LabelGou.Core.Data;
 using LabelGou.Core.Marks;
 using LabelGou.Core.Recognition;
 using LabelGou.Core.Templates;
@@ -25,6 +26,10 @@ public sealed record AiChatImage(string Base64, string MimeType, string Name);
 /// <para><paramref name="SheetImages"/> 与 <paramref name="TemplateHasArtwork"/> 是第 20 棒加的：表里贴的效果照片
 /// 与当前模板自带的底稿。第 20 棒曾定「没参照就不得造」，<strong>第 38 棒撤了那道闸</strong>（三道闸口径）：
 /// 现在没参照也发请求，但面板得知道有没有参照——要声明的是「这一版是猜的」，不是不许排。</para>
+/// <para><paramref name="CellFormats"/> 是第 39 棒加的：表里逐格量到的字号/粗体/居中。
+/// <strong>它不发出去</strong>——发给模型的是画像里那段大白话；这一份是软件自己留着<strong>算</strong>的，
+/// 模型回提案时由 <c>RowFormatEvidence</c> 照它把标签上每行字该多大定下来，不再用模型填的数。
+/// CSV 与读不出格式的场合是 null（那就照旧用模型填的兜底）。</para>
 /// </summary>
 public sealed record AiLayoutContext(
     IReadOnlyList<(string Key, string Name, string Sample)> Fields,
@@ -37,7 +42,8 @@ public sealed record AiLayoutContext(
     bool TemplateHasArtwork = false,
     IReadOnlyList<string>? SheetSpecNames = null,
     int RawRowCount = 0,
-    int CurrentHeaderRow = 0)
+    int CurrentHeaderRow = 0,
+    IReadOnlyList<CellFormat>? CellFormats = null)
 {
     /// <summary>能问的东西有没有：已连字段与整表画像一个都没才算真的没得可给（第 15 棒：不能再把「没连上字段」当门槛）。</summary>
     public bool HasAnythingToAsk => (Fields is { Count: > 0 }) || !string.IsNullOrWhiteSpace(Portrait);
@@ -229,6 +235,13 @@ public sealed class AiChatPanel : UserControl
 
     /// <summary>上一次递出去的纸规清单（提案只能从这份里点名）。空 = 还没问过。</summary>
     private IReadOnlyList<string> _lastSpecNames = Array.Empty<string>();
+
+    /// <summary>
+    /// 上一次问出去时那张表逐格量到的字号/粗体/居中（第 39 棒）。
+    /// <para>为什么要缓存而不是解析时再读一次文件：提案回来那一刻可能是几十秒以后，用户可能已经换了表
+    /// （换了表这份就该作废，跟着 <c>_lastColumns</c> 一起刷新才对得上）。null = CSV 或量不到。</para>
+    /// </summary>
+    private IReadOnlyList<CellFormat>? _lastCellFormats;
 
     private CancellationTokenSource? _running;
     private RecognitionSettings _settings = RecognitionSettings.Load();
@@ -992,6 +1005,7 @@ public sealed class AiChatPanel : UserControl
         _lastColumns = ctx.Columns;
         _lastRawRowCount = ctx.RawRowCount;
         _lastSpecNames = ctx.SheetSpecNames ?? Array.Empty<string>();
+        _lastCellFormats = ctx.CellFormats;
 
         var prompt = AiSheetProposalPrompt.Build(
             ctx.Portrait ?? "（没拿到整张表画像，只有已连字段）",
@@ -1047,7 +1061,8 @@ public sealed class AiChatPanel : UserControl
         // 没问过就直喂（单测这条路）时不知道原表行数，那就用 int.MaxValue 让边界检查空转，
         // 而不是编一个看起来很真的行数。
         var rawRows = _lastRawRowCount > 0 ? _lastRawRowCount : int.MaxValue;
-        var proposal = AiSheetProposal.Parse(modelText, _lastColumns, rawRows, _lastSpecNames);
+        // 第 39 棒：把量到的格式一起交进去——字号/粗细/居中由软件算，不再用模型填的那几个数。
+        var proposal = AiSheetProposal.Parse(modelText, _lastColumns, rawRows, _lastSpecNames, _lastCellFormats);
         _questionsAnswered = 0;      // 新一轮的问题从 0 数起（第 35 棒：答满才自动重出）
         foreach (var note in proposal.Notes) Append($"（已修正：{note}）");
         if (proposal.Errors.Count > 0)

@@ -164,6 +164,53 @@ public static class XlsxTableReader
         }
     }
 
+    /// <summary>
+    /// 同一份样式的<strong>结构化出口</strong>：逐格量到的字号 / 粗体 / 水平对齐（第 39 棒）。
+    /// <para><strong>为什么要在 <see cref="DescribeCellFormats"/> 之外再加一个</strong>：那一个把量到的东西
+    /// 压成几句大白话给人（和模型）看，而软件自己要拿这些数字<strong>算</strong>标签上每行字该多大——
+    /// 让模型读完散文再把数字猜回来，就是用户 2026-09-10 圈出的「AI 排版效果差，差在字体大小」的来路
+    /// （量测明明在软件手里）。两份出口共用一次读取，口径不会分叉。</para>
+    /// <para>与散文那一份的两点不同，都是刻意的：① <strong>不做「只报跟主流不一样的」那层筛</strong>——
+    /// 算比例要的是全部行，筛过的没法算；② 走 <see cref="StyleInfo.ResolvedFormatOf"/>，
+    /// 连「全默认格」也报字号（散文那份对默认格返回 null 是为了去噪，量测这份不能瞎）。</para>
+    /// <para>读不出来（文件坏了、不是 xlsx、没有样式表）返回空表，<strong>不编</strong>。</para>
+    /// </summary>
+    /// <param name="filePath">xlsx 路径。</param>
+    /// <param name="sheetName">工作表名；null = 第一个。</param>
+    public static IReadOnlyList<CellFormat> ReadCellFormats(string filePath, string? sheetName = null)
+    {
+        try
+        {
+            using var zip = ZipFile.OpenRead(filePath);
+            var sheets = ReadWorkbook(zip);
+            if (sheets.Count == 0) return Array.Empty<CellFormat>();
+            var target = sheetName is null
+                ? sheets[0]
+                : sheets.FirstOrDefault(s => string.Equals(s.Name, sheetName, StringComparison.OrdinalIgnoreCase))
+                  ?? sheets[0];
+
+            var styles = ReadStyles(zip);
+            var sharedStrings = ReadSharedStrings(zip);
+            var (_, _, stylesUsed) = ReadSheetCells(zip, target.EntryPath, sharedStrings, styles);
+            if (stylesUsed.Count == 0) return Array.Empty<CellFormat>();
+
+            var list = new List<CellFormat>(stylesUsed.Count);
+            foreach (var ((row, col), styleIndex) in stylesUsed)
+            {
+                if (styles.ResolvedFormatOf(styleIndex) is not { } f) continue;
+                list.Add(new CellFormat(row, col, f.SizePt, f.Bold, f.Align));
+            }
+
+            // 排好序交出去：调用方（找连续块）要的就是行序，不该每家自己再排一遍。
+            list.Sort((a, b) => a.Row != b.Row ? a.Row.CompareTo(b.Row) : a.Col.CompareTo(b.Col));
+            return list;
+        }
+        catch (Exception)
+        {
+            return Array.Empty<CellFormat>();
+        }
+    }
+
     /// <summary>格式差异最多报几处（多了等于没有，而且会把画像淹掉）。</summary>
     private const int MaxFormatLines = 8;
 
@@ -465,6 +512,25 @@ public static class XlsxTableReader
             var fontId = CellXfFontIds[styleIndex];
             var align = styleIndex < CellXfAligns.Count ? CellXfAligns[styleIndex] : null;
             if (fontId <= 0 && align is null) return null;                 // 全默认
+            var (size, bold) = fontId >= 0 && fontId < Fonts.Count ? Fonts[fontId] : (0d, false);
+            return (size, bold, align);
+        }
+
+        /// <summary>
+        /// 这一格<strong>量到的</strong>格式（第 39 棒）：与 <see cref="FormatOf"/> 的唯一区别是
+        /// <strong>连「全默认格」也报</strong>——默认那号字体的字号照样给出来。
+        /// <para>为什么要两份：<see cref="FormatOf"/> 对默认格返回 null 是给<strong>散文</strong>去噪用的
+        /// （否则每张表都刷一屏「11pt 常规」，把要紧的那几格淹掉）；而拿字号<strong>算比例</strong>时，
+        /// 默认格恰恰不能瞎——抄标签那一块里用默认字体的那一行要是量不到，比例就无从算起，
+        /// 整块证据只能作废。</para>
+        /// <para>工作簿没有字体表（<see cref="Fonts"/> 是空的）时返回 null：<strong>真量不到就不编</strong>，
+        /// 绝不拿一个想当然的 11pt 顶上去。</para>
+        /// </summary>
+        public (double SizePt, bool Bold, string? Align)? ResolvedFormatOf(int styleIndex)
+        {
+            if (Fonts.Count == 0) return null;
+            var fontId = styleIndex >= 0 && styleIndex < CellXfFontIds.Count ? CellXfFontIds[styleIndex] : 0;
+            var align = styleIndex >= 0 && styleIndex < CellXfAligns.Count ? CellXfAligns[styleIndex] : null;
             var (size, bold) = fontId >= 0 && fontId < Fonts.Count ? Fonts[fontId] : (0d, false);
             return (size, bold, align);
         }
