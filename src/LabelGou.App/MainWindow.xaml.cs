@@ -584,9 +584,13 @@ public partial class MainWindow : Window
                 var next = _viewModel.CurrentChoice;
                 var rawIndex = q.Row - 1;
                 var excluded = (next.ExcludedRawRows ?? Array.Empty<int>()).ToList();
+                var skip = next.SkipSummaryRows;
                 if (yes)
                 {
-                    if (!excluded.Remove(rawIndex))
+                    // 第 24 棒：这行要是被合计行兜底剔着的，光从点名名单里删还不够——不关兜底就是
+                    // 「点了报成功其实没改」（第 22 棒钉过的那件事不能拿兜底再犯一遍）。
+                    if (_viewModel.RowAutoSkippedByHeuristic(rawIndex)) skip = false;
+                    if (!excluded.Remove(rawIndex) && !_viewModel.RowAutoSkippedByHeuristic(rawIndex))
                         return (true, $"第 {q.Row} 行本来就在印，什么都没改。");
                 }
                 else if (!excluded.Contains(rawIndex))
@@ -594,8 +598,8 @@ public partial class MainWindow : Window
                     excluded.Add(rawIndex);
                 }
                 var (ok, msg) = _viewModel.ApplySheetChoice(new LabelGou.Core.Data.SheetLayoutChoice(
-                    next.HeaderRowIndex, next.HasHeader, excluded.Count == 0 ? null : excluded));
-                return (ok, (yes ? $"第 {q.Row} 行照你说的要印：" : $"第 {q.Row} 行不印了：") + msg);
+                    next.HeaderRowIndex, next.HasHeader, excluded.Count == 0 ? null : excluded, skip));
+                return (ok, (yes ? $"第 {q.Row} 行照你说的要印" : $"第 {q.Row} 行不印了") + "：" + msg);
             }
 
             case LabelGou.Core.Recognition.AiSheetQuestion.ActionRetemplate:
@@ -694,12 +698,13 @@ public partial class MainWindow : Window
         return (anyOk, string.Join("\n", lines));
     }
 
-    /// <summary>两份切法是否等价（等价就别白重读一次文件，也不要假装"改了其实没改"）。</summary>
+    /// <summary>两份切法是否等价（等价就别白重读一次文件，也不要假装"改了其实没改"）。合计行兜底也是一项（第 24 棒）。</summary>
     private static bool SameCut(LabelGou.Core.Data.SheetLayoutChoice a, LabelGou.Core.Data.SheetLayoutChoice b)
     {
         var ra = a.ExcludedRawRows ?? Array.Empty<int>();
         var rb = b.ExcludedRawRows ?? Array.Empty<int>();
         return a.HasHeader == b.HasHeader && a.HeaderRowIndex == b.HeaderRowIndex
+            && a.SkipSummaryRows == b.SkipSummaryRows
             && ra.SequenceEqual(rb);
     }
 

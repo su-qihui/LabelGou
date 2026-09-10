@@ -23,7 +23,8 @@ public sealed class TabularData
         IReadOnlyList<SheetImage>? images = null,
         IReadOnlyList<int>? dataRowRawIndexes = null,
         SheetLayoutChoice? choice = null,
-        int rawRowCount = 0)
+        int rawRowCount = 0,
+        IReadOnlyList<SummaryRowHit>? autoSkippedSummaryRows = null)
     {
         SourceFile = sourceFile;
         SheetName = sheetName;
@@ -36,6 +37,7 @@ public sealed class TabularData
         DataRowRawIndexes = dataRowRawIndexes ?? Array.Empty<int>();
         Choice = choice ?? SheetLayoutChoice.Auto;
         RawRowCount = rawRowCount > 0 ? rawRowCount : rows.Count;
+        AutoSkippedSummaryRows = autoSkippedSummaryRows ?? Array.Empty<SummaryRowHit>();
     }
 
     /// <summary>来源文件完整路径。</summary>
@@ -89,6 +91,12 @@ public sealed class TabularData
     /// </summary>
     public int RawRowCount { get; }
 
+    /// <summary>
+    /// 被合计行兜底（<see cref="SummaryRowSpotter"/>，第 24 棒）剔掉的行：每行都带人话理由。
+    /// <para>为什么必须逐行摊出来而不只报个数：§十-A-13 的原口径是「不许默默删行」——
+    /// 判据再保守也有错杀的一天，错杀了要让用户一眼看到剔了谁、凭什么，才能在 ① 步关开关改回来。</para></summary>
+    public IReadOnlyList<SummaryRowHit> AutoSkippedSummaryRows { get; }
+
     /// <summary>第几条数据行对应原表第几行（1 起，给人看）；没这张对应表时退回"第 n+1 条"。</summary>
     public string RawRowLabelOf(int dataIndex)
         => dataIndex >= 0 && dataIndex < DataRowRawIndexes.Count
@@ -126,7 +134,12 @@ public sealed class TabularData
         var enc = Encoding is null ? "" : $" · {Encoding.WebName}";
         var cut = Choice.IsDefault ? string.Empty : $" · {Choice.Describe()}";
         var head = HasHeaderRow ? $" · 表头在第 {HeaderRowIndex + 1} 行" : " · 按你说的没表头（首行也当数据）";
-        return $"{Path.GetFileName(SourceFile)}[{SheetName}]{enc}{head} · {RowCount} 行 × {ColumnCount} 列{cut}";
+        var auto = AutoSkippedSummaryRows.Count > 0
+            ? $" · 自动跳过 {AutoSkippedSummaryRows.Count} 行疑似合计（" +
+              string.Join("；", AutoSkippedSummaryRows.Select(h => $"原表第 {h.RawRowIndex + 1} 行：{h.Reason}")) +
+              "），不认可就在第 1 步关掉「合计行兜底」，关掉即一行不剔"
+            : string.Empty;
+        return $"{Path.GetFileName(SourceFile)}[{SheetName}]{enc}{head} · {RowCount} 行 × {ColumnCount} 列{cut}{auto}";
     }
 }
 

@@ -175,6 +175,12 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
     /// <summary>映射告警那几行（与「模板还差哪几项」分家存，后者是派生值，每次重列）。</summary>
     private List<string> _mapIssueLines = new();
 
+    /// <summary>模板写死文字与这批货对不上号的告警（第 24 棒，活账 A-1）：② 步橙色区列它，⑤ 闸门拿它拦一次。</summary>
+    private IReadOnlyList<string> _templateCautions = Array.Empty<string>();
+
+    /// <summary>上一次算出的字面量告警（与 IssueLines 同源；ExportViewModel 取这一份拼闸门文案）。</summary>
+    public IReadOnlyList<string> TemplateCautions => _templateCautions;
+
     public MainViewModel() : this(uiState: null)
     {
     }
@@ -996,11 +1002,120 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
             if (!rows.Contains(r - 1)) rows.Add(r - 1);
         }
         rows.Sort();
-        return new SheetLayoutChoice(header, p.HasHeader ?? _choice.HasHeader, rows.Count == 0 ? null : rows);
+        // 用户开关过的合计行兜底原样带走：AI 没提这一项，它就不该被提案悄悄顶回来
+        return new SheetLayoutChoice(header, p.HasHeader ?? _choice.HasHeader,
+            rows.Count == 0 ? null : rows, _choice.SkipSummaryRows);
     }
 
     /// <summary>回到「软件自动猜表头、不剔行」的那一份切法（用户说「改错了，恢复」时走这条）。</summary>
     public (bool Ok, string Message) ResetSheetChoice() => ApplySheetChoice(SheetLayoutChoice.Auto);
+
+    // ---------- ① 步的手动切法（第 24 棒，§十-A-14/33② 欠的那块控件） ----------
+
+    /// <summary>① 步「列名那一行」下拉的一项：Label 给人看，另两项是落回 <see cref="SheetLayoutChoice"/> 的料。</summary>
+    public sealed record HeaderRowOption(string Label, int? HeaderIndex, bool HasHeader);
+
+    private bool _suppressHeaderRowOption;
+    private HeaderRowOption? _selectedHeaderRowOption;
+
+    /// <summary>① 步那张下拉的候选：自动猜 / 没列名 / 原表第 1…20 行（表短就只列到真有的行）。</summary>
+    public ObservableCollection<HeaderRowOption> HeaderRowOptions { get; } = new();
+
+    /// <summary>用户选中的切法。改了就重读一遍源文件（失败自动退回原样，不拿一张能用的表冒险）。</summary>
+    public HeaderRowOption? SelectedHeaderRowOption
+    {
+        get => _selectedHeaderRowOption;
+        set
+        {
+            if (_suppressHeaderRowOption || value is null || Equals(value, _selectedHeaderRowOption)) return;
+            var previous = _selectedHeaderRowOption;
+            // 只动表头那一项：点名剔过的行与合计行开关都原样带走（并集语义不变）
+            var next = new SheetLayoutChoice(value.HeaderIndex, value.HasHeader,
+                _choice.ExcludedRawRows, _choice.SkipSummaryRows);
+            _selectedHeaderRowOption = value;
+            Raise(nameof(SelectedHeaderRowOption));
+            if (next == _choice) return;
+            if (string.IsNullOrWhiteSpace(_sourcePath)) { _choice = next; return; }
+
+            var (ok, msg) = ApplySheetChoice(next);
+            if (!ok)
+            {
+                _suppressHeaderRowOption = true;
+                _selectedHeaderRowOption = previous;
+                Raise(nameof(SelectedHeaderRowOption));
+                _suppressHeaderRowOption = false;
+                StatusMessage = "这条切法改不动（表保持原样）：" + msg;
+                return;
+            }
+            StatusMessage = "已按你选的切法重读这张表：" + msg;
+        }
+    }
+
+    /// <summary>① 步的「合计行兜底」开关（默认开）。关掉 = 一行都不自动剔，刚才被跳过的行全部回到数据里。</summary>
+    public bool SkipSummaryRowsChecked
+    {
+        get => _choice.SkipSummaryRows;
+        set
+        {
+            if (value == _choice.SkipSummaryRows) return;
+            var next = _choice with { SkipSummaryRows = value };
+            if (string.IsNullOrWhiteSpace(_sourcePath))
+            {
+                _choice = next;   // 还没表就只记着开关，下次读表直接生效
+                Raise(nameof(SkipSummaryRowsChecked));
+                return;
+            }
+            var (ok, msg) = ApplySheetChoice(next);
+            if (!ok) StatusMessage = "这个开关没改成（表保持原样）：" + msg;
+            else StatusMessage = value
+                ? "已开合计行兜底：像合计的行会被跳过，剔了谁、凭什么会逐行写在状态栏。"
+                : "已关合计行兜底：刚才被自动跳过的行都回到数据里了。";
+            Raise(nameof(SkipSummaryRowsChecked));   // 失败时 ApplySheetChoice 已把 _choice 退回原样，开关跟着退回去
+        }
+    }
+
+    /// <summary>原表这一行是不是被合计行兜底跳过的。用户点名「这行要印」时得先关兜底，
+    /// 否则点了按钮其实什么都没改（第 22 棒钉过的「点了报成功其实没改」不能拿兜底再犯一遍）。</summary>
+    public bool RowAutoSkippedByHeuristic(int rawIndex0)
+        => _data?.AutoSkippedSummaryRows.Any(h => h.RawRowIndex == rawIndex0) == true;
+
+    /// <summary>重列 ① 步的候选与选中项（每次 LoadSource 之后跑；全程吃 suppress 旗，不拿赋值反抛 ApplySheetChoice）。</summary>
+    private void BuildHeaderRowOptions()
+    {
+        _suppressHeaderRowOption = true;
+        HeaderRowOptions.Clear();
+        var detected = _data;
+        var auto = new HeaderRowOption(detected is { HasHeaderRow: true }
+            ? $"软件自动猜（现认第 {detected.HeaderRowIndex + 1} 行）"
+            : "软件自动猜", null, true);
+        HeaderRowOptions.Add(auto);
+        HeaderRowOptions.Add(new HeaderRowOption("这张表没有列名（第一行也是货）", null, false));
+        if (detected is not null)
+        {
+            var top = Math.Min(detected.RawRowCount - 1, 20);   // 表头底下至少得留一行货
+            for (var i = 0; i < top; i++)
+                HeaderRowOptions.Add(new HeaderRowOption($"原表第 {i + 1} 行", i, true));
+        }
+
+        _selectedHeaderRowOption = _choice.HasHeader switch
+        {
+            false => HeaderRowOptions[1],
+            _ when _choice.HeaderRowIndex is null => auto,
+            _ => HeaderRowOptions.FirstOrDefault(o => o.HeaderIndex == _choice.HeaderRowIndex)
+                 ?? AddPinnedRowOption(_choice.HeaderRowIndex.Value),
+        };
+        Raise(nameof(SelectedHeaderRowOption));
+        _suppressHeaderRowOption = false;
+        Raise(nameof(SkipSummaryRowsChecked));
+    }
+
+    /// <summary>钉在 20 行以外的表头（罕见但真有人把表头写到很下面）：补一条进候选，不然下拉显示不出当前选中。</summary>
+    private HeaderRowOption AddPinnedRowOption(int headerIndex)
+    {
+        var option = new HeaderRowOption($"原表第 {headerIndex + 1} 行", headerIndex, true);
+        HeaderRowOptions.Add(option);
+        return option;
+    }
 
     /// <summary>
     /// 读一份表（<paramref name="path"/> 为 null/空白时什么都不做）。对话框、重选工作表、
@@ -1036,6 +1151,8 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
                 ColumnOptions.Add(new ColumnOption(c, $"{HeaderRowDetector.ColumnLetter(c)} · {data.Headers[c]}"));
             }
             Raise(nameof(ColumnOptions));
+            // ① 步的「列名那一行」下拉跟着这张表重列，选中项摆回当前切法（第 24 棒）。
+            BuildHeaderRowOptions();
             // ③ 步那个条码栏目列的是「这张表真有的列」，所以换表之后必须重列一次。
             Barcode.RefreshSources();
 
@@ -1436,12 +1553,44 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         Sheet.RefreshFromSource();
     }
 
-    /// <summary>重列第 2 步那块提示：映射告警 + 当前模板的缺值提醒（派生值，换模板也要跟着变）。</summary>
+    /// <summary>重列第 2 步那块提示：映射告警 + 当前模板的缺值提醒 + 字面量对不上号的告警（都是派生值，换模板/换表要跟着变）。</summary>
     private void RebuildIssueLines()
     {
         IssueLines.Clear();
         foreach (var line in _mapIssueLines) IssueLines.Add(line);
         foreach (var line in MissingValueLines()) IssueLines.Add(line);
+        _templateCautions = LiteralGuardLines();
+        foreach (var line in _templateCautions) IssueLines.Add(line);
+        Raise(nameof(TemplateCautions));
+    }
+
+    /// <summary>
+    /// 模板里写死的字面量与这批货对一遍（第 24 棒，活账 A-1）：判据本体在 Core（<see cref="TemplateLiteralGuard"/>），
+    /// 这里只备三样料：这批已知的收货人/产地（字段值 + 整批固定值）与这张表出现过的全部格子。
+    /// 一条数据都没映射出来时不对（那是「还没连好」，不是「对不上」，拿它喊人会越喊越乱）。</summary>
+    private IReadOnlyList<string> LiteralGuardLines()
+    {
+        var template = SelectedTemplate?.Template;
+        var data = _data;
+        if (template is null || data is null || _rawRecords.Count == 0) return Array.Empty<string>();
+
+        var consignees = _rawRecords.Select(r => r.GetText(MarkFieldKey.Consignee)).ToList();
+        var origins = _rawRecords.Select(r => r.GetText(MarkFieldKey.Origin)).ToList();
+        if (_working is { } profile)
+        {
+            consignees.Add(profile.FixedValueFor(MarkFieldKey.Consignee) ?? string.Empty);
+            origins.Add(profile.FixedValueFor(MarkFieldKey.Origin) ?? string.Empty);
+        }
+
+        var cells = new List<string>();
+        foreach (var row in data.Rows)
+        {
+            cells.AddRange(row);
+            if (cells.Count >= 100_000) break;   // 封顶：判据宽一寸只是少喊一声，告警不是「绝无别家字样」的担保
+        }
+        cells.AddRange(data.Headers);
+        foreach (var row in data.Preamble) cells.AddRange(row);
+        return TemplateLiteralGuard.Check(template, consignees, origins, cells);
     }
 
     private void ApplySavedProfile(MappingProfile saved)

@@ -104,7 +104,10 @@ public static class TableImporter
         if (detection.DataRows.Count == 0)
             throw new InvalidDataException(choice is { IsDefault: false }
                 ? $"按这份指令切完（{choice.Describe()}）这张表已经没有数据行了，所以不改。"
-                : $"识别到表头（第 {detection.HeaderRowIndex + 1} 行），但表头下面没有数据行。");
+                : detection.AutoSkippedSummaryRows is { Count: > 0 } autoSkipped
+                    ? $"整张表只剩下像合计行的行（被兜底剔了 {autoSkipped.Count} 行），没有货行可切，所以不改。"
+                      + "这些行真是货的话，在第 1 步关掉「合计行兜底」再读一次。"
+                    : $"识别到表头（第 {detection.HeaderRowIndex + 1} 行），但表头下面没有数据行。");
 
         var actualSheet = lower is ".xlsx" or ".xlsm"
             ? (sheetName ?? ListSheets(filePath).FirstOrDefault() ?? "Sheet1")
@@ -121,7 +124,8 @@ public static class TableImporter
             ReadImagesSafely(filePath, lower, actualSheet),
             detection.DataRowRawIndexes,
             choice ?? SheetLayoutChoice.Auto,
-            detection.RawRowCount);
+            detection.RawRowCount,
+            detection.AutoSkippedSummaryRows);
     }
 
     /// <summary>

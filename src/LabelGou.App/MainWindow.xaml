@@ -166,6 +166,23 @@
 
                             <TextBlock Text="{Binding HeaderInfoText}" Style="{StaticResource Hint}" Margin="0,6,0,4" />
 
+                            <!-- 第 24 棒：切法不再只能靠 AI 提案或菜单——① 步直接能选；改的都是重读一遍源文件，失败自动退回原样 -->
+                            <Grid Margin="0,0,0,4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="列名那一行：" VerticalAlignment="Center" />
+                                <ComboBox Grid.Column="1" ItemsSource="{Binding HeaderRowOptions}"
+                                          SelectedItem="{Binding SelectedHeaderRowOption}"
+                                          DisplayMemberPath="Label"
+                                          IsEnabled="{Binding HasData}"
+                                          ToolTip="猜错了就在这里点名：无表头的表选「没有列名」，首行就不会被当表头吃掉（少印一张的根因）；选谁都会重读一遍文件，改坏了会自动退回原样" />
+                            </Grid>
+                            <CheckBox Content="合计行兜底：自动跳过像合计/小计的行（剔了谁、凭什么逐行写在上面那行字里）"
+                                      IsChecked="{Binding SkipSummaryRowsChecked}"
+                                      ToolTip="只认两种形状：写着合计/TOTAL 且至多一个数值的行；孤零零一个数又恰等于那一列其余行总和的行。错杀了货行就关掉这里，一行都不自动剔" />
+
                             <Grid Margin="0,0,0,4">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="Auto" />

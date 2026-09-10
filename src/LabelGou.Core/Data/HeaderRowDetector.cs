@@ -28,13 +28,16 @@ public static class HeaderRowDetector
     /// <para>为什么要它：AI 报的是原表行号（它看到的就是原表），软件内部数的是第几条，
     /// 中间隔着一段被跳掉的行与剔掉的行——不留这张对应表，两边一定会错配（错配 = 剔错行）。</para></param>
     /// <param name="RawRowCount">原表总行数（含被跳过的与被剔除的）：AI 报行号的合法上界。</param>
+    /// <param name="AutoSkippedSummaryRows">被合计行兜底剔掉的行（第 24 棒）：只含「纯靠判据剔」的那些，
+    /// 被指令点名过的行不重复报。空表 = 没剔过任何东西；递 null 指令的旧调用方恒为空。</param>
     public sealed record DetectionResult(
         int HeaderRowIndex,
         IReadOnlyList<string> Headers,
         IReadOnlyList<IReadOnlyList<string>> DataRows,
         IReadOnlyList<IReadOnlyList<string>> PreambleRows,
         IReadOnlyList<int> DataRowRawIndexes,
-        int RawRowCount = 0);
+        int RawRowCount = 0,
+        IReadOnlyList<SummaryRowHit> AutoSkippedSummaryRows = null!);
 
     public static DetectionResult Detect(IReadOnlyList<string[]> grid) => Detect(grid, null);
 
@@ -45,11 +48,11 @@ public static class HeaderRowDetector
     {
         if (grid.Count == 0)
             return new DetectionResult(0, Array.Empty<string>(), Array.Empty<IReadOnlyList<string>>(),
-                Array.Empty<IReadOnlyList<string>>(), Array.Empty<int>(), 0);
+                Array.Empty<IReadOnlyList<string>>(), Array.Empty<int>(), 0, Array.Empty<SummaryRowHit>());
 
         var width = grid.Max(r => r.Length);
         var hasHeader = choice?.HasHeader ?? true;
-        var excluded = choice?.ExcludedRawRows is { Count: > 0 }
+        var explicitExcluded = choice?.ExcludedRawRows is { Count: > 0 }
             ? new HashSet<int>(choice.ExcludedRawRows) : null;
 
         int headerIndex;
@@ -61,6 +64,23 @@ public static class HeaderRowDetector
         var headerRow = headerIndex >= 0 ? grid[headerIndex] : Array.Empty<string>();
         var headers = NormalizeHeaders(headerRow, width);
         var firstDataRow = Math.Max(0, headerIndex + 1);
+
+        // 合计行兜底（第 24 棒）：只在递了指令时生效（递 null = 旧行为一字不差）；
+        // 表头那一行永远不在候选里（扫描从它下面开始），指令点名的剔除行与它取并集、不互相覆盖。
+        var autoHits = choice is not null && choice.SkipSummaryRows
+            ? SummaryRowSpotter.Find(grid, headerIndex)
+            : Array.Empty<SummaryRowHit>();
+        HashSet<int>? excluded = null;
+        if (explicitExcluded is not null) excluded = new HashSet<int>(explicitExcluded);
+        foreach (var hit in autoHits)
+        {
+            if (explicitExcluded is not null && explicitExcluded.Contains(hit.RawRowIndex)) continue;
+            (excluded ??= new HashSet<int>()).Add(hit.RawRowIndex);
+        }
+        // 递 null 指令的旧路径：autoHits 恒空 → 这里恒空表，绝不把 null 递进非空属性
+        IReadOnlyList<SummaryRowHit> autoReported = autoHits
+            .Where(h => explicitExcluded is null || !explicitExcluded.Contains(h.RawRowIndex))
+            .ToList();
 
         var preamble = new List<IReadOnlyList<string>>(Math.Max(0, headerIndex));
         for (var r = 0; r < headerIndex; r++) preamble.Add(Pad(grid[r], width));   // 到表头那一行为止（不含它本身）
@@ -79,7 +99,7 @@ public static class HeaderRowDetector
         // HeaderRowIndex == -1 本身就是「没表头」的记号，不再另存一个 bool（两个真源必有一个会说谎）。
         // RawRowCount 递的是原表总行数（含被剔的）：下一轮 AI 报行号时边界必须是这张表本来的长度，
         // 否则剔过几行之后，「第 412 行」会被当成越界误删——而合计行恰恰就在最后那几行。
-        return new DetectionResult(headerIndex, headers, dataRows, preamble, rawIndexes, grid.Count);
+        return new DetectionResult(headerIndex, headers, dataRows, preamble, rawIndexes, grid.Count, autoReported);
     }
 
     /// <summary>把一行补齐到表宽（Excel 的稀疏行右边那几格根本不存在，不是空串）。</summary>

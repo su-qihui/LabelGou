@@ -153,13 +153,17 @@ public class AiSheetProposalTests
     public void 按指令当没表头_首行回到数据里_合计行能被剔掉()
     {
         var auto = HeaderRowDetector.Detect(NoHeaderVendorGrid());
+        // 第 24 棒同步：递了指令（含这里只说「没表头」的那份）时合计行兜底默认开，
+        // 表尾那行「合计 8」不再需要人点名也会被剔——本条的钉点仍是「首行不再被吃掉」。
         var asSaid = HeaderRowDetector.Detect(NoHeaderVendorGrid(), new SheetLayoutChoice(HasHeader: false));
         var cut = HeaderRowDetector.Detect(NoHeaderVendorGrid(),
             new SheetLayoutChoice(HasHeader: false, ExcludedRawRows: new[] { 2 }));
 
         Assert.Equal(2, auto.DataRows.Count);              // 自动猜：首行被当表头吃掉 → 少一张
-        Assert.Equal(3, asSaid.DataRows.Count);            // 按指令：三行都是货
-        Assert.Equal(2, cut.DataRows.Count);               // 合计行剔掉，不多印那张
+        Assert.Equal(new[] { 0, 1 }, asSaid.DataRowRawIndexes);   // 按指令：首行回到数据里（第 3 行被兜底剔）
+        Assert.Single(asSaid.AutoSkippedSummaryRows);      //  剔了谁、凭什么逐行报出
+        Assert.Equal(2, cut.DataRows.Count);               // 点名的剔法殊途同归
+        Assert.Empty(cut.AutoSkippedSummaryRows);          // 被指令点名的行不重复报第二遍
         Assert.Equal(new[] { 0, 1 }, cut.DataRowRawIndexes);   // 剩下的两行对应原表第 1、2 行
         Assert.Equal(-1, asSaid.HeaderRowIndex);           // -1 就是「这张表没表头」的唯一记号
         Assert.Equal(3, asSaid.RawRowCount);               // 原表行数的上界不受剔除影响

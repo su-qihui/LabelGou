@@ -475,7 +475,8 @@ public sealed class ExportViewModel : ObservableObject
     /// </summary>
     private bool PassesReviewGate(PageContentSource source)
     {
-        var text = ComposeGateMessage(source.LabelCount, source.UnconfirmedLabelCount, _owner.Sheet.Plan?.ErrorCount ?? 0);
+        var text = ComposeGateMessage(source.LabelCount, source.UnconfirmedLabelCount,
+            _owner.Sheet.Plan?.ErrorCount ?? 0, _owner.TemplateCautions);
         if (text is null) return true;
 
         var accepted = _owner.ConfirmGate?.Invoke(text) ?? true;
@@ -490,16 +491,25 @@ public sealed class ExportViewModel : ObservableObject
     /// 闸门要问的那句话；返回 null 表示没东西要拦，直接放行。
     /// <para>单独抽成一个静态函数：「纸规错误也进闸门」这件事否则只能靠真开一个打印任务才能验，
     /// 而本机没实体打印机（§五-70）。</para>
+    /// <para>第 24 棒（活账 A-1 的最小改法）：模板写死文字与这批货对不上号的告警也进这道门——
+    /// 纯告警也能触发一次确认（只拦这一次，不自动改；与 §五-123 不冲突：它仍只在真出纸/出文件那一路跑）。</para>
     /// </summary>
-    public static string? ComposeGateMessage(int labelCount, int flagged, int sheetErrors)
+    public static string? ComposeGateMessage(int labelCount, int flagged, int sheetErrors,
+        IReadOnlyList<string>? templateCautions = null)
     {
-        if (flagged <= 0 && sheetErrors <= 0) return null;
+        var cautions = templateCautions ?? Array.Empty<string>();
+        if (flagged <= 0 && sheetErrors <= 0 && cautions.Count == 0) return null;
 
         var lines = new List<string>();
         if (flagged > 0)
             lines.Add($"这批共 {labelCount} 张标签里，有 {flagged} 张含「需人工核对」的字段（红色标记）。");
         if (sheetErrors > 0)
             lines.Add($"整版方案上有 {sheetErrors} 条标成错误的纸规问题（列在第 ④ 步的提示里），件上可能缺线、缺角线或裁错位置。");
+        if (cautions.Count > 0)
+        {
+            lines.Add($"模板里有 {cautions.Count} 处写死的文字与这批货对不上号：");
+            foreach (var c in cautions) lines.Add("・" + c);
+        }
         lines.Add(string.Empty);
         lines.Add("唛头数字印错就是真实货损。确认这些已经人工过目了吗？");
         return string.Join("\n", lines);
