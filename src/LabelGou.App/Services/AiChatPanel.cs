@@ -358,8 +358,22 @@ public sealed class AiChatPanel : UserControl
         status.Children.Add(_questions);
         status.Children.Add(_changes);
         status.Children.Add(_attachment);
-        Grid.SetRow(status, 3);
-        root.Children.Add(status);
+
+        // 第 32 棒：这一块（思考 + 问题 + 改动卡 + 附图状态）是会长的，以前无界增长，
+        // 把下面那一排按钮、输入框与脚注**顶出可视区**，而面板本身不滚 —— 用户 2026-09-10 的原话是
+        // 「输出结果存在下面遮挡看不到」。修法：给它**封顶 + 自己滚**（上限跟面板高度走，见下面的 SizeChanged），
+        // 让对话区（唯一的 Star 行）去吸收剩余高度 —— 这样按钮与输入框**仍然钉在底部**。
+        // 为什么不做"整页滚"：那会把输入框也滚走，手感更差；"上划能看见"这个目的，这一块自己滚已经达到。
+        var statusScroll = new ScrollViewer
+        {
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,   // 横向不滚：内容自己换行（第 31 棒那条教训）
+        };
+        statusScroll.Content = status;
+        Grid.SetRow(statusScroll, 3);
+        root.Children.Add(statusScroll);
+        // 上限 = 面板高的 45%（至少 150）：面板高时它多露几行，面板矮时它自己滚，两种情况都不顶掉下面的东西。
+        SizeChanged += (_, _) => statusScroll.MaxHeight = Math.Max(150, ActualHeight * 0.45);
 
         // 两排按钮合成一排 WrapPanel：窄的时候自己换行，不再固定吃掉两行高。
         var buttons = new WrapPanel { Margin = new Thickness(0, 0, 0, 2) };
@@ -976,6 +990,14 @@ public sealed class AiChatPanel : UserControl
         var shownAsCards = ShowChanges(proposal);
         if (!shownAsCards && items.Count > 0 && proposal.Questions.Count == 0)
             foreach (var item in items) Append("　· " + item);
+        // 第 32 棒：版式**逐行核对**（这一行到底填哪一列）。用户要的是「出完版式要联系上下文校验
+        // 哪个位置填哪一列数据」——先做软件侧这一半：判据是它自己报的绑定 + 真表头，免费、确定性、不会编。
+        var rowCheck = proposal.DescribeLayoutRows(_lastColumns);
+        if (rowCheck.Count > 0)
+        {
+            Append("这个版式每一行填什么（对着表核一遍，带 ⚠ 的对不上）：");
+            foreach (var row in rowCheck) Append("　· " + row);
+        }
         // 第 31 棒：它对这张表的**判断逐条**摆出来。用户 2026-09-10 截图里那段「它的说法」读着混乱——
         // 根因是提示词逼它"一句说完"（五件事挤成一句），不是显示写错了。现在一条一件，人一行行扫。
         if (proposal.Facts.Count > 0)
@@ -1084,7 +1106,7 @@ public sealed class AiChatPanel : UserControl
         _changes.Visibility = Visibility.Visible;
         _changes.Children.Add(new TextBlock
         {
-            Text = $"它打算改这 {changes.Count} 处，逐条确认（点「采用」才动，点「取消」就不动）：",
+            Text = $"它打算改这 {changes.Count} 处，逐条确认（点「采用」才动，点「不执行」就不动）：",
             FontSize = 12,
             FontWeight = FontWeights.SemiBold,
             TextWrapping = TextWrapping.Wrap,
@@ -1092,22 +1114,50 @@ public sealed class AiChatPanel : UserControl
         });
         foreach (var change in changes)
         {
-            var block = new StackPanel { Margin = new Thickness(0, 3, 0, 3) };
-            block.Children.Add(new TextBlock
-            {
-                Text = "· " + change.Target,
-                FontSize = 12,
-                TextWrapping = TextWrapping.Wrap,
-            });
-            // 原值 → 新值单独一行、缩进、次要色：这一行才是人判断的依据（旧清单只有后半截）。
-            block.Children.Add(new TextBlock
+            var block = new StackPanel { Margin = new Thickness(0, 2, 0, 2) };
+
+            // 第 32 棒：**默认收起**。用户 2026-09-10 第二次复测：「这个采用先以折叠（点击展开）」——
+            // 现场是一张卡的详情 + 按钮占 5 行，四条卡就把面板下半截顶没了（优化②的遮挡有一半是它造成的）。
+            // 收起时只留「改哪里」一行 + 两颗按钮；点「详情」才展开「原值 → 新值」。
+            var detail = new TextBlock
             {
                 Text = change.DiffText,
                 FontSize = 11,
                 Foreground = Brushes.Gray,
                 TextWrapping = TextWrapping.Wrap,
                 Margin = new Thickness(10, 1, 0, 0),
-            });
+                Visibility = Visibility.Collapsed,
+            };
+            var toggle = new Button
+            {
+                Content = "详情",
+                FontSize = 11,
+                Padding = new Thickness(6, 1, 6, 1),
+                Margin = new Thickness(6, 0, 0, 0),
+            };
+            toggle.Click += (_, _) =>
+            {
+                var show = detail.Visibility != Visibility.Visible;
+                detail.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+                toggle.Content = show ? "收起" : "详情";
+            };
+            var head = new Grid();
+            head.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            head.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            var title = new TextBlock
+            {
+                Text = "· " + change.Target,
+                FontSize = 12,
+                TextWrapping = TextWrapping.Wrap,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            Grid.SetColumn(title, 0);
+            Grid.SetColumn(toggle, 1);
+            head.Children.Add(title);
+            head.Children.Add(toggle);
+            block.Children.Add(head);
+            block.Children.Add(detail);
+
             var answer = new TextBlock
             {
                 FontSize = 11,
@@ -1125,14 +1175,14 @@ public sealed class AiChatPanel : UserControl
             };
             var no = new Button
             {
-                Content = "❌ 取消",
+                Content = "❌ 不执行",
                 FontSize = 11,
                 Padding = new Thickness(6, 1, 6, 1),
             };
             var actions = new WrapPanel
             {
                 HorizontalAlignment = HorizontalAlignment.Right,
-                Margin = new Thickness(0, 2, 0, 0),
+                Margin = new Thickness(0, 1, 0, 0),
             };
             actions.Children.Add(no);
             actions.Children.Add(yes);

@@ -272,4 +272,66 @@ public class AiChangeTests
         Assert.Contains("撑满", card.After);                 // 撑满行的字号由行高反算，不假装等于某个 pt
         Assert.Contains("12pt", card.After);
     }
+
+    // ───────────────── 版式逐行核对（第 32 棒：用户要"联系上下文校验哪个位置填哪一列"） ─────────────────
+
+    [Fact]
+    public void 版式逐行核对_对得上的写清列表头与列字母()
+    {
+        const string json = """
+            {
+              "mappings": [ { "column": "货号 ITEM NO:", "field": "ItemNo" } ],
+              "rows": [ { "content": "BOLAROM" },
+                        { "content": "Item no：{{ItemNo}}" },
+                        { "content": "G.W.：{{col:毛重G.W.(kg)}}" } ]
+            }
+            """;
+
+        var p = AiSheetProposal.Parse(json, ThreeColumns, 13, null);
+        var lines = p.DescribeLayoutRows(ThreeColumns);
+
+        Assert.Equal(3, lines.Count);
+        Assert.Contains("固定文字", lines[0]);                              // 一整行没引用数据
+        Assert.Contains("货号/款号 → 货号 ITEM NO:（B列）", lines[1]);        // 字段 → 它这一次绑的那一列
+        Assert.Contains("毛重G.W.(kg)（C列）", lines[2]);                    // col: 直取某一列
+        Assert.DoesNotContain("⚠", string.Join("", lines));
+    }
+
+    [Fact]
+    public void 版式逐行核对_字段没说读哪一列时当场带警告()
+    {
+        const string json = """
+            {
+              "rows": [ { "content": "Item no：{{col:表里没有的列}}" },
+                        { "content": "QTY：{{Quantity}}" } ]
+            }
+            """;
+
+        var p = AiSheetProposal.Parse(json, ThreeColumns, 13, null);
+        var lines = p.DescribeLayoutRows(ThreeColumns);
+
+        // 第一层防线在解析器：表里根本没有的列名**当场剥掉**（放行等于让模型编数据），并记一句 Note。
+        // 所以那一行到这里已经变成"固定文字"了——这条断言把两层防线的分工钉住。
+        Assert.Contains("固定文字", lines[0]);
+        Assert.Contains(p.Notes, n => n.Contains("表里没有的列"));
+
+        // 第二层是这里的逐行核对：字段认得出（每箱数量），但它这一次没说读哪一列 → 必须带 ⚠，
+        // 这正是用户要的「哪个位置填哪一列数据的校验」。
+        Assert.Contains("⚠", lines[1]);
+        Assert.Contains("每箱数量", lines[1]);
+    }
+
+    [Fact]
+    public void 版式逐行核对_没有列清单时不装作核对过()
+    {
+        const string json = """
+            { "rows": [ { "content": "Item no：{{col:随便一列}}" } ] }
+            """;
+
+        var p = AiSheetProposal.Parse(json, null, 13, null);
+        var lines = p.DescribeLayoutRows(null);
+
+        Assert.Single(lines);
+        Assert.Contains("核不了", lines[0]);              // 拿不到列清单就说不确定，不编一个"对得上"
+    }
 }

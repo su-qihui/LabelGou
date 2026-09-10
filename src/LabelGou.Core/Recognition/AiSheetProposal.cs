@@ -225,6 +225,59 @@ public sealed record AiSheetProposal(
             : "没剔任何行（整张表都按货印）";
 
     /// <summary>
+    /// 版式**逐行核对**：这一行填的是哪一列 / 哪个字段，对不上的当场标出来（第 32 棒）。
+    /// <para><strong>为什么要有它</strong>：用户 2026-09-10 第二次复测的原话是「有些时候 AI 查看表格仍达不到效果，
+    /// 当我把图片给他做出排版后，它应该联系上下文对新的排版方式校验（哪个位置填那一列数据）」——
+    /// 他要的是"出完版式自己回头看一遍：这一格到底填哪一列"。这里先做**软件侧**那一半：
+    /// 判据是**它自己报的绑定（<see cref="Mappings"/>）+ 真表头**，那正是"上下文"；
+    /// 免费、确定性、不会编（真让模型再读一遍是另一件事，见 §三-阶段 32 的「不做」）。</para>
+    /// <para>四种情形各自说清：对得上（写列表头与列字母）／引用了表里没有的列／引用了还没绑定的字段／
+    /// 这一整行是固定文字（没引用任何数据）。</para>
+    /// </summary>
+    /// <param name="columns">真表头（判"这一列到底存不存在"）。null = 没有列画像，只报它引用了什么。</param>
+    public IReadOnlyList<string> DescribeLayoutRows(IReadOnlyList<ColumnPortrait>? columns)
+    {
+        var lines = new List<string>();
+        if (Layout is not { } spec) return lines;
+        for (var i = 0; i < spec.Rows.Count; i++)
+        {
+            var used = new List<string>();
+            foreach (System.Text.RegularExpressions.Match match in PlaceholderPattern.Matches(spec.Rows[i].Content))
+                used.Add(DescribePlaceholder(match.Groups[1].Value.Trim(), columns));
+            var head = $"第{i + 1}行";
+            lines.Add(used.Count == 0
+                ? $"{head}：固定文字（没引用任何数据）"
+                : $"{head}：填 " + string.Join(" ＋ ", used));
+        }
+        return lines;
+    }
+
+    /// <summary>一行里的一个占位符 → 它到底要填哪一列（对不上就带 ⚠，不装作对得上）。</summary>
+    private string DescribePlaceholder(string key, IReadOnlyList<ColumnPortrait>? columns)
+    {
+        // {{col:表头}} 是直取某一列，不经过字段
+        if (key.StartsWith("col:", StringComparison.OrdinalIgnoreCase))
+        {
+            var header = key[4..].Trim();
+            var hit = columns?.FirstOrDefault(c =>
+                string.Equals(c.Header.Trim(), header, StringComparison.OrdinalIgnoreCase));
+            if (columns is null || columns.Count == 0) return $"{header}（这次没拿到列清单，核不了）";
+            return hit is null
+                ? $"⚠「{header}」这一列表里没有"
+                : $"{hit.Header}（{HeaderRowDetector.ColumnLetter(hit.Index)}列）";
+        }
+
+        // 字段键：先认字段，再看它这一次打算绑在哪一列
+        var field = ResolveField(key);
+        if (field is null) return $"⚠「{key}」认不出是哪个字段，也不是某一列";
+        var name = MarkFieldCatalog.Get(field.Value).ChineseName;
+        var bound = Mappings.FirstOrDefault(m => m.Field == field.Value);
+        return bound is null
+            ? $"⚠「{name}」这一次没说它读哪一列"
+            : $"{name} → {bound.ColumnHeader}（{HeaderRowDetector.ColumnLetter(bound.ColumnIndex)}列）";
+    }
+
+    /// <summary>
     /// 版式那一行的**字号摘要**（第 31 棒）。
     /// <para>为什么必须写出来：用户 2026-09-10 说"AI 排版效果差，差在字体大小"，而卡片上**一个字号都没写**
     /// （只有"新版式 4 行 · 140 × 100 mm"）——人点 ✅ 之前根本看不见字号，只能印出来才发现，

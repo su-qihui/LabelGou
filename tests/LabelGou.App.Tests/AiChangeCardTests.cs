@@ -98,7 +98,7 @@ public sealed class AiChangeCardTests : IDisposable
             panel.ApplyChange = (_, _, _) => (true, "ok");
             panel.FeedProposalAnswer(ProposalJson);
             return (yes: Buttons(panel).Count(b => (b.Content as string) == "✅ 采用"),
-                    no: Buttons(panel).Count(b => (b.Content as string) == "❌ 取消"),
+                    no: Buttons(panel).Count(b => (b.Content as string) == "❌ 不执行"),
                     texts: Texts(panel).ToList());
         });
 
@@ -109,6 +109,37 @@ public sealed class AiChangeCardTests : IDisposable
         AssertAnyText(probe.texts, "列名在第 1 行 → 列名在第 3 行");       // 原值 → 新值（旧清单只有后半截）
         AssertAnyText(probe.texts, "没剔任何行（整张表都按货印） → 第 12、13 行不印");
         AssertAnyText(probe.texts, "现在这张「一开四 140×100」");          // 现在这张进了"原值"
+    }
+
+    [Fact]
+    public void 卡片默认折叠_点详情才展开_按钮文案是不执行与采用()
+    {
+        var probe = OnSta(() =>
+        {
+            var panel = new AiChatPanel { GetChangeContext = CurrentState };
+            panel.ApplyChange = (_, _, _) => (true, "ok");
+            panel.FeedProposalAnswer(ProposalJson);
+
+            var before = (details: Buttons(panel).Count(b => (b.Content as string) == "详情"),
+                          collapses: Buttons(panel).Count(b => (b.Content as string) == "收起"),
+                          no: Buttons(panel).Count(b => (b.Content as string) == "❌ 不执行"),
+                          yes: Buttons(panel).Count(b => (b.Content as string) == "✅ 采用"));
+
+            // 点开第一张卡的详情：它自己变成「收起」，其余三张仍是「详情」。
+            Click(Buttons(panel).First(b => (b.Content as string) == "详情"));
+            var after = (details: Buttons(panel).Count(b => (b.Content as string) == "详情"),
+                         collapses: Buttons(panel).Count(b => (b.Content as string) == "收起"));
+            return (before, after);
+        });
+
+        // 用户 2026-09-10：「这个采用先以折叠（点击展开）」——卡片摊着时四条就把面板下半截顶没了。
+        Assert.Equal(4, probe.before.details);      // 四张卡各自一个「详情」
+        // 基数说明：「收起」不是从 0 起——面板上方"思考过程"那颗按钮也叫「收起」（第 31 棒加的那块）。
+        Assert.Equal(1, probe.before.collapses);    // 默认全收起，只有思考那一颗
+        Assert.Equal(4, probe.before.no);           // 按钮文案照他写的：❌ 不执行 / ✅ 采用
+        Assert.Equal(4, probe.before.yes);
+        Assert.Equal(3, probe.after.details);       // 点开一张：它变成「收起」
+        Assert.Equal(2, probe.after.collapses);     // 那一张的「收起」+ 思考的「收起」
     }
 
     [Fact]
@@ -142,7 +173,7 @@ public sealed class AiChangeCardTests : IDisposable
             panel.ApplyChange = (_, _, yes) => { applied.Add(yes); return (true, "「列名在第几行」照你说的不动。"); };
             panel.FeedProposalAnswer(ProposalJson);
 
-            Click(Buttons(panel).First(b => (b.Content as string) == "❌ 取消"));
+            Click(Buttons(panel).First(b => (b.Content as string) == "❌ 不执行"));
             return (applied, text: panel.Transcript);
         });
 
