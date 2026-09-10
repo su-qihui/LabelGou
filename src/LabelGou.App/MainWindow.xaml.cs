@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
@@ -606,7 +606,11 @@ public partial class MainWindow : Window
                 _viewModel.Sheet.SelectedSheetOption?.Spec.Name,
                 bindings.Count == 0 ? null : bindings);
         };
-        panel.ApplyChange = ApplyAiChange;
+        // 第 33 棒：能自动判的直接落地、靠"可撤回"兜底 —— AI 要动手之前由这一份压快照，
+        // 面板上那颗「撤回」按一下退一步（可连点）。快照只活在内存里（跨会话撤回没意义）。
+        panel.UndoAiChange = () => _viewModel.UndoLastAiChange();
+        panel.CanUndoAiChange = () => _viewModel.CanUndoAiChange;
+        panel.AiUndoLabel = () => _viewModel.AiUndoLabel;
         // 「预览:31个模板,155张」那一句的数由软件自己数（按 AI 点的那一列逐行加），不信模型报的总数。
         panel.OutputCounter = qtyColumn => _viewModel.CountOutput(qtyColumn);
         panel.GoPrint = PrintFromAi;
@@ -643,6 +647,8 @@ public partial class MainWindow : Window
                 {
                     excluded.Add(rawIndex);
                 }
+                // 第 33 棒：答一条问题也是一步（撤回粒度是"逐步"）——动手前压快照。
+                _viewModel.BeginAiChange(yes ? $"第 {q.Row} 行要印" : $"第 {q.Row} 行不印");
                 var (ok, msg) = _viewModel.ApplySheetChoice(new LabelGou.Core.Data.SheetLayoutChoice(
                     next.HeaderRowIndex, next.HasHeader, excluded.Count == 0 ? null : excluded, skip));
                 return (ok, (yes ? $"第 {q.Row} 行照你说的要印" : $"第 {q.Row} 行不印了") + "：" + msg);
@@ -655,6 +661,7 @@ public partial class MainWindow : Window
                     // 不再说「重读表也没用、必须附图」那种把人堵死的话。
                     return (false, "它这次没给出模板内容，重排不了——表里抄标签的那几行它这次没看全："
                         + "再点一次「读这张表并提案」，或直接点「让 AI 出一版排版」；附上更清楚的样张图最稳。");
+                _viewModel.BeginAiChange("按它给的版式重排");
                 return ApplyAiLayout(spec);
 
             case LabelGou.Core.Recognition.AiSheetQuestion.ActionPaper:
@@ -662,6 +669,7 @@ public partial class MainWindow : Window
                 if (!yes) return (true, "纸保持现在这张，没换。");
                 var name = q.Value ?? proposal.SheetSpecName;
                 if (name is null) return (false, "它没点名要用哪张纸。");
+                _viewModel.BeginAiChange($"换成「{name}」这张纸");
                 var msg = _viewModel.Sheet.SelectSheetSpecByName(name);
                 return (msg.StartsWith("纸规已切到", StringComparison.Ordinal), msg);
             }
@@ -706,55 +714,6 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>
-    /// 落地改动卡上的**那一条**（阶段 29 第 1 棒）。
-    /// <para>点 ❌ 不装作"办成了"：如实回一句「这条不动」，并且**什么都不碰**——人点取消就是要它别动。</para>
-    /// <para>四类各走各的既有落地路，不新开第二条：切表 → <c>ApplySheetChoice</c>；版式 → <c>ApplyAiLayout</c>；
-    /// 纸 → <c>SelectSheetSpecByName</c>。逐条的要害在 <c>ChoiceFrom(p, only)</c>：
-    /// 只 ✅ 了「哪几行不当货印」时，列名行不许跟着动。</para>
-    /// <para>红线：走到这里之前，人已经在卡上点过 ✅ 了 —— AI 自己一步都落不了地。</para>
-    /// </summary>
-    private (bool Ok, string Message) ApplyAiChange(
-        LabelGou.Core.Recognition.AiSheetProposal proposal,
-        LabelGou.Core.Recognition.AiChange change, bool yes)
-    {
-        if (!yes) return (true, $"「{change.Target}」照你说的不动，保持现在这样。");
-
-        switch (change.Kind)
-        {
-            case LabelGou.Core.Recognition.AiChangeKind.HeaderRow:
-            case LabelGou.Core.Recognition.AiChangeKind.ExcludedRows:
-            {
-                var next = _viewModel.ChoiceFrom(proposal, new[] { change.Kind });
-                var (ok, msg) = _viewModel.ApplySheetChoice(next);
-                return (ok, $"「{change.Target}」{msg}");
-            }
-
-            case LabelGou.Core.Recognition.AiChangeKind.Layout:
-                if (proposal.Layout is not { } spec)
-                    // 与第 28 棒同一口径：不把用户往"必须附图"那条死路上指。
-                    return (false, "它这次没给出模板内容，这一条改不了——再点一次「读这张表并提案」，"
-                        + "或直接点「让 AI 出一版排版」；附上更清楚的样张图最稳。");
-                return ApplyAiLayout(spec);
-
-            case LabelGou.Core.Recognition.AiChangeKind.FieldMapping:
-            {
-                // 第 30 棒：把"哪一列是哪个字段"落到 ② 步那张表上。只动这一个字段，其余不碰。
-                if (change.Binding is not { } binding)
-                    return (false, "这条绑定没带上列信息，没法落地——再点一次「读这张表并提案」。");
-                return _viewModel.BindField(binding.Field, binding.ColumnIndex);
-            }
-
-            default:   // SheetSpec
-            {
-                var name = proposal.SheetSpecName;
-                if (name is null) return (false, "它没点名要用哪张纸。");
-                var msg = _viewModel.Sheet.SelectSheetSpecByName(name);
-                return (msg.StartsWith("纸规已切到", StringComparison.Ordinal), msg);
-            }
-        }
-    }
-
     /// <summary>用户点了「用这个」才走到这里。存不存得进模板库仍由 <see cref="TemplateStore"/> 的校验说了算。</summary>
     private (bool Ok, string Message) ApplyAiLayout(RowLayoutSpec spec)
     {
@@ -771,14 +730,21 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// 用户点头后落地整份提案（第 21 棒）：重切这张表 → 存这版模板 → 换那张纸。
-    /// <para>三件各自独立报成败，不假装「全成才算成功」：切表会被 Core 拒掉（那张表保住），
-    /// 版式进不了模板库是校验的事，纸规点名不对就保持现状——把它们包成一个布尔值反而隐掉了用户真正需要看的那一句。</para>
+    /// 落地**整份提案**：重切这张表 → 落字段绑定 → 存这版模板 → 换那张纸。
+    /// <para>第 33 棒起这条不再等用户逐条点头（他改了架构：<b>能自动判的直接生效，靠"可撤回"兜底</b>），
+    /// 所以**字段绑定也进了这里**——以前绑定是单独的逐条 ✅ 卡，现在四类一起落。</para>
+    /// <para>各件独立报成败，不假装「全成才算成功」：切表会被 Core 拒掉（那张表保住），
+    /// 版式进不了模板库是校验的事，纸规点名不对就保持现状——把它们包成一个布尔值反而隐掉了
+    /// 用户真正需要看的那一句。</para>
     /// </summary>
     private (bool Ok, string Message) ApplyAiProposal(LabelGou.Core.Recognition.AiSheetProposal proposal)
     {
         var lines = new List<string>();
         var anyOk = false;
+
+        // 第 33 棒：**动手之前压快照**（撤回粒度"逐步"，一次 AI 动手 = 一步）。
+        // 压在这里而不是面板里：快照这件事归主窗口管，面板只管"要不要落地"。
+        _viewModel.BeginAiChange("读表提案（整份）");
 
         var next = _viewModel.ChoiceFrom(proposal);
         if (!SameCut(_viewModel.CurrentChoice, next))
@@ -786,6 +752,17 @@ public partial class MainWindow : Window
             var (ok, msg) = _viewModel.ApplySheetChoice(next);
             lines.Add((ok ? "切表✓ " : "切表✗（表保持原样）") + msg);
             anyOk |= ok;
+        }
+        // 绑定要紧跟在切表后面：切表那一步会重读源文件，字段行是按"当前方案"重建的，
+        // 先落绑定就会被它盖掉（第 33 棒撤回那边是同一个顺序理由）。
+        if (proposal.Mappings.Count > 0)
+        {
+            var bound = 0;
+            foreach (var mapping in proposal.Mappings)
+                if (_viewModel.BindField(mapping.Field, mapping.ColumnIndex).Ok) bound++;
+            lines.Add($"字段绑定{(bound > 0 ? "✓" : "✗")} 落了 {bound} 项"
+                + (bound < proposal.Mappings.Count ? $"（它报了 {proposal.Mappings.Count} 项，其余没对上）" : string.Empty));
+            anyOk |= bound > 0;
         }
         if (proposal.Layout is { } spec)
         {
@@ -801,7 +778,7 @@ public partial class MainWindow : Window
         }
         foreach (var w in proposal.Warnings) lines.Add("⚠ " + w);
         if (lines.Count == 0) return (false, "这份提案里没有可落地的改动（它什么都没提）。当前表、模板与纸规都没动。");
-        Services.AppLog.Info("AI 提案经用户确认落地：" + string.Join(" / ", lines));
+        Services.AppLog.Info("AI 提案落地（第 33 棒起自动落地，可撤回）：" + string.Join(" / ", lines));
         return (anyOk, string.Join("\n", lines));
     }
 

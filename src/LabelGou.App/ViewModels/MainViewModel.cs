@@ -1,4 +1,4 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Data;
 using System.IO;
@@ -191,7 +191,7 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
     {
         _uiState = uiState ?? new UiStateStore();
         OpenFileCommand = new RelayCommand(OpenFile);
-        ReloadSheetCommand = new RelayCommand(() => LoadSource(_sourcePath, SelectedSheet));
+        ReloadSheetCommand = new RelayCommand(() => LoadSource(_sourcePath, SelectedSheet, newTable: false));
         AutoSuggestCommand = new RelayCommand(AutoSuggest, () => _data is not null);
         ApplyMappingCommand = new RelayCommand(ApplyMapping, () => _data is not null);
         SaveProfileCommand = new RelayCommand(SaveProfile, () => _data is not null);
@@ -781,6 +781,94 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         _uiState.Save(state);
     }
 
+    // ───────────────────────── AI 改动的逐步撤回（第 33 棒） ─────────────────────────
+
+    private readonly List<AiUndoPoint> _aiUndo = new();
+
+    /// <summary>栈的上限（只活在内存里；跨会话撤回没意义，状态文件也不该塞这种大对象）。</summary>
+    private const int MaxAiUndoSteps = 20;
+
+    /// <summary>手上有没有可撤回的 AI 改动（界面据此决定那颗按钮亮不亮）。</summary>
+    public bool CanUndoAiChange => _aiUndo.Count > 0;
+
+    /// <summary>还能退几步（按钮上写出来，人心里有数）。</summary>
+    public int AiUndoSteps => _aiUndo.Count;
+
+    /// <summary>最近一步叫什么（按钮文案用它说清"退回哪一步"）。</summary>
+    public string AiUndoLabel => _aiUndo.Count > 0 ? _aiUndo[^1].Label : string.Empty;
+
+    /// <summary>
+    /// AI 要动手之前压一份快照。**一次 AI 动手 = 一步**（用户 2026-09-10 选的撤回粒度是"逐步"）：
+    /// 读表提案整份落一次是一步，他答一条问题落一次也是一步。
+    /// </summary>
+    public void BeginAiChange(string label)
+    {
+        var bindings = new Dictionary<MarkFieldKey, int>();
+        foreach (var row in FieldRows)
+            if (row.ColumnIndex >= 0 && Enum.TryParse<MarkFieldKey>(row.FieldKey, out var key))
+                bindings[key] = row.ColumnIndex;
+
+        _aiUndo.Add(new AiUndoPoint(label, _choice, bindings,
+            SelectedTemplate?.Id, Sheet.SelectedSheetOption?.Spec.Name, DateTime.Now));
+        if (_aiUndo.Count > MaxAiUndoSteps) _aiUndo.RemoveAt(0);
+        Raise(nameof(CanUndoAiChange));
+        Raise(nameof(AiUndoSteps));
+        Raise(nameof(AiUndoLabel));
+    }
+
+    /// <summary>
+    /// 撤回最近一次 AI 动手（**可连点，逐步往回退**——用户 2026-09-10 选的粒度）。
+    /// <para>四样按「切法 → 绑定 → 模板 → 纸规」回退，**顺序不能反**：切法那一步要重读源文件，
+    /// 而重读会把字段行按当前方案重建——先回绑定就会被它盖掉。</para>
+    /// <para>各部分独立报结果，不假装"全成才算成"（与第 21 棒那条口径一致）。</para>
+    /// </summary>
+    public (bool Ok, string Message) UndoLastAiChange()
+    {
+        if (_aiUndo.Count == 0) return (false, "没有可撤回的 AI 改动。");
+        var point = _aiUndo[^1];
+        _aiUndo.RemoveAt(_aiUndo.Count - 1);
+        Raise(nameof(CanUndoAiChange));
+        Raise(nameof(AiUndoSteps));
+        Raise(nameof(AiUndoLabel));
+
+        var lines = new List<string>();
+
+        var (cutOk, cutMsg) = ApplySheetChoice(point.Choice);
+        if (!cutOk) lines.Add("切法没能退回（" + cutMsg + "）");
+
+        var restored = 0;
+        foreach (var row in FieldRows)
+        {
+            if (!Enum.TryParse<MarkFieldKey>(row.FieldKey, out var key)) continue;
+            var want = point.Bindings.TryGetValue(key, out var col) ? col : -1;
+            if (row.ColumnIndex == want) continue;
+            row.ColumnIndex = want;
+            restored++;
+        }
+        if (restored > 0) ApplyMapping();
+        lines.Add(restored > 0 ? $"字段绑定退回了 {restored} 项" : "字段绑定与原来一样");
+
+        if (point.TemplateId is { Length: > 0 } templateId)
+        {
+            var option = TemplateOptions.FirstOrDefault(t => t.Id == templateId);
+            if (option is not null && !ReferenceEquals(SelectedTemplate, option))
+            {
+                SelectedTemplate = option;
+                lines.Add($"模板退回到「{option.Name}」");
+            }
+        }
+        if (point.SheetSpecName is { Length: > 0 } specName)
+        {
+            var answer = Sheet.SelectSheetSpecByName(specName);
+            if (!answer.StartsWith("纸规已切到", StringComparison.Ordinal)) lines.Add("纸规没能退回（" + answer + "）");
+            else lines.Add("纸规退回了「" + specName + "」");
+        }
+
+        var left = _aiUndo.Count;
+        return (true, $"已撤回「{point.Label}」这一步：" + string.Join("；", lines) + "。"
+            + (left > 0 ? $"还能再退 {left} 步。" : "没有更早的 AI 改动了。"));
+    }
+
     /// <summary>
     /// AI 模式导入完表之后，请主窗口去让 AI 读这张表（第 30 棒）。
     /// <para>为什么用事件而不是让 VM 直接喊面板：面板是主窗口那一侧的物件（<c>WireAi</c> 里接线），
@@ -1045,13 +1133,14 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         try
         {
             _choice = next;
-            LoadSource(_sourcePath, previousSheet);
+            // 切法变了要重读，但**不是新表**：不清绑定、也不再问一次 AI（第 33 棒）。
+            LoadSource(_sourcePath, previousSheet, newTable: false);
             return (true, _data?.Describe() ?? "已按新切法重读这张表。");
         }
         catch (Exception ex)
         {
             _choice = previous;
-            try { LoadSource(_sourcePath, previousSheet); } catch { /* 连原样都读不回来就是文件本身变了，不拿这句话骗人 */ }
+            try { LoadSource(_sourcePath, previousSheet, newTable: false); } catch { /* 连原样都读不回来就是文件本身变了，不拿这句话骗人 */ }
             return (false, ex.Message);
         }
     }
@@ -1219,7 +1308,16 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
     /// 读一份表（<paramref name="path"/> 为 null/空白时什么都不做）。对话框、重选工作表、
     /// 以后的“把文件拖到窗口上”都走这一个入口，单测也直接拿它喂数据。
     /// </summary>
-    public void LoadSource(string? path, string? sheet)
+    /// <param name="path">源文件。</param>
+    /// <param name="sheet">工作表名（Excel）；null = 第一张。</param>
+    /// <param name="newTable">
+    /// **这是"新表进来了"还是"同一张表按新切法重读一遍"**（第 33 棒加的口子）。
+    /// <para>为什么必须有这个区分：AI 模式下这两件事该做的完全相反——
+    /// 新表要"**先不绑定、并自动请 AI 读**"；而重读（切法变了、按了重读）**绝不能**再发一次 AI 读表
+    /// （白花一两分钟与一份 token，用户截图里那次重复的「开始读这张表」就是这么来的），
+    /// 也不能把已经绑好的字段清成空白（列根本没动）。</para>
+    /// </param>
+    public void LoadSource(string? path, string? sheet, bool newTable = true)
     {
         if (string.IsNullOrWhiteSpace(path)) return;
         // 换文件 = 切表指令作废的那只手：上一张表剔的「第 412 行」对新表毫无意义（拿它切新表就是切错行）。
@@ -1262,11 +1360,12 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
                 .Select(x => x.Profile!)
                 .ToList();
 
-            if (_mode == RunMode.Ai)
+            if (_mode == RunMode.Ai && newTable)
             {
-                // 第 30 棒：AI 模式下**先不绑定**。用户 2026-09-10 的原话是「导入表格后不应该直接绑定数据，
+                // 第 30 棒：AI 模式下**新表进来先不绑定**。用户的原话是「导入表格后不应该直接绑定数据，
                 // 先把表格给 AI 理解后由 AI 绑定」——程序按表头猜出来的那套绑定，正是他要换掉的东西。
-                // 所以这里给一份空白方案（谁都不连），等 AI 读完表再逐条给方案让人确认。
+                // 第 33 棒加 `newTable` 这道口：**重读**（切法变了 / 按了重读）不该走这里——
+                // 那会把已经绑好的字段清成空白，而列根本就没动。
                 _working = MappingProfile.CreateFor(data.Headers, ProfileName);
             }
             else
@@ -1288,14 +1387,17 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
             ApplyMapping();
             PickTemplateFittingData();
             AdvanceAfterImport();
-            if (_mode == RunMode.Ai)
+            if (_mode == RunMode.Ai && newTable)
             {
                 // 状态那句必须放在最后：ApplyMapping / AdvanceAfterImport 都会改写状态栏，
                 // 早设一句会被它们盖掉（第一版就是这么写的，单测当场抓出来了）。
                 StatusMessage = "表已导入（AI 模式）：先不绑定字段，正在让 AI 读懂这张表…";
-                // 导入完自己就去读（用户 2026-09-10 选的是"导入后自动读"，不用再点一下）。
+                // 自动读**只在新表进来时发生一次**（第 33 棒把发起处从"重读"里摘出来）：
+                // 以前挂在导入路上，于是每次切法变更都偷偷再读一次表，白花一两分钟与一份 token。
                 RequestAiRead();
             }
+            else if (_mode == RunMode.Ai)
+                StatusMessage = "已按新切法重读这张表（字段绑定照旧，没有重新问 AI）。";
         }
         catch (Exception ex)
         {
