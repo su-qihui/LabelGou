@@ -177,6 +177,12 @@ public sealed class AiChatPanel : UserControl
     /// <summary>「按这版去打印」= 跳到 ⑤ 并触发既有打印命令。这里不自己开第二条出纸路。</summary>
     public Action? GoPrint { get; set; }
 
+    /// <summary>
+    /// 数据的「代数」（MainViewModel.DataGeneration）：发请求前记一份、回来时对一遍，
+    /// 不等就作废那轮结果——等待期间换文件/换表/换模板后，旧提案落在新数据上会剔错行（第 23 棒）。
+    /// </summary>
+    public Func<int>? GetDataGeneration { get; set; }
+
     /// <summary>下面三个只读状态给单测与主窗口看：面板能不能发、手上有没有待确认的方案、现在写了什么。</summary>
     public bool IsBusy => _running is not null;
 
@@ -609,6 +615,7 @@ public sealed class AiChatPanel : UserControl
                                     (skippedImages > 0 ? $"，另有 {skippedImages} 张没发" : string.Empty) + "）") + "…");
 
         _running = new CancellationTokenSource();
+        var generation = GetDataGeneration?.Invoke() ?? -1;
         SetBusy(true, "AI 在照着这张表出一版模板");
         try
         {
@@ -626,6 +633,11 @@ public sealed class AiChatPanel : UserControl
                 return;
             }
 
+            if (GetDataGeneration is { } readGen && readGen() != generation)
+            {
+                Append("等待期间表或模板换过了——这一版是照着旧的东西排的，作废（你的数据一个字没动）。要新样子就再点一次。");
+                return;
+            }
             FeedLayoutAnswer(outcome.Text, outcome.Elapsed.TotalSeconds);
         }
         finally
@@ -734,6 +746,7 @@ public sealed class AiChatPanel : UserControl
                + (images.Count == 0 ? "没带图（那它只能看字）。" : $"带上 {images.Count} 张图。"));
 
         _running = new CancellationTokenSource();
+        var generation = GetDataGeneration?.Invoke() ?? -1;
         SetBusy(true, "AI 在读这张表（行多的表会慢一点）");
         try
         {
@@ -748,6 +761,11 @@ public sealed class AiChatPanel : UserControl
                     Append($"没拿到提案：{outcome.Error}");
                     if (!string.IsNullOrWhiteSpace(outcome.Raw)) Append($"（服务原话：{outcome.Raw}）");
                 }
+                return;
+            }
+            if (GetDataGeneration is { } readGen && readGen() != generation)
+            {
+                Append("等待期间表或模板换过了——这份提案报的是旧表的行号，落在新表上会剔错行，作废（你的数据一个字没动）。要新表的提案就再点一次。");
                 return;
             }
             FeedProposalAnswer(outcome.Text, outcome.Elapsed.TotalSeconds);

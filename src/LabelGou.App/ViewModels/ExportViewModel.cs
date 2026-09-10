@@ -268,7 +268,7 @@ public sealed class ExportViewModel : ObservableObject
             return;
         }
 
-        var request = BuildRequest(range!, out _);
+        var request = BuildRequest(range!, out _, runReviewGate: false);
         var estimate = request is null ? string.Empty : " · 预计 " + SheetExportService.EstimatePdfSize(request);
         SelectionText = string.Format(CultureInfo.InvariantCulture,
             "共 {0} 页，本次选 {1} 页 · {2}DPI · 页面 {3}×{4}mm{5}",
@@ -341,7 +341,10 @@ public sealed class ExportViewModel : ObservableObject
         }
     }
 
-    private SheetExportRequest? BuildRequest(PageRange range, out string? error)
+    /// <param name="runReviewGate">复核闸门只属于真正要出纸/出文件的那一次。估算那一路（页范围框每个键击
+    /// 都会走这里）曾经也弹模态确认框——只要批次里有待核对字段，用户打个数字就弹一次，安全闸被训练成
+    /// 「见框就点 Yes」（第 23 棒）。</param>
+    private SheetExportRequest? BuildRequest(PageRange range, out string? error, bool runReviewGate = true)
     {
         error = null;
         var plan = _owner.Sheet.Plan;
@@ -351,7 +354,7 @@ public sealed class ExportViewModel : ObservableObject
             error = "还没有可输出的整版：请先导入数据并应用映射。";
             return null;
         }
-        if (!PassesReviewGate(source))
+        if (runReviewGate && !PassesReviewGate(source))
         {
             error = "已按出口闸门停下：未确认的字段或未处理的纸规错误还在，不进入打印与导出。";
             return null;
@@ -516,6 +519,14 @@ public sealed class ExportViewModel : ObservableObject
 
     private void RunJob(string jobName, Func<IProgress<string>, CancellationToken, object> job)
     {
+        if (IsBusy)
+        {
+            // 第 23 棒：AI 面板「按这版去打印」曾绕过 CanExecute 进来，第二个 STA 任务与第一个并发出纸，
+            // 收尾时还会把对方的取消源 Dispose 掉（「取消」从此失效）。命令按钮有 CanExecute 挡，这里再关一道门。
+            StatusText = "已有一个输出任务在跑（看状态栏进度）；等它结束或取消，再发下一个。";
+            AppLog.Info($"任务「{jobName}」被拒：已有任务在跑");
+            return;
+        }
         _cts = new CancellationTokenSource();
         IsBusy = true;
         StatusText = jobName + " 开始…";

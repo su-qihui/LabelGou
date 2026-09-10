@@ -164,6 +164,32 @@ public class AiChatTests
     }
 
     [Fact]
+    public async Task 用户取消时正常返回不抛异常()
+    {
+        // 第 23 棒：旧过滤器把用户取消的 OCE 放出去，面板的 async void 接不住，
+        // 点「停止」必弹 App 级错误框。取消必须变成「不 Ok 也不报错」的正常结果。
+        using var cts = new CancellationTokenSource();
+        var stub = new CancellingHandler(cts);
+
+        var outcome = await OllamaVisionClient.ChatAsync(
+            Cloud(), new List<AiChatTurn> { Turn(AiChatTurn.User, "在吗") }, null, cts.Token, stub);
+
+        Assert.False(outcome.Ok);
+        Assert.Null(outcome.Error);        // 不是错误：面板那局「已停止这一轮…」靠这个接手
+        Assert.Null(outcome.Text);
+    }
+
+    /// <summary>收到请求就取消 token——模拟用户在请求在飞时点了「停止」。</summary>
+    private sealed class CancellingHandler(CancellationTokenSource cts) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancel)
+        {
+            cts.Cancel();
+            throw new OperationCanceledException(cts.Token);
+        }
+    }
+
+    [Fact]
     public async Task 没填模型时一个请求也不发()
     {
         var stub = new StubHandler();

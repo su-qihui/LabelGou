@@ -558,6 +558,8 @@ public partial class MainWindow : Window
         };
         panel.ApplyLayout = ApplyAiLayout;
         panel.ApplyProposal = ApplyAiProposal;
+        // 第 23 棒：AI 请求在飞期间换文件/表/模板，旧结果落地前按代数对一遍，不等就作废。
+        panel.GetDataGeneration = () => _viewModel.DataGeneration;
         panel.ApplyQuestion = ApplyAiQuestion;
         // 「预览:31个模板,155张」那一句的数由软件自己数（按 AI 点的那一列逐行加），不信模型报的总数。
         panel.OutputCounter = qtyColumn => _viewModel.CountOutput(qtyColumn);
@@ -705,6 +707,12 @@ public partial class MainWindow : Window
     private void PrintFromAi()
     {
         _viewModel.StepIndex = 4;
+        // 第 23 棒：Mvvm.Execute 不查 CanExecute——任务在跑或没有整版时这里会硬闯进 RunJob。
+        if (!_viewModel.Export.PrintCommand.CanExecute(null))
+        {
+            Services.AppLog.Info("AI 面板「按这版去打印」没发出去：打印命令自己挡了（没有可输出的整版，或已有任务在跑）。");
+            return;
+        }
         _viewModel.Export.PrintCommand.Execute(null);
     }
 

@@ -124,6 +124,52 @@ public sealed class TemplatePickAndReminderTests : IDisposable
     }
 
     [Fact]
+    public void 启动兜底不写盘_记的模板被删时状态文件不被顶掉()
+    {
+        // 第 23 棒：记的那个模板不存在时，兜底选中的行式四行曾把状态文件里的旧记录静默顶掉——
+        // 用户重启后「上次选过什么」已经无从对起。
+        var store = TestEnvironment.NewTempUiStateStore();
+        store.Save(new UiState { TemplateId = "user.gone-template" });   // 已被删掉的用户模板
+
+        var after = OnSta(() =>
+        {
+            var vm = new MainViewModel(store);                           // 兜底选中内置行式四行
+            return vm.SelectedTemplate?.Id;
+        });
+
+        Assert.Equal(BuiltInTemplates.IdRowsFour, after);               // 界面还是要兜底的
+        Assert.Equal("user.gone-template", RememberedTemplate(store));  // 但写盘不许发生
+    }
+
+    [Fact]
+    public void 数据代数_换文件换模板应用映射都会自增()
+    {
+        // AI 面板靠它判「等待期间数据换过没」：不等就作废那轮结果(第 23 棒)。
+        var store = TestEnvironment.NewTempUiStateStore();
+        var csv = WriteCsv("三列表.csv", "货号 ITEM NO:", "件数 CTN", "数量 QTY");
+        var csv2 = WriteCsv("另一张表.csv", "客户", "毛重 KGS");
+
+        var gens = OnSta(() =>
+        {
+            var vm = new MainViewModel(store);
+            var atStart = vm.DataGeneration;
+            vm.LoadSource(csv, null);
+            var afterLoad = vm.DataGeneration;
+            vm.ApplyMappingCommand.Execute(null);
+            var afterMap = vm.DataGeneration;
+            vm.SelectedTemplate = vm.TemplateOptions.First(t => t.Id == BuiltInTemplates.IdRowsBigTwo);
+            var afterTemplate = vm.DataGeneration;
+            vm.LoadSource(csv2, null);
+            return (atStart, afterLoad, afterMap, afterTemplate, vm.DataGeneration);
+        });
+
+        Assert.True(gens.afterLoad > gens.atStart);
+        Assert.True(gens.afterMap > gens.afterLoad);
+        Assert.True(gens.afterTemplate > gens.afterMap);
+        Assert.True(gens.Item5 > gens.afterTemplate);
+    }
+
+    [Fact]
     public void 状态栏说的是填了几成而不是几个字段()
     {
         var store = TestEnvironment.NewTempUiStateStore();

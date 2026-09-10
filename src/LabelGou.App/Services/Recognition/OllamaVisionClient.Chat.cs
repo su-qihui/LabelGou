@@ -161,7 +161,14 @@ public static partial class OllamaVisionClient
                 return new ChatOutcome { Error = "模型没回话（返回里没有 content）。", Elapsed = sw.Elapsed, Raw = body };
             return new ChatOutcome { Text = text, Elapsed = sw.Elapsed, Raw = text };
         }
-        catch (OperationCanceledException) when (!cancel.IsCancellationRequested)
+        catch (OperationCanceledException) when (cancel.IsCancellationRequested)
+        {
+            sw.Stop();
+            // 用户点了「停止」：正常返回（不报错），调用方那句「已停止这一轮…」才有机会接手。
+            // 旧过滤器把用户取消的 OCE 放出去，面板的 async void 没人接，直接弹 App 级错误框（第 23 棒）。
+            return new ChatOutcome { Elapsed = sw.Elapsed };
+        }
+        catch (OperationCanceledException)
         {
             sw.Stop();
             return new ChatOutcome { Error = $"{seconds} 秒内没等到 {url} 的回答（云端慢就把超时调大）。", Elapsed = sw.Elapsed };

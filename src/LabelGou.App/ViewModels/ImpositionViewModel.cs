@@ -116,10 +116,12 @@ public sealed class ImpositionViewModel : ObservableObject
         // 上一棒这里把记着的「一开四」当陈旧值强制让位给一页一枚，理由是「那只是裁切指令」。
         // 用户 2026-09-08 拿红框否掉了这个理解（「开四就是一张排 4 个一模一样的」），于是它不再是一次迁移，
         // 而是静默改掉用户选的纸 —— 直接拿用户记下的那张。
+        _bootstrapping = true;
         SelectedSheetOption = SheetOptions.FirstOrDefault(s => s.Spec.Id == rememberedId)
                               ?? SheetOptions.FirstOrDefault(s => s.Spec.Id == BuiltInSheetSpecs.IdOnePerLabel)
                               ?? SheetOptions.FirstOrDefault(s => s.Spec.Id == BuiltInSheetSpecs.IdA4)
                               ?? SheetOptions.FirstOrDefault();
+        _bootstrapping = false;
 
         foreach (var (mode, label) in new[]
                  {
@@ -222,9 +224,13 @@ public sealed class ImpositionViewModel : ObservableObject
     /// <summary>纸规选项换了（不是改数值）时喊一声。只有选错一张纸才会让模板与刀模对不上，改页边不会。</summary>
     public event Action? SheetSelectionChanged;
 
+    /// <summary>构造兜底那一次赋值不写盘（第 23 棒：与 MainViewModel.RememberTemplateId 同一个理由）。</summary>
+    private bool _bootstrapping;
+
     /// <summary>把纸规 id 写进界面状态；与已记的相同就不写盘（启动那一次赋值不该产生 IO）。</summary>
     private void RememberSheetSpecId(string? specId)
     {
+        if (_bootstrapping) return;     // 启动兜底不写盘（第 23 棒）
         var store = _uiState;
         if (store is null || string.IsNullOrEmpty(specId)) return;
         var state = store.Load();
@@ -504,7 +510,11 @@ public sealed class ImpositionViewModel : ObservableObject
         SelectedMode = ModeOptions.FirstOrDefault(o => o.Value == _mode) ?? SelectedMode;
         SelectedScope = ScopeOptions.FirstOrDefault(o => o.Value == _scope) ?? SelectedScope;
         SelectedGroup = GroupOptions.FirstOrDefault(o => Equals(o.Value, _groupBy)) ?? SelectedGroup;
-        SelectedExpandColumn = ExpandColumnOptions.FirstOrDefault(o => o.Value == _expandColumn) ?? SelectedExpandColumn;
+        // 方案里记的那一列这张新表没有：清回「不选」。旧行为下拉停在旧选项、引擎却按 1 张/行跑，
+        // 界面说的与实际做的两套（第 23 棒审计-9）。
+        var expandMatch = ExpandColumnOptions.FirstOrDefault(o => o.Value == _expandColumn);
+        if (expandMatch is null) _expandColumn = null;
+        SelectedExpandColumn = expandMatch ?? ExpandColumnOptions.FirstOrDefault() ?? SelectedExpandColumn;
         Raise(nameof(IsExpandMode));
         RaiseAll();
         RecomputeNumbering();

@@ -61,10 +61,12 @@ public static class AppLog
                     System.Text.Encoding.UTF8);
             }
         }
-        catch (IOException)
+        catch (Exception ex)
         {
-            // 日志本身失败不能再抛异常把程序带崩，退到调试输出
+            // 日志本身失败不能再抛异常把程序带崩（杀软锁目录/ACL 抛的是 UnauthorizedAccessException 等，
+            // 旧代码只挡了 IOException——第 23 棒），退到调试输出
             System.Diagnostics.Debug.WriteLine(line);
+            if (ex.Message.Length > 0) System.Diagnostics.Debug.WriteLine(ex.Message);
         }
     }
 

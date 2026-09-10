@@ -160,6 +160,18 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
     /// <summary>自动接手换模板那一次不写盘（只顶一次，下一次用户手工选还是会被记住）。</summary>
     private bool _suppressTemplateRemember;
 
+    /// <summary>构造兜底那一次赋值不写盘（第 23 棒：记的模板被删了时，兜底 id 不得顶掉用户记的那条）。</summary>
+    private bool _bootstrapping;
+
+    /// <summary>
+    /// 数据的「代数」：换文件/换工作表/重切表/应用映射/换模板都会自增。
+    /// <para>AI 面板发请求前记一份、回来时对一遍——不等就作废那轮结果（第 23 棒）：
+    /// 旧的提案落在换过的表上会把旧行号夹进新表剔行，静默少印。</para>
+    /// </summary>
+    public int DataGeneration { get; private set; }
+
+    private void BumpDataGeneration() => ++DataGeneration;
+
     /// <summary>映射告警那几行（与「模板还差哪几项」分家存，后者是派生值，每次重列）。</summary>
     private List<string> _mapIssueLines = new();
 
@@ -214,9 +226,11 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         _previewTableHeight = RememberedPreviewTableHeight(remembered.PreviewTableHeight);
         // 兜底跟 ReloadTemplates 用同一个档（行式四行）：上一版构造兜 IdStandard、刷新兜 IdRowsFour，
         // 冷启动与触发一次刷新后看到的不是同一套模板。
+        _bootstrapping = true;
         SelectedTemplate = TemplateOptions.FirstOrDefault(t => t.Id == remembered.TemplateId)
             ?? TemplateOptions.FirstOrDefault(t => t.Id == BuiltInTemplates.IdRowsFour)
             ?? TemplateOptions.FirstOrDefault();
+        _bootstrapping = false;
         RefreshProfiles();
         Sheet.RefreshFromSource();
     }
@@ -562,6 +576,7 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
             if (Set(ref _selectedTemplate, value))
             {
                 TemplateInfoText = DescribeTemplate(value?.Template);
+                BumpDataGeneration();
                 RebuildLayout();
                 Sheet.RebuildPlan();
                 RebuildIssueLines();
@@ -575,6 +590,9 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
     private void RememberTemplateId(string? templateId)
     {
         if (string.IsNullOrEmpty(templateId)) return;
+        // 启动兜底不写盘（第 23 棒）：记的那个模板被删了时，旧代码会把兜底 id 存回去，
+        // 用户状态文件里那条记录被静默顶掉——下回他真选过什么已经无从对起。
+        if (_bootstrapping) return;
         // 自动接手那一次不算用户的选择：写盘会把他在第 3 步手工记的模板顶掉，
         // 下一张表进来又按数据说话，等于他用手工选的模板被一次自动换档静默覆盖了。
         if (_suppressTemplateRemember)
@@ -724,7 +742,10 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
     public (DockSite Site, double RightWidth) LoadAiDock()
     {
         var s = _uiState.Load();
-        var site = Enum.TryParse<DockSite>(s.AiDockSite, ignoreCase: true, out var parsed) && parsed != DockSite.Float
+        // Enum.IsDefined 与 ParsePaneMode 同一个理由（第 23 棒）：TryParse 对「9」这种没定义的数字也返回 true。
+        var site = Enum.TryParse<DockSite>(s.AiDockSite, ignoreCase: true, out var parsed)
+                   && parsed != DockSite.Float
+                   && Enum.IsDefined(parsed)
             ? parsed
             : DockSite.Right;
         return (site, s.AiRightColumnWidth);
@@ -995,6 +1016,7 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         {
             var data = TableImporter.Import(path, sheet, _choice);
             _data = data;
+            BumpDataGeneration();
             SourcePath = data.SourceFile;
 
             Sheets.Clear();
@@ -1389,6 +1411,7 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         var result = RecordMapper.Map(data, profile);
         _rawRecords = result.Records;
         _mappingIssues = result.Issues;
+        BumpDataGeneration();
 
         _mapIssueLines = new List<string>();
         foreach (var issue in result.Issues.Take(200))
@@ -1602,6 +1625,7 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
 
         _data = null;
         _working = null;
+        BumpDataGeneration();
         PreviewTable = null;
         Raise(nameof(PreviewTable));
 

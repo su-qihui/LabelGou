@@ -42,6 +42,9 @@ public sealed class PanelDragController
     private Vector _grabOffset;                   // 光标相对那块面板左上角的偏移（屏幕 DIP）
     private Vector _chrome;                       // 浮动窗「窗口左上角 → 客户区左上角」的厚度
     private bool _chromeMeasured;
+    private Window? _anchorWindow;                // 浮动起点锚（第 23 棒：判「这窗浮起来后挪过没」）
+    private (double Left, double Top) _anchorPos;
+    private bool _movedSinceFloat;
 
     /// <summary>现在正拖着吗。</summary>
     public bool IsDragging { get; private set; }
@@ -94,7 +97,18 @@ public sealed class PanelDragController
 
     private void OnPanelStateChanged()
     {
-        if (_panel.IsDetached) _watch.Start();
+        if (_panel.IsDetached)
+        {
+            // 第 23 棒：浮动起点锚记在「浮起来」这一刻（FloatAt 摆好位置之后才触发 StateChanged）。
+            // 没有它，按钮拆出的默认落点压在右缘吸附带里，60ms 轮询一发就把没人碰过的窗吸回去。
+            if (_panel.FloatingWindow is { } win)
+            {
+                _anchorWindow = win;
+                _anchorPos = (win.Left, win.Top);
+                _movedSinceFloat = false;
+            }
+            _watch.Start();
+        }
         else
         {
             _watch.Stop();
@@ -227,11 +241,31 @@ public sealed class PanelDragController
             _watch.Stop();
             return;
         }
+
+        // 第 23 棒：按钮「拆成独立窗口」的默认落点（DetachablePanel.PlaceBesideOwner）就压在主窗右缘的
+        // 吸附带里，旧判据轮询一跑（60ms）就把窗吸回右栏，浮动窗根本立不住。补一道门槛——
+        // 窗从浮起来以后挪过才许吸：拖标题条那一路窗一定挪过；按钮拆出没人碰的窗一定没挪过。
+        if (!ReferenceEquals(_anchorWindow, win))
+        {
+            _anchorWindow = win;
+            _anchorPos = (win.Left, win.Top);
+            _movedSinceFloat = false;
+        }
+        else if (Math.Abs(win.Left - _anchorPos.Left) > 0.5 || Math.Abs(win.Top - _anchorPos.Top) > 0.5)
+        {
+            _movedSinceFloat = true;
+        }
+
         var site = DockSnap.DecideFromWindowRect(
             win.Left, win.Top, win.Left + win.Width, win.Top + win.Height,
             _owner.Left, _owner.Top, OwnerWidthDip, OwnerHeightDip);
         var shown = ShowPending(site);
         if (shown == DockSite.Float) return;          // 没靠近任何边：清掉预告，继续飘着
+        if (!_movedSinceFloat)
+        {
+            ShowPending(DockSite.Float);              // 刚拆出还没动过：不预告也不吸，让浮动窗先立住
+            return;
+        }
         if (_leftButtonPressed()) return;             // 还按着标题条：只预告，等他松手
         DockNow(shown);
     }

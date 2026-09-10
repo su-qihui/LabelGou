@@ -236,6 +236,11 @@ public class AiDockingTests
         store.Save(state);
         // 第 19 棒：认不出时退回的是右栏（用户：默认打开软件「右栏是 AI」），不再是底部那一行
         Assert.Equal(DockSite.Right, new ViewModels.MainViewModel(store).LoadAiDock().Site);
+
+        var state2 = store.Load();
+        state2.AiDockSite = "9";                    // TryParse 认得出的「没定义值」（第 23 棒补 Enum.IsDefined）
+        store.Save(state2);
+        Assert.Equal(DockSite.Right, new ViewModels.MainViewModel(store).LoadAiDock().Site);
     }
 
     [Fact]
@@ -392,5 +397,45 @@ public class AiDockingTests
             Assert.Equal(DockSite.Float, r.Drag.PendingSite);
             // 预告是在关窗之前擦掉的：漏下一步，下次拆出去标题上还挂着上一轮那个箭头。
             Assert.Equal("测试", win.Title);
+        });
+
+    [Fact]
+    public void 按钮拆出的窗没挪过就不被轮询吸回右栏()
+    {
+        // 第 23 棒：「拆成独立窗口」按钮的默认落点（PlaceBesideOwner）压在主窗右缘的吸附带里，
+        // 旧判据 60ms 轮询一发就把没人碰过的窗吸回去——浮动窗根本立不住。
+        OnRig(() => false, r =>
+        {
+            r.Panel.Float();                            // 按钮那一路：系统给默认位置
+            var win = r.Panel.FloatingWindow!;
+            // 就算默认落点真压进了吸附带（右缘 − Width/3 通常就是），没挪过的窗不许被吸
+            r.Drag.PollFloatingTarget();
+
+            Assert.True(r.Panel.IsDetached, "刚拆出、没人碰过的窗被轮询吸回去了——浮动窗立不住");
+            Assert.Equal(Visibility.Collapsed, r.Pr.Visibility);
+
+            // 挪过之后同一条轮询就得照常吸附（别把门槛修成永久不吸）
+            win.Left = r.Owner.Left + r.Owner.Width - 30;
+            win.Top = r.Owner.Top + 120;
+            r.Drag.PollFloatingTarget();
+            Assert.False(r.Panel.IsDetached);
+            Assert.Equal(DockSite.Right, r.Panel.Site);
+        });
+    }
+
+    [Fact]
+    public void 重复浮动换新窗后锚跟着换_挪一下仍能吸()
+        => OnRig(() => false, r =>
+        {
+            r.Panel.FloatAt((200, 200));
+            r.Panel.Dock(DockSite.Bottom);
+            r.Panel.FloatAt((200, 200));                // 第二次浮动：锚必须重记到新窗
+            var win = r.Panel.FloatingWindow!;
+            win.Left = r.Owner.Left + r.Owner.Width - 30;
+            win.Top = r.Owner.Top + 120;
+            r.Drag.PollFloatingTarget();
+
+            Assert.False(r.Panel.IsDetached);
+            Assert.Equal(DockSite.Right, r.Panel.Site);
         });
 }
