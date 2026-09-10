@@ -36,8 +36,11 @@ public sealed record ColumnPortrait(
 /// </summary>
 public static class TablePortrait
 {
-    /// <summary>每列默认摊几个样例值。</summary>
-    public const int DefaultSamples = 3;
+    /// <summary>每列默认摊几个样例值。
+    /// <para>第 28 棒从 3 提到 6：邱总表 F 列那块「从标签抄下来」的模板正好四行，
+    /// 摊 3 个把最后一行（QTY: 96 PCS）截掉——模型如实说「看不全」就不敢给 rows，
+    /// 表里的模板于是白摆在提示词里；四到六行是唛头模板的常见长度，按这个留。</para></summary>
+    public const int DefaultSamples = 6;
 
     /// <summary>单个样例最多多少字（唛头样例值常常整段文字，不给上限会挤爆提示词）。</summary>
     public const int MaxSampleChars = 40;

@@ -309,4 +309,20 @@ public class AiSheetProposalTests
         var noImage = AiSheetProposalPrompt.Build("…", Specs, 13, 1, "140×100 mm", 0);
         Assert.Contains("不要凭列名编设计", noImage, StringComparison.Ordinal);   // 没参照时那条规矩要在提示词里
     }
+
+    [Fact]
+    public void 表内文字模板是参照_看不全也要给rows_retemplate必须配套()
+    {
+        // 第 28 棒：邱总表 F 列四行标签文字被模型以「看不全」为由丢了 rows，
+        // 而它又问了 retemplate——老板点✅后没东西可落。两句硬话钉在提示词里。
+        var noImage = AiSheetProposalPrompt.Build("…", Specs, 13, 1, "140×100 mm", 0);
+        Assert.Contains("文字参照，和附图同等待遇", noImage, StringComparison.Ordinal);
+        Assert.Contains("不要因为它看不全就省略 rows", noImage, StringComparison.Ordinal);
+        Assert.Contains("（retemplate）就必须同时给出 rows", noImage, StringComparison.Ordinal);
+
+        // 附图那条分支不许被误伤：配套要求是共用的，但「文字参照」那句只在没图时说
+        var withImage = AiSheetProposalPrompt.Build("…", Specs, 13, 1, "140×100 mm", 2);
+        Assert.DoesNotContain("文字参照，和附图同等待遇", withImage, StringComparison.Ordinal);
+        Assert.Contains("（retemplate）就必须同时给出 rows", withImage, StringComparison.Ordinal);
+    }
 }

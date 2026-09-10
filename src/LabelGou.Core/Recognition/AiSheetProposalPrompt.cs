@@ -48,8 +48,9 @@ public static class AiSheetProposalPrompt
             ? $"本条随附 {imageCount} 张图（表里贴的效果图/模板截图或用户拍的样张）：标签上印哪几行照图上的行序与字面，图上没有的行不要造。\n"
             : "本条没附图。但表里常常自己就带着模板：某一列或某一块把标签上的字抄了一遍\n"
               + "（例如右侧几行出现 BOLAROM / Item no：olu830-35 / QTY：144 pcs / Ctns：5件 这种）。\n"
-              + "有这一块 → 它就是模板：抄了哪几行、哪行加粗居中、哪行其实是某一列的值（写成占位符），都照它给出 rows，"
+              + "有这一块 → 它就是模板（文字参照，和附图同等待遇）：抄了哪几行、哪行加粗居中、哪行其实是某一列的值（写成占位符），都照它给出 rows，"
               + "同时说明它抄在哪一列（templateSource）。\n"
+              + "就算这一块有几行被截断或看不清，也照你看见的那几行给出 rows，在 reason 里说哪几行没看清——不要因为它看不全就省略 rows。\n"
               + "表里确实没有这一块 → rows 省略，只报你在表里看到的事实，不要凭列名编设计。\n");
 
         sb.Append("\n只回这样一个 JSON 对象（字段可省略，行号一律用**原表行号、从 1 起**，与人看 Excel 的口径一致）：\n");
@@ -72,6 +73,8 @@ public static class AiSheetProposalPrompt
         sb.Append("action 只能用这四个（写别的软件接不住，会被当成一句提醒丢掉）：\n")
           .Append("  row-keep（那一行要不要当货印，要带 row）/ retemplate（要不要按你给的 rows 重排模板）/\n")
           .Append("  paper（要不要换成你点的那张纸）/ itemno-tail（货号里 * 后面那截留不留）。\n");
+        sb.Append("问题与方案要配套：questions 里问「要不要重排」（retemplate）就必须同时给出 rows——\n")
+          .Append("老板点了「要」而你没有 rows，软件只能报一句空话；给不出 rows 就别问这条，把事实写在 reason 里。\n");
 
         if (sheetSpecNames.Count > 0)
         {

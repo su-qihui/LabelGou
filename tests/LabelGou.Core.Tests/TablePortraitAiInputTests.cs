@@ -148,6 +148,21 @@ public class TablePortraitAiInputTests
     }
 
     [Fact]
+    public void 样例摊到6个_表内四行模板块不再被三档截掉()
+    {
+        // 邱总表 F 列的真实形状：四行标签文字混在 289 行里。摊 3 会把第四行（QTY）截掉，
+        // 模型就「看不全不给 rows」（第 28 棒的现场根因）。
+        var rows = new List<IReadOnlyList<string>>();
+        for (var i = 1; i <= 8; i++) rows.Add(new List<string> { "v" + i });
+        var data = new TabularData("t.xlsx", "S", new[] { "F" }, rows, 0);
+
+        var columns = TablePortrait.Build(data, null);
+
+        Assert.Equal(6, columns[0].Samples.Count);       // DefaultSamples=6：四行模板块全进提示词
+        Assert.Contains("v4", columns[0].Samples);       // 被截掉的那第四行现在在
+    }
+
+    [Fact]
     public void 列名四档都能对上真表头而认错的不放行()
     {
         var columns = TablePortrait.Build(VendorTable(), Bound);

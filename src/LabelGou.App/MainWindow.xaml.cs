@@ -605,10 +605,10 @@ public partial class MainWindow : Window
             case LabelGou.Core.Recognition.AiSheetQuestion.ActionRetemplate:
                 if (!yes) return (true, "保持你现在用的那张模板，没重排。");
                 if (proposal.Layout is not { } spec)
-                    // 旧文案「先让它重读一次这张表」是把人往死路上指：提案那条路只管切表与选纸，
-                    // 版式只可能从「让 AI 出一版排版」来，而那条按「无参照不许造模板」要先附样张（第 26 棒）。
-                    return (false, "它这次没给出模板内容，重排不了——重读表也不会带出版式：版式走「让 AI 出一版排版」，"
-                        + "先点「附上图片…」把样张标签拍给它，再按那一条。");
+                    // 第 28 棒改口：表里抄标签的那几行也是参照（提示词已让它看不全也要给 rows），
+                    // 不再说「重读表也没用、必须附图」那种把人堵死的话。
+                    return (false, "它这次没给出模板内容，重排不了——表里抄标签的那几行它这次没看全："
+                        + "再点一次「读这张表并提案」，或直接点「让 AI 出一版排版」；附上更清楚的样张图最稳。");
                 return ApplyAiLayout(spec);
 
             case LabelGou.Core.Recognition.AiSheetQuestion.ActionPaper:
@@ -623,7 +623,7 @@ public partial class MainWindow : Window
             default:   // itemno-tail：货号里 * 后面那截留不留
             {
                 if (proposal.Layout is not { } tailSpec)
-                    return (false, "它这次没给出模板内容，这一条改不了——先附样张图点「让 AI 出一版排版」，版式出来后回来再点这条。");
+                    return (false, "它这次没给出模板内容，这一条改不了——先让版式出来（再读一次表，或点「让 AI 出一版排版」），出来后再点这条。");
                 var header = _viewModel.ColumnBoundToField(LabelGou.Core.Marks.MarkFieldKey.ItemNo);
                 if (string.IsNullOrWhiteSpace(header))
                     return (false, "这张表里货号那一列没连上字段，我不知道该改哪一行（去 ② 连接字段里先连上）。");

@@ -844,7 +844,16 @@ public sealed class AiChatPanel : UserControl
         for (var i = 0; i < proposal.Questions.Count; i++)
         {
             var q = proposal.Questions[i];
-            var rowPanel = new DockPanel { LastChildFill = true, Margin = new Thickness(0, 1, 0, 1) };
+            // 一问一块：问题文字独占一行，按钮组另起一行右对齐。
+            // 旧版用 DockPanel 把按钮钉右侧——右栏窄形态下问题折行把行拉高，
+            // 两颗按钮被拉成占半屏的 giant 灰块（用户 2026-09-10 实拍）；竖排让两种形态同一套版式。
+            var block = new StackPanel { Margin = new Thickness(0, 3, 0, 3) };
+            block.Children.Add(new TextBlock
+            {
+                Text = $"⚠️{i + 1}. {q.Text}",
+                FontSize = 12,
+                TextWrapping = TextWrapping.Wrap,
+            });
             var answer = new TextBlock
             {
                 FontSize = 11,
@@ -866,22 +875,15 @@ public sealed class AiChatPanel : UserControl
                 FontSize = 11,
                 Padding = new Thickness(6, 1, 6, 1),
             };
-            DockPanel.SetDock(answer, Dock.Right);
-            DockPanel.SetDock(yes, Dock.Right);
-            DockPanel.SetDock(no, Dock.Right);
-            rowPanel.Children.Add(answer);
-            rowPanel.Children.Add(yes);
-            rowPanel.Children.Add(no);
-            rowPanel.Children.Add(new TextBlock
-            {
-                Text = $"⚠️{i + 1}. {q.Text}",
-                FontSize = 12,
-                TextWrapping = TextWrapping.Wrap,
-                VerticalAlignment = VerticalAlignment.Center,
-            });
+            // WrapPanel：窄栏放不下就自然换行，按钮永远只占自己那一行的高度。
+            var actions = new WrapPanel { HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 2, 0, 0) };
+            actions.Children.Add(no);
+            actions.Children.Add(yes);
+            actions.Children.Add(answer);
+            block.Children.Add(actions);
             no.Click += (_, _) => AnswerQuestion(proposal, q, false, answer, no, yes);
             yes.Click += (_, _) => AnswerQuestion(proposal, q, true, answer, no, yes);
-            _questions.Children.Add(rowPanel);
+            _questions.Children.Add(block);
         }
     }
 
