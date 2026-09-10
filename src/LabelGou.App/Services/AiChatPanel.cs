@@ -349,7 +349,8 @@ public sealed class AiChatPanel : UserControl
         _settings = RecognitionSettings.Load();
         var s = _settings;
         var key = $"{s.ApiKeySource}{(s.SavedKeyStatus == SecretStore.Status.Unreadable ? "（存过但这台机解不开，请重填）" : string.Empty)}";
-        _channelLine.Text = $"通道：{s.Provider}　端点：{s.Endpoint}　模型：{s.Model}（{s.TimeoutSeconds}s）　" +
+        // 显示真生效值（第 26 棒）：旧版直接印存储值，用户存的 900 上了屏、实际却等 180——一套数字两张皮。
+        _channelLine.Text = $"通道：{s.Provider}　端点：{s.Endpoint}　模型：{s.Model}（{s.EffectiveTimeoutSeconds}s）　" +
                             $"{(s.Provider == RecognitionSettings.Providers.OpenAi ? "订单数据会离开这台电脑" : "本机，不出网")}　{key}";
         _channelLine.Foreground = s.Provider == RecognitionSettings.Providers.OpenAi ? WarnBrush : OkBrush;
     }

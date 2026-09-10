@@ -236,7 +236,7 @@ public sealed class AiDebugWindow : Window
         _apiKeyPlain.Text = _settings.ApiKey ?? string.Empty;
         _rememberApiKey.IsChecked = _settings.RememberApiKey;
         _ocrLanguage.Text = _settings.OcrLanguage ?? string.Empty;
-        _timeout.Text = _settings.TimeoutSeconds.ToString(CultureInfo.InvariantCulture);
+        _timeout.Text = _settings.EffectiveTimeoutSeconds.ToString(CultureInfo.InvariantCulture);   // 显示真生效值（第 26 棒）：存着的 900 不改文件，但显示不许说谎
     }
 
     private void ApplySelection()
