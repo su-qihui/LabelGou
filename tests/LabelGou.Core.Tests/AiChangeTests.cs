@@ -228,4 +228,48 @@ public class AiChangeTests
         Assert.Empty(p.Mappings);
         Assert.Contains(p.Notes, n => n.Contains("列清单"));
     }
+
+    // ───────────────── 逐条事实与字号（第 31 棒：用户说"它的说法"讲得混乱 / 差在字体大小） ─────────────────
+
+    [Fact]
+    public void facts逐条解析_一条一件_而且facts说了就不再播reason()
+    {
+        const string json = """
+            {
+              "headerRow": 1,
+              "facts": [ "第1列是货号", "第2列是每箱数量", "F列那4行是标签上印什么字的样例抄写" ],
+              "reason": "第1列是货号、第2列是每箱数量、F列那4行是标签样例抄写（五件事挤一句那种）"
+            }
+            """;
+
+        var p = AiSheetProposal.Parse(json, ThreeColumns, 13, null);
+
+        Assert.Equal(3, p.Facts.Count);                    // 一条一件，不挤成一句
+        Assert.Contains("第1列是货号", p.Facts);
+
+        // 同一件事不播两遍：facts 有了，reason 就不再作为"它的说法"重复出现（那正是"讲得混乱"的一半原因）。
+        Assert.DoesNotContain(p.Explain(), line => line.StartsWith("它的说法：", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void 版式卡上写得出每行字号_撑满行如实写撑满()
+    {
+        const string json = """
+            {
+              "sheetSpec": "280×200 一开四",
+              "rows": [ { "content": "BOLAROM", "weight": 1.6, "stretch": true, "bold": true },
+                        { "content": "Item no：{{ItemNo}}", "weight": 1, "sizePt": 12, "stretch": false } ]
+            }
+            """;
+
+        var p = AiSheetProposal.Parse(json, ThreeColumns, 13, Specs);
+
+        var card = p.DescribeChanges(new AiChangeContext(RawRowCount: 13))
+            .Single(c => c.Kind == AiChangeKind.Layout);
+
+        // 用户 2026-09-10：「AI 排版效果差，差在字体大小」——而卡片上原来一个字号都没写，点 ✅ 前根本看不见。
+        Assert.Contains("字号", card.After);
+        Assert.Contains("撑满", card.After);                 // 撑满行的字号由行高反算，不假装等于某个 pt
+        Assert.Contains("12pt", card.After);
+    }
 }

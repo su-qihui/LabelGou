@@ -91,6 +91,10 @@ public sealed class AiChatPanel : UserControl
         AcceptsReturn = true,
         TextWrapping = TextWrapping.Wrap,
         VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+        // 第 31 棒：横向也留一条。WPF 的 Wrap **不会在"单词"中间断行**，而对话里会出现不可断的长 token
+        // （端点 URL、报错里的地址）——那种行会超出可视宽度**再也看不到**。Wrap + 横向 Auto 只为这种行给滚动条，
+        // 正常换行时它不出现（用户 2026-09-10：「上面的字被挤出去看不见，往上滚也不行」）。
+        HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
         FontSize = 13,
         MinHeight = 160,
         Margin = new Thickness(0, 0, 0, 6),
@@ -389,9 +393,24 @@ public sealed class AiChatPanel : UserControl
         // 显示真生效值（第 26 棒）；第 27 棒起超时可「不设限」，并把思考档上屏——用户得看得见自己拧到哪一档。
         var limit = s.EffectiveTimeoutSeconds == 0 ? "不限" : $"{s.EffectiveTimeoutSeconds}s";
         var thinking = s.Thinking == RecognitionSettings.ThinkingAuto ? string.Empty : $"　{s.Thinking}";
-        _channelLine.Text = $"通道：{s.Provider}　端点：{s.Endpoint}　模型：{s.Model}（{limit}{thinking}）　" +
+        _channelLine.Text = $"通道：{s.Provider}　端点：{ShortEndpoint(s.Endpoint)}　模型：{s.Model}（{limit}{thinking}）　" +
                             $"{(s.Provider == RecognitionSettings.Providers.OpenAi ? "订单数据会离开这台电脑" : "本机，不出网")}　{key}";
+        // 完整端点进 ToolTip：上屏那截只是主域名（理由见 ShortEndpoint），一个字都不丢。
+        _channelLine.ToolTip = string.IsNullOrWhiteSpace(s.Endpoint) ? null : "完整端点：" + s.Endpoint;
         _channelLine.Foreground = s.Provider == RecognitionSettings.Providers.OpenAi ? WarnBrush : OkBrush;
+    }
+
+    /// <summary>
+    /// 端点上屏只显示主域名：长 URL 在换行文本框里是一个**不可断的"单词"**，会把那一行撑出可视宽度、
+    /// 横向也滚不到——用户 2026-09-10 截图里被裁掉的那一截正是它。
+    /// <para>完整值一律进 ToolTip，信息不丢；认不出是 URL 的就按长度截断。</para>
+    /// </summary>
+    private static string ShortEndpoint(string? endpoint)
+    {
+        var text = endpoint?.Trim() ?? string.Empty;
+        if (text.Length == 0) return "（没填）";
+        if (Uri.TryCreate(text, UriKind.Absolute, out var uri) && uri.Host.Length > 0) return uri.Host;
+        return text.Length <= 28 ? text : text[..28] + "…";
     }
 
     private void ShowAttachment() =>
@@ -851,6 +870,13 @@ public sealed class AiChatPanel : UserControl
         var shownAsCards = ShowChanges(proposal);
         if (!shownAsCards && items.Count > 0 && proposal.Questions.Count == 0)
             foreach (var item in items) Append("　· " + item);
+        // 第 31 棒：它对这张表的**判断逐条**摆出来。用户 2026-09-10 截图里那段「它的说法」读着混乱——
+        // 根因是提示词逼它"一句说完"（五件事挤成一句），不是显示写错了。现在一条一件，人一行行扫。
+        if (proposal.Facts.Count > 0)
+        {
+            Append("它对这张表的判断（一条一件）：");
+            foreach (var fact in proposal.Facts) Append("　· " + fact);
+        }
         if (explain.Count > 0)
         {
             Append("它提醒（不采纳也能用，但你得知道）：");

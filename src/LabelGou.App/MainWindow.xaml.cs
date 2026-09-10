@@ -80,6 +80,15 @@ public partial class MainWindow : Window
         }
         if (startSite == DockSite.Right) _aiPanel.Dock(DockSite.Right);
         SyncAiPanelState();
+        // 第 31 棒：窗口一改尺寸就**重新夹两栏的宽度**（只算宽度，不写盘——写盘那件事仍归 Closing 与 StateChanged）。
+        // 修的是一个真 bug（用户 2026-09-10 截图）：右栏宽度原来只在「切换停靠状态」时算一次，
+        // 于是「宽窗口下开着右栏、再把窗口拖窄」时列宽不跟着收 → 左栏 + 预览下限 + 右栏 之和超过窗口宽
+        // → **最右边那截被窗口边缘裁掉，而窗口本身不横向滚动，内容就再也够不着**
+        // （用户的描述正是「上面的字被挤出去看不见、往上滚也不行」）。
+        // 夹法不用另写一套：ApplyPaneModes 里的 ClampRightColumnDip 早就把「预览下限」算进去了，
+        // 缺的只是"窗口变了要重算一次"这个触发；放不下时它会自动退回窄条（AI 收起来的家），
+        // 窗口再拉宽又按 _rightWidthDip 复原。
+        SizeChanged += (_, _) => ApplyPaneModes();
         // 分隔条拖到哪、下次就开多宽：只在关窗那一次写盘，不跟着拖动每像素写。
         Closing += (_, _) => _viewModel.SaveAiDock(_aiPanel?.LastDockedSite ?? DockSite.Right,
             RightColumnWidthWorthRemembering());

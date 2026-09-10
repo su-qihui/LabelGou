@@ -37,6 +37,12 @@ namespace LabelGou.Core.Recognition;
 /// <para>用户 2026-09-10 的诉求是「AI 模式导入表格后不应该直接绑定，先把表格给 AI 理解后由 AI 绑定」，
 /// 这一份就是"由 AI 绑定"的载体——经白名单与列回查校验后，逐条变成改动卡等人 ✅。</para>
 /// </param>
+/// <param name="Facts">
+/// 它对这张表**看出来的判断**，一条一件（第 31 棒）。
+/// <para>为什么会多出这一份：用户 2026-09-10 截图里那段「它的说法」读着混乱——根因是提示词要求
+/// <c>reason</c>「一句说完」，模型被逼着把「第1列是货号 + 第2列是每箱数量 + 第3列是总箱数 + F列那4行是模版 +
+/// JP/品名按死文本处理」五件事挤进一句。所以改成**逐条**：一条只说一件事，人一眼扫得完。</para>
+/// </param>
 public sealed record AiSheetProposal(
     int? HeaderRow,
     bool? HasHeader,
@@ -54,7 +60,8 @@ public sealed record AiSheetProposal(
     IReadOnlyList<string> Errors,
     SheetReadout Readout,
     IReadOnlyList<AiSheetQuestion> Questions,
-    IReadOnlyList<AiFieldBinding> Mappings)
+    IReadOnlyList<AiFieldBinding> Mappings,
+    IReadOnlyList<string> Facts)
 {
     /// <summary>能用才允许落地（与行式版式那份 <c>RowLayoutProposal.HasSpec</c> 同一条纪律）。</summary>
     public bool IsUsable => Errors.Count == 0;
@@ -64,7 +71,7 @@ public sealed record AiSheetProposal(
         HeaderRow is null && HasHeader is null && TotalValueRows.Count == 0 && Layout is null &&
         SheetSpecName is null && PaperWidthMm is null && PaperHeightMm is null &&
         Columns is null && Rows is null && FollowsLabel is null && Readout.QtyColumn is null &&
-        Questions.Count == 0 && Mappings.Count == 0;
+        Questions.Count == 0 && Mappings.Count == 0 && Facts.Count == 0;
 
     /// <summary>
     /// 折成切表指令。<paramref name="rawRowCount"/> 是原表总行数（用来把 1 起的行号换成 0 起并挡住越界）。
@@ -184,7 +191,7 @@ public sealed record AiSheetProposal(
                     ? $"现在这张 {bw:0.#} × {bh:0.#} mm"
                     : "现在这张（还不知道）";
             list.Add(new AiChange(AiChangeKind.Layout, "标签版式",
-                beforeLayout, $"它排的新版式 {spec.Rows.Count} 行 · {size}"));
+                beforeLayout, $"它排的新版式 {spec.Rows.Count} 行 · {size} · {DescribeSizes(spec)}"));
         }
 
         // ── 用哪张纸 ──
@@ -217,6 +224,20 @@ public sealed record AiSheetProposal(
             ? "第 " + string.Join("、", rows) + " 行不印"
             : "没剔任何行（整张表都按货印）";
 
+    /// <summary>
+    /// 版式那一行的**字号摘要**（第 31 棒）。
+    /// <para>为什么必须写出来：用户 2026-09-10 说"AI 排版效果差，差在字体大小"，而卡片上**一个字号都没写**
+    /// （只有"新版式 4 行 · 140 × 100 mm"）——人点 ✅ 之前根本看不见字号，只能印出来才发现，
+    /// 这正是第 29/30 棒那条「原值 → 新值」要治的同一个毛病。</para>
+    /// <para>撑满行的字号**由行高反算**（大字唛头就是这么来的），所以如实写"撑满"，不假装它等于某个 pt。
+    /// 字号档数**不做限制**——用户的口径是"一个模板有多种字体字号"是常态（上大下小、右下角更小）。</para>
+    /// </summary>
+    private static string DescribeSizes(RowLayoutSpec spec)
+    {
+        var parts = spec.Rows.Select(r => r.Stretch ? "撑满" : $"{r.SizePt:0.#}pt").ToList();
+        return "字号 " + string.Join(" / ", parts);
+    }
+
     /// <summary>两份剔除名单是不是同一件事（顺序不同不算变，重复不算变）。</summary>
     private static bool SameRows(IReadOnlyList<int>? a, IReadOnlyList<int>? b)
     {
@@ -245,7 +266,10 @@ public sealed record AiSheetProposal(
         }
         var list = unique.Take(MaxExplainLines).ToList();
         if (unique.Count > list.Count) list.Add($"（还有 {unique.Count - list.Count} 条提醒，点「复制全部」能看到）");
-        if (!string.IsNullOrWhiteSpace(Reason)) list.Add("它的说法：" + Shrink(Reason.Trim(), 90));
+        // 第 31 棒：facts 已经逐条说过了，就不再播 reason —— 同一件事播两遍正是用户说"讲得混乱"的一半原因；
+        // 而且那句原文是"一句说完"逼出来的长句，截断到 90 字还会在句子中间断开（用户截图里那截"…先按死文本处"）。
+        if (Facts.Count == 0 && !string.IsNullOrWhiteSpace(Reason))
+            list.Add("它的说法：" + Shrink(Reason.Trim(), 160));
         return list;
     }
 
@@ -366,6 +390,9 @@ public sealed record AiSheetProposal(
         ["mappings"] = "mappings", ["mapping"] = "mappings", ["bindings"] = "mappings",
         ["binding"] = "mappings", ["fields"] = "mappings", ["columnMapping"] = "mappings",
         ["字段绑定"] = "mappings", ["绑定"] = "mappings", ["列绑定"] = "mappings", ["字段"] = "mappings",
+        // 第 31 棒：逐条事实（用户说原来那段"它的说法"讲得混乱，改成一条一件）。
+        ["facts"] = "facts", ["fact"] = "facts", ["findings"] = "facts",
+        ["事实"] = "facts", ["判断"] = "facts", ["要点"] = "facts", ["逐条"] = "facts",
     };
 
     /// <summary>
@@ -500,13 +527,14 @@ public sealed record AiSheetProposal(
                     layout?.Spec is { } spec ? FriendlyTemplateLines(spec, columns) : Array.Empty<string>(),
                     qtyHeader, qtyIndex, TextField(fields, "paperText", 60)),
                 ParseQuestions(fields, rawRowCount, notes),
-                ParseMappings(fields, columns, notes));
+                ParseMappings(fields, columns, notes),
+                StringListField(fields, "facts"));
         }
 
         AiSheetProposal Bad(string why) => new(null, null, Array.Empty<int>(), null, null,
             null, null, null, null, null, Array.Empty<string>(), null, Array.Empty<string>(),
             new[] { why }, SheetReadout.Empty, Array.Empty<AiSheetQuestion>(),
-            Array.Empty<AiFieldBinding>());
+            Array.Empty<AiFieldBinding>(), Array.Empty<string>());
     }
 
     /// <summary>

@@ -78,7 +78,10 @@ public static class AiSheetProposalPrompt
         sb.Append("    { \"text\": \"件数末尾总数155\", \"no\": \"不需要\", \"yes\": \"需要\", \"action\": \"row-keep\", \"row\": 34 },\n");
         sb.Append("    { \"text\": \"目前用的模板与表格相近，要不要重新排版\", \"action\": \"retemplate\" },\n");
         sb.Append("    { \"text\": \"货号里*号及后面要不要保留\", \"action\": \"itemno-tail\" } ],\n");
-        sb.Append("  \"reason\": \"为什么这么判（一句大白话，给老板看，不是给工程师看）\",\n");
+        sb.Append("  \"facts\": [                            // 你从这张表看出来的判断，**一条只说一件事**（最多 5 条）\n");
+        sb.Append("    \"第1列是货号\", \"第2列是每箱数量\", \"第3列是这票总共几箱（按它算纸张数）\",\n");
+        sb.Append("    \"F列那4行是标签上印什么字的样例抄写\" ],\n");
+        sb.Append("  \"reason\": \"为什么这么判（可省：facts 已经说清了就别再说一遍）\",\n");
         sb.Append("  \"rows\": [ { \"content\": \"Item no：{{col:货号ITEM NO:}}\", \"sizePt\": 14, \"weight\": 1, \"bold\": true, \"align\": \"center\" } ]  // 模板逐行；{{字段}} 用下面清单里的键，要某列原样写 {{col:表头原样}}；不加粗的行要写 bold:false（默认是加粗的）\n");
         sb.Append("}\n");
         sb.Append("action 只能用这四个（写别的软件接不住，会被当成一句提醒丢掉）：\n")
@@ -96,8 +99,13 @@ public static class AiSheetProposalPrompt
         sb.Append(string.Join(" ", MarkFieldCatalog.Mappable.Select(d => d.Key + "(" + d.ChineseName + ")"))).Append('\n');
         sb.Append("硬性约束：行号必须在 1~").Append(rawRowCount).Append(" 之间；列名那一行不能同时被列进 totalRows；")
           .Append("不要输出毫米坐标、不要改纸张几何（只点名用哪张纸）；看不清就说看不清，宁可省略字段。\n");
-        sb.Append("说话要求：reason 用中文大白话、一句说完；不要出现 rows、JSON、字段英文名这些词（软件自己会把你回的话写成五行：")
+        sb.Append("说话要求：用中文大白话；不要出现 rows、JSON、字段英文名这些词（软件自己会把你回的话写成五行：")
           .Append("表格有效数据 / 纸张 / 模版 / 张数 / 预览，那五行由软件拼，你不用写）。\n");
+        sb.Append("facts 一条只说一件事——**不要把几件事挤进一句话**（老板是一行一行扫的，挤成一句他就读不懂了）。\n");
+        // 第 31 棒：用户 2026-09-10 说"AI 排版效果差，差在字体大小"，所以字号得给依据，不能随手填。
+        sb.Append("字号（rows 里每一行）：**照参照物来**——表里抄标签的那一块、或你看到的样张/照片上，")
+          .Append("哪行字大、哪行字小就照那个大小关系排（一般是上面一行字大、下面明细小一点，有时右下角还更小）。")
+          .Append("同一行里只能一个字号；明细行的字号别填得比标题行还大。大字行用 stretch:true 让行高决定字号，别再自己填 sizePt。\n");
         sb.Append("一律用中文。");
         return sb.ToString();
     }
