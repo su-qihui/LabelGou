@@ -580,7 +580,8 @@ public partial class MainWindow : Window
         panel.ApplyProposal = ApplyAiProposal;
         // 第 23 棒：AI 请求在飞期间换文件/表/模板，旧结果落地前按代数对一遍，不等就作废。
         panel.GetDataGeneration = () => _viewModel.DataGeneration;
-        panel.ApplyQuestion = ApplyAiQuestion;
+        // 第 40 棒：这里原来还接了一条 panel.ApplyQuestion = ApplyAiQuestion（点一条问题就改一处活表），
+        // 两阶段拆分后删了——读表阶段的答复只改那份提案，排版阶段整份落地，中间不许动活表。
         // 阶段 29 第 1 棒：改动卡要先说清「原来是什么」，所以把软件此刻的状态单拎一份给它。
         // 拿不到的字段一律留 null（Core 那边会显示成"还没定"），**不许在这里补一个看起来很像的值**。
         panel.GetChangeContext = () =>
@@ -617,104 +618,6 @@ public partial class MainWindow : Window
         // 「预览:31个模板,155张」那一句的数由软件自己数（按 AI 点的那一列逐行加），不信模型报的总数。
         panel.OutputCounter = qtyColumn => _viewModel.CountOutput(qtyColumn);
         panel.GoPrint = PrintFromAi;
-    }
-
-    /// <summary>
-    /// 只落地用户点的那一条问题（第 22 棒）：一行问题配 ❌/✅，点哪条改哪条，不牵连其余。
-    /// <para>用户 2026-09-09 的原话是「件数末尾总数155 ❌(不需要) ✅(需要)」这种形式——
-    /// 上一版只给了一屏文字提醒，他得自己去别处点，他的评语是「改之后更乱了」。</para>
-    /// <para>四个动作都是软件真接得住的：改剔除行、存模板、换纸、改货号占位符。
-    /// 做不了的事不在这里出现（Core 那边就把接不住的丢掉了），不做「点了报成功其实没改」。</para>
-    /// </summary>
-    private (bool Ok, string Message) ApplyAiQuestion(
-        LabelGou.Core.Recognition.AiSheetProposal proposal,
-        LabelGou.Core.Recognition.AiSheetQuestion q, bool yes)
-    {
-        switch (q.Action)
-        {
-            case LabelGou.Core.Recognition.AiSheetQuestion.ActionRowKeep:
-            {
-                var next = _viewModel.CurrentChoice;
-                var rawIndex = q.Row - 1;
-                var excluded = (next.ExcludedRawRows ?? Array.Empty<int>()).ToList();
-                var skip = next.SkipSummaryRows;
-                if (yes)
-                {
-                    // 第 24 棒：这行要是被合计行兜底剔着的，光从点名名单里删还不够——不关兜底就是
-                    // 「点了报成功其实没改」（第 22 棒钉过的那件事不能拿兜底再犯一遍）。
-                    if (_viewModel.RowAutoSkippedByHeuristic(rawIndex)) skip = false;
-                    if (!excluded.Remove(rawIndex) && !_viewModel.RowAutoSkippedByHeuristic(rawIndex))
-                        return (true, $"第 {q.Row} 行本来就在印，什么都没改。");
-                }
-                else if (!excluded.Contains(rawIndex))
-                {
-                    excluded.Add(rawIndex);
-                }
-                // 第 33 棒：答一条问题也是一步（撤回粒度是"逐步"）——动手前压快照。
-                _viewModel.BeginAiChange(yes ? $"第 {q.Row} 行要印" : $"第 {q.Row} 行不印");
-                var (ok, msg) = _viewModel.ApplySheetChoice(new LabelGou.Core.Data.SheetLayoutChoice(
-                    next.HeaderRowIndex, next.HasHeader, excluded.Count == 0 ? null : excluded, skip));
-                return (ok, (yes ? $"第 {q.Row} 行照你说的要印" : $"第 {q.Row} 行不印了") + "：" + msg);
-            }
-
-            case LabelGou.Core.Recognition.AiSheetQuestion.ActionRetemplate:
-                if (!yes) return (true, "保持你现在用的那张模板，没重排。");
-                if (proposal.Layout is not { } spec)
-                    // 第 28 棒改口：表里抄标签的那几行也是参照（提示词已让它看不全也要给 rows），
-                    // 不再说「重读表也没用、必须附图」那种把人堵死的话。
-                    return (false, "它这次没给出模板内容，重排不了——表里抄标签的那几行它这次没看全："
-                        + "再点一次「读这张表并提案」，或直接点「让 AI 出一版排版」；附上更清楚的样张图最稳。");
-                _viewModel.BeginAiChange("按它给的版式重排");
-                return ApplyAiLayout(spec);
-
-            case LabelGou.Core.Recognition.AiSheetQuestion.ActionPaper:
-            {
-                if (!yes) return (true, "纸保持现在这张，没换。");
-                var name = q.Value ?? proposal.SheetSpecName;
-                if (name is null) return (false, "它没点名要用哪张纸。");
-                _viewModel.BeginAiChange($"换成「{name}」这张纸");
-                var msg = _viewModel.Sheet.SelectSheetSpecByName(name);
-                return (msg.StartsWith("纸规已切到", StringComparison.Ordinal), msg);
-            }
-
-            default:   // itemno-tail：货号里 * 后面那截留不留
-            {
-                if (proposal.Layout is not { } tailSpec)
-                    return (false, "它这次没给出模板内容，这一条改不了——先让版式出来（再读一次表，或点「让 AI 出一版排版」），出来后再点这条。");
-                // 第 31 棒修回归：AI 模式下导入后**不先绑定字段**（第 30 棒），而这一条原来只认"已绑定的货号列"
-                // → 一律报「没连上字段」，用户点了「去掉 *16」什么都不会发生（2026-09-10 真机截图里那句
-                // 「没办成：这张表里货号那一列没连上字段」就是这里）。
-                // 正解：**优先用它自己刚报的绑定**（proposal.Mappings 里的货号列——它明明已经说了"第1列是货号"），
-                // 再退回已绑字段。两条都没有才报错，且如实说清下一步。
-                var header = proposal.Mappings
-                                 .FirstOrDefault(m => m.Field == LabelGou.Core.Marks.MarkFieldKey.ItemNo)?.ColumnHeader
-                             ?? _viewModel.ColumnBoundToField(LabelGou.Core.Marks.MarkFieldKey.ItemNo);
-                if (string.IsNullOrWhiteSpace(header))
-                    return (false, "不知道货号是表里哪一列，这一条改不了：先在面板上把「字段绑定：货号/款号」那条卡点 ✅，"
-                        + "或者去 ② 连接字段里手工连上，然后再点这条。");
-                var colToken = "{{col:" + header + "}}";
-                var changed = 0;
-                foreach (var row in tailSpec.Rows)
-                {
-                    if (yes && row.Content.Contains("{{ItemNo}}", StringComparison.OrdinalIgnoreCase))
-                    {
-                        row.Content = row.Content.Replace("{{ItemNo}}", colToken);
-                        changed++;
-                    }
-                    else if (!yes && row.Content.Contains(colToken, StringComparison.OrdinalIgnoreCase))
-                    {
-                        row.Content = row.Content.Replace(colToken, "{{ItemNo}}");
-                        changed++;
-                    }
-                }
-                if (changed == 0)
-                    return (true, yes
-                        ? "模板里没用到货号那一列，已经是「连 * 后面一起印」了，没改。"
-                        : "模板里没用到货号那一列，已经是「只印 * 前面」了，没改。");
-                var (tailOk, tailMsg) = ApplyAiLayout(tailSpec);
-                return (tailOk, (yes ? "货号连 * 后面一起印（按表里原样）：" : "货号只印 * 前面：") + tailMsg);
-            }
-        }
     }
 
     /// <summary>用户点了「用这个」才走到这里。存不存得进模板库仍由 <see cref="TemplateStore"/> 的校验说了算。</summary>

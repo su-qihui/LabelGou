@@ -44,7 +44,7 @@ public class AiChangeTests
     private static readonly IReadOnlyList<string> Specs =
         new[] { "280×200 一开四", "A4 底纸", "一页一枚（纸面跟标签走）" };
 
-    private static AiSheetProposal Parse(string json) => AiSheetProposal.Parse(json, null, 13, Specs);
+    private static AiSheetProposal Parse(string json) => AiSheetProposal.Parse(json, null, 13, AiProposalStage.Layout, Specs);
 
     [Fact]
     public void 无变化不出卡_两边一样时清单是空的()
@@ -157,7 +157,7 @@ public class AiChangeTests
     [Fact]
     public void 字段绑定也出卡_没绑的原值就写没绑()
     {
-        var p = AiSheetProposal.Parse(OneMapping, ThreeColumns, 13, null);
+        var p = AiSheetProposal.Parse(OneMapping, ThreeColumns, 13, AiProposalStage.Layout, null);
 
         var binding = Assert.Single(p.Mappings);              // 列对回了真表头
         Assert.Equal(MarkFieldKey.GrossWeight, binding.Field);
@@ -174,7 +174,7 @@ public class AiChangeTests
     [Fact]
     public void 已经绑在同一列就不出卡_绑在别列时原值写那一列()
     {
-        var p = AiSheetProposal.Parse(OneMapping, ThreeColumns, 13, null);
+        var p = AiSheetProposal.Parse(OneMapping, ThreeColumns, 13, AiProposalStage.Layout, null);
 
         var same = new AiChangeContext(RawRowCount: 13,
             Bindings: new Dictionary<MarkFieldKey, string> { [MarkFieldKey.GrossWeight] = "毛重G.W.(kg)" });
@@ -196,7 +196,7 @@ public class AiChangeTests
               { "column": "Z", "field": "ItemNo" } ] }
             """;
 
-        var p = AiSheetProposal.Parse(json, ThreeColumns, 13, null);
+        var p = AiSheetProposal.Parse(json, ThreeColumns, 13, AiProposalStage.Layout, null);
 
         var only = Assert.Single(p.Mappings);                 // 只活下来中文别名那一条
         Assert.Equal(MarkFieldKey.GrossWeight, only.Field);
@@ -213,7 +213,7 @@ public class AiChangeTests
               { "column": "流水号", "field": "GrossWeight" } ] }
             """;
 
-        var p = AiSheetProposal.Parse(json, ThreeColumns, 13, null);
+        var p = AiSheetProposal.Parse(json, ThreeColumns, 13, AiProposalStage.Layout, null);
 
         var only = Assert.Single(p.Mappings);
         Assert.Equal(2, only.ColumnIndex);                    // 留着的是第一条（C 列），不是后一条
@@ -223,7 +223,7 @@ public class AiChangeTests
     [Fact]
     public void 没有列画像时一条绑定都不采纳_不许拿列字母瞎对()
     {
-        var p = AiSheetProposal.Parse(OneMapping, null, 13, null);
+        var p = AiSheetProposal.Parse(OneMapping, null, 13, AiProposalStage.Layout, null);
 
         Assert.Empty(p.Mappings);
         Assert.Contains(p.Notes, n => n.Contains("列清单"));
@@ -242,7 +242,7 @@ public class AiChangeTests
             }
             """;
 
-        var p = AiSheetProposal.Parse(json, ThreeColumns, 13, null);
+        var p = AiSheetProposal.Parse(json, ThreeColumns, 13, AiProposalStage.Layout, null);
 
         Assert.Equal(3, p.Facts.Count);                    // 一条一件，不挤成一句
         Assert.Contains("第1列是货号", p.Facts);
@@ -262,7 +262,7 @@ public class AiChangeTests
             }
             """;
 
-        var p = AiSheetProposal.Parse(json, ThreeColumns, 13, Specs);
+        var p = AiSheetProposal.Parse(json, ThreeColumns, 13, AiProposalStage.Layout, Specs);
 
         var card = p.DescribeChanges(new AiChangeContext(RawRowCount: 13))
             .Single(c => c.Kind == AiChangeKind.Layout);
@@ -287,7 +287,7 @@ public class AiChangeTests
             }
             """;
 
-        var p = AiSheetProposal.Parse(json, ThreeColumns, 13, null);
+        var p = AiSheetProposal.Parse(json, ThreeColumns, 13, AiProposalStage.Layout, null);
         var lines = p.DescribeLayoutRows(ThreeColumns);
 
         Assert.Equal(3, lines.Count);
@@ -307,7 +307,7 @@ public class AiChangeTests
             }
             """;
 
-        var p = AiSheetProposal.Parse(json, ThreeColumns, 13, null);
+        var p = AiSheetProposal.Parse(json, ThreeColumns, 13, AiProposalStage.Layout, null);
         var lines = p.DescribeLayoutRows(ThreeColumns);
 
         // 第一层防线在解析器：表里根本没有的列名**当场剥掉**（放行等于让模型编数据），并记一句 Note。
@@ -328,7 +328,7 @@ public class AiChangeTests
             { "rows": [ { "content": "Item no：{{col:随便一列}}" } ] }
             """;
 
-        var p = AiSheetProposal.Parse(json, null, 13, null);
+        var p = AiSheetProposal.Parse(json, null, 13, AiProposalStage.Layout, null);
         var lines = p.DescribeLayoutRows(null);
 
         Assert.Single(lines);
@@ -346,10 +346,11 @@ public class AiChangeTests
     [Fact]
     public void 货号列里带星号_模型没问软件也替你问()
     {
-        // 有版式才问（没版式点了也办不成，问了等于挖坑）；这里给一行 rows 让它可办。
+        // 第 40 棒起第一步（读表）就会问这条，那时候还没有版式；这里给的是第二步那种带 rows 的回包，
+        // 钉的是「模型自己没问时软件补问」这半边，两步都一样。
         const string json = """{ "rows": [ { "content": "ITEM No: {{col:ITEM NO}}" } ] }""";
 
-        var p = AiSheetProposal.Parse(json, StarColumns, 13, null);
+        var p = AiSheetProposal.Parse(json, StarColumns, 13, AiProposalStage.Layout, null);
 
         var q = Assert.Single(p.Questions);
         Assert.Equal(AiSheetQuestion.ActionItemNoTail, q.Action);
@@ -367,19 +368,56 @@ public class AiChangeTests
             }
             """;
 
-        var p = AiSheetProposal.Parse(json, StarColumns, 13, null);
+        var p = AiSheetProposal.Parse(json, StarColumns, 13, AiProposalStage.Layout, null);
 
         Assert.Single(p.Questions);     // 只留模型问的那一条，不叠加成两条
     }
 
     [Fact]
-    public void 没有版式可改时不问那条_问了也办不成()
+    public void 读表阶段没有版式也要问星号那条_答复等版式出来再落()
     {
-        const string json = """{ "headerRow": 1 }""";
+        // 第 40 棒翻掉了「有版式才问」这个前置：两阶段拆分后**第一步本来就没有版式**，
+        // 而这条恰恰是用户点名要问的（「*号后面的是否保留」）——按老规矩他就永远被问不到。
+        // mappings 要给：MergeLayout 补落那次替换得先知道货号是哪一列，不知道就如实说改不了（不猜）。
+        var read = AiSheetProposal.Parse(
+            """{ "headerRow": 1, "mappings": [ { "column": "ITEM NO", "field": "ItemNo" } ] }""",
+            StarColumns, 13, AiProposalStage.Read);
 
-        var p = AiSheetProposal.Parse(json, StarColumns, 13, null);
+        var q = Assert.Single(read.Questions);
+        Assert.Equal(AiSheetQuestion.ActionItemNoTail, q.Action);
 
-        Assert.Empty(p.Questions);
+        // 拍「不印 * 后面」：这一步没有版式可改，**只记账，不假装办了**。
+        var answered = read.WithAnswer(q, yes: false);
+        Assert.Single(answered.Answers);
+        Assert.Null(answered.Layout);
+        Assert.Contains(answered.Notes, n => n.Contains("记下了"));
+
+        // 第二步版式一到，那条答复就地补落：{{col:ITEM NO}}（原样，连 * 后面）换成 {{ItemNo}}（软件清洗过）。
+        var layout = AiSheetProposal.Parse(
+            """{ "rows": [ { "content": "ITEM No: {{col:ITEM NO}}" } ] }""",
+            StarColumns, 13, AiProposalStage.Layout, null, null, answered);
+        var merged = AiSheetProposal.MergeLayout(answered, layout);
+
+        Assert.Contains("{{ItemNo}}", merged.Layout!.Rows[0].Content, StringComparison.Ordinal);
+        Assert.DoesNotContain("{{col:ITEM NO}}", merged.Layout.Rows[0].Content, StringComparison.Ordinal);
+        Assert.Contains(merged.Notes, n => n.Contains("只印 * 前面"));
+    }
+
+    [Fact]
+    public void 不知道货号是哪一列时_星号那条如实说改不了_不猜一列去改()
+    {
+        // 猜错一列就是印错货，所以宁可报一句"改不了"并说清下一步。
+        var read = AiSheetProposal.Parse("""{ "headerRow": 1 }""", StarColumns, 13, AiProposalStage.Read);
+        var q = Assert.Single(read.Questions);
+        var answered = read.WithAnswer(q, yes: true);
+
+        var layout = AiSheetProposal.Parse(
+            """{ "rows": [ { "content": "ITEM No: {{col:ITEM NO}}" } ] }""",
+            StarColumns, 13, AiProposalStage.Layout, null, null, answered);
+        var merged = AiSheetProposal.MergeLayout(answered, layout);
+
+        Assert.Contains("{{col:ITEM NO}}", merged.Layout!.Rows[0].Content, StringComparison.Ordinal);   // 一个字没动
+        Assert.Contains(merged.Notes, n => n.Contains("改不了"));
     }
 
     // ───────── 他的决定要真的回到模型手里（第 35 棒：用户说"选择了也是无效的"） ─────────
@@ -389,8 +427,10 @@ public class AiChangeTests
     {
         // 根因钉在这里：提案那条路原来只发 [system, user]，一个字的上下文都不带 ——
         // 于是他答完问题，模型下一轮看到的还是原来那张表那句话，"答了等于没答"。
-        var prompt = AiSheetProposalPrompt.Build(
-            "整张表 12 行 × 3 列", new[] { "A4 底纸" }, 12, 1, "140×100 mm", 0,
+        // 第 40 棒起决定有两条路回去：这一节（跨请求累积），以及提案自己身上的 Answers
+        // （第二步提示词里那节「老板已经就这些拍过板了」，见 AiSheetProposalTests）。
+        var prompt = AiSheetProposalPrompt.BuildRead(
+            "整张表 12 行 × 3 列", 12, 1, 0,
             decisions: new[] { "货号里 * 号后面那截要不要印？ → 不用", "件数末尾总数 155 要不要印？ → 不需要" });
 
         Assert.Contains("老板已经就下面这些拍过板", prompt);
@@ -401,8 +441,7 @@ public class AiChangeTests
     [Fact]
     public void 没有决定时不写那一节_少占字()
     {
-        var prompt = AiSheetProposalPrompt.Build(
-            "整张表 12 行 × 3 列", new[] { "A4 底纸" }, 12, 1, "140×100 mm", 0);
+        var prompt = AiSheetProposalPrompt.BuildRead("整张表 12 行 × 3 列", 12, 1, 0);
 
         Assert.DoesNotContain("老板已经就下面这些拍过板", prompt);
     }

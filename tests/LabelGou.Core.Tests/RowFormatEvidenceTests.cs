@@ -347,11 +347,16 @@ public sealed class RowFormatEvidenceTests
     [Fact]
     public void 提示词里不再教模型猜字号_改成明说软件自己会算()
     {
-        var prompt = AiSheetProposalPrompt.Build(
-            "（画像）", new[] { "一页一枚（纸面跟标签走）" }, 34, 1, "140×100 mm", 0);
+        // 第 40 棒：这句话现在只在**第二步（排版）**的提示词里——第一步连 rows 都不许给，谈不上字号。
+        // 读表阶段那份提案用真的 Parse 走一遍拿到（不手搓 18 个参数的构造，那玩意一改就全红）。
+        var read = AiSheetProposal.Parse(
+            """{ "headerRow": 1, "dataCols": 4, "templateSource": "F列" }""", null, 34, AiProposalStage.Read);
+        var prompt = AiSheetProposalPrompt.BuildLayout(
+            "（画像）", new[] { "一页一枚（纸面跟标签走）" }, 34, read, "140×100 mm", 0);
 
         Assert.Contains("你不用管，软件自己会算", prompt);
-        Assert.Contains("templateSource", prompt);                       // 那一列就是软件要去量的地方，得写准
+        // 那一列就是软件要去量的地方：它得作为**既成事实**出现在第二步的提示词里，模型不必再报一遍。
+        Assert.Contains("标签上的字抄在表里 F列", prompt);
         // 第 31 棒那套「读完散文再把数字猜回来」的话一句都不该留着。
         Assert.DoesNotContain("照依据来，不要凭空填", prompt);
         Assert.DoesNotContain("别再自己填 sizePt", prompt);
@@ -388,7 +393,7 @@ public sealed class RowFormatEvidenceTests
             }
             """;
 
-        var p = AiSheetProposal.Parse(json, cols, 5, null, formats);
+        var p = AiSheetProposal.Parse(json, cols, 5, AiProposalStage.Layout, null, formats);
 
         Assert.True(p.IsUsable, string.Join("；", p.Errors));
         var rows = p.Layout!.Rows;
@@ -413,7 +418,7 @@ public sealed class RowFormatEvidenceTests
                         { "content": "Item no：{{col:货号}}", "sizePt": 17 } ] }
             """;
 
-        var p = AiSheetProposal.Parse(json, cols, 5);
+        var p = AiSheetProposal.Parse(json, cols, 5, AiProposalStage.Layout);
 
         Assert.True(p.IsUsable, string.Join("；", p.Errors));
         Assert.Equal(30, p.Layout!.Rows[0].SizePt, 3);

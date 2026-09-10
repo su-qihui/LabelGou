@@ -7,6 +7,22 @@ using LabelGou.Core.Templates;
 namespace LabelGou.Core.Recognition;
 
 /// <summary>
+/// 这份提案是<strong>哪一步</strong>要来的（第 40 棒把一次请求拆成两次）。
+/// <para>用户 2026-09-10 给的方向是「用户发送表格 → AI 读取和理解 → 指出表格存在的问题
+/// （<strong>这层先不要对预览纸张进行调整</strong>）→ 收到反馈后再次理解 → 理解后进行自动排版」。
+/// 以前一次请求把这两步的字段全要了，模型还没拿到答复就得先把纸规与行数猜出来，猜的也照样被落地——
+/// 这就是他说的「乱改模板、乱提问题」。</para>
+/// </summary>
+public enum AiProposalStage
+{
+    /// <summary>读表理解：只要「这张表是什么、有哪些风险要人拍板」。<strong>排版字段一律不采纳</strong>。</summary>
+    Read,
+
+    /// <summary>排版落地：只要版式与纸规。理解字段缺失不算错（那一步已经问过了）。</summary>
+    Layout,
+}
+
+/// <summary>
 /// AI 对「这张表该怎么切、这张纸该怎么摆」的一份提案（第 21 棒）。
 /// <para><strong>它从哪来</strong>：模型看着整张表的画像（含表头以上的批注、右侧贴的效果图）回的 JSON，
 /// 由 <see cref="Parse"/> 清洗成这份结构。<strong>它到哪去</strong>：确认窗上逐条摊给人看，
@@ -63,6 +79,12 @@ public sealed record AiSheetProposal(
     IReadOnlyList<AiFieldBinding> Mappings,
     IReadOnlyList<string> Facts)
 {
+    /// <summary>
+    /// 老板已经拍过板的答复（第 40 棒）。用 init 属性而不是第 19 个位置参数：
+    /// 现有构造点一个都不用动，而这份东西本来就是"提案生成之后才长出来的"。
+    /// </summary>
+    public IReadOnlyList<AiAnswer> Answers { get; init; } = Array.Empty<AiAnswer>();
+
     /// <summary>能用才允许落地（与行式版式那份 <c>RowLayoutProposal.HasSpec</c> 同一条纪律）。</summary>
     public bool IsUsable => Errors.Count == 0;
 
@@ -72,6 +94,226 @@ public sealed record AiSheetProposal(
         SheetSpecName is null && PaperWidthMm is null && PaperHeightMm is null &&
         Columns is null && Rows is null && FollowsLabel is null && Readout.QtyColumn is null &&
         Questions.Count == 0 && Mappings.Count == 0 && Facts.Count == 0;
+
+    /// <summary>
+    /// 老板拍了一条问题：<strong>改这份提案，不碰活表</strong>（第 40 棒）。
+    /// <para>用户的红线是「指出表格存在的问题……<strong>这层先不要对预览纸张进行调整</strong>」，
+    /// 所以读表阶段的答复一律只改这份提案里的理解，等排版那一步出来再一起落地。
+    /// 以前这一条走的是主窗口里的逐条落地（真的去改剔行名单、真的存模板、真的换纸），
+    /// 于是问题还没答完，模板与纸就已经被第一轮提案改过一遍了——他说的「乱改模板」就是这个顺序。</para>
+    /// <para><strong>能确定性办的就地办，办不了的老实记账</strong>：剔行、有无列名行、张数列、模板来源列、
+    /// 货号占位符这五件软件自己就能改对；<c>fixed-value</c> 与 <c>column-meaning</c> 改不动这份提案里的任何字段，
+    /// 就只把那句决定记下来喂给排版那一步——不假装办了。</para>
+    /// </summary>
+    public AiSheetProposal WithAnswer(AiSheetQuestion q, bool yes)
+    {
+        var extra = new List<string>();
+        var totalRows = TotalValueRows;
+        var hasHeader = HasHeader;
+        var readout = Readout;
+
+        switch (q.Action)
+        {
+            case AiSheetQuestion.ActionRowKeep:
+                totalRows = RowKeepAnswered(TotalValueRows, q, yes, HeaderRow, extra);
+                break;
+
+            case AiSheetQuestion.ActionHeaderRow:
+                hasHeader = yes;
+                extra.Add(yes ? "照你说的，这张表有列名行" : "照你说的，第一行就是货（这张表没有列名行）");
+                break;
+
+            case AiSheetQuestion.ActionQtyColumn:
+                if (yes) extra.Add("照你说的，出几张纸就按它认的那一列数");
+                else
+                {
+                    readout = Readout with { QtyColumn = null, QtyColumnIndex = null };
+                    extra.Add("照你说的，不按它认的那一列数张数——那一步先不算张数，"
+                            + "等排版落地后你在「② 连接字段」里自己点一列");
+                }
+                break;
+
+            case AiSheetQuestion.ActionTemplateSource:
+                if (yes) extra.Add("照你说的，模板就抄在那一块");
+                else
+                {
+                    readout = Readout with { TemplateSource = null };
+                    extra.Add("照你说的，那块不是模板——软件就没处去量字号了，排版时只能用它填的数，字号可能不准");
+                }
+                break;
+
+            case AiSheetQuestion.ActionItemNoTail:
+                if (Layout is { } tailSpec) ApplyItemNoTail(tailSpec, Mappings, yes, extra);
+                else extra.Add(yes
+                    ? "记下了：货号连 * 后面一起原样印（版式出来时软件自己改占位符，不用再问它一遍）"
+                    : "记下了：货号只印 * 前面（版式出来时软件自己改占位符，不用再问它一遍）");
+                break;
+
+            default:
+                // fixed-value / column-meaning / retemplate / paper：改不动这份提案里的字段，
+                // 只把决定记下来。喂给排版那一步的请求，由它按这句决定出 rows。
+                extra.Add($"记下了：{q.Text} → {(yes ? q.YesLabel : q.NoLabel)}");
+                break;
+        }
+
+        return this with
+        {
+            Answers = new List<AiAnswer>(Answers) { new(q, yes) },
+            TotalValueRows = totalRows,
+            HasHeader = hasHeader,
+            Readout = readout,
+            Notes = extra.Count == 0 ? Notes : Notes.Concat(extra).ToList(),
+        };
+    }
+
+    /// <summary>
+    /// 「这一行要不要当货印」的答复折成剔行名单（原表行号，1 起）。
+    /// <para>列名那一行永远不进名单：模型确实会一边说「列名在第 1 行」一边把第 1 行报成合计行，
+    /// 老板点了「不印」也不能真把列名剔掉（与 <see cref="BuildExcluded"/> 同一条护栏）。</para>
+    /// </summary>
+    private static IReadOnlyList<int> RowKeepAnswered(
+        IReadOnlyList<int> current, AiSheetQuestion q, bool yes, int? headerRow, List<string> extra)
+    {
+        var list = current.ToList();
+        if (yes)
+        {
+            if (!list.Remove(q.Row)) extra.Add($"第 {q.Row} 行本来就在印，什么都没改");
+            else extra.Add($"照你说的，第 {q.Row} 行当货印");
+            return list;
+        }
+        if (headerRow is int h && q.Row == h)
+        {
+            extra.Add($"第 {q.Row} 行是列名那一行，不能当合计行剔掉——这条没照办");
+            return current;
+        }
+        if (list.Contains(q.Row)) extra.Add($"第 {q.Row} 行本来就不印，什么都没改");
+        else
+        {
+            list.Add(q.Row);
+            extra.Add($"照你说的，第 {q.Row} 行不印（当合计/批注行剔掉）");
+        }
+        return list;
+    }
+
+    /// <summary>
+    /// 货号里 <c>*</c> 后面那截留不留：<strong>一次确定性的占位符替换</strong>。
+    /// <para><c>{{ItemNo}}</c> = 软件清洗过的货号（只印 <c>*</c> 前面），
+    /// <c>{{col:表头原样}}</c> = 那一列原样（连 <c>*</c> 后面一起印）。
+    /// 这件事第 22 棒就在主窗口里做过一遍，第 40 棒挪进 Core：答复驱动、可单测，
+    /// 而且<strong>不再交给模型</strong>——把一次字符串替换丢给概率模型是可靠性倒退。</para>
+    /// <para>货号是哪一列只认它自己报过的绑定；报不出就如实说改不了，不猜一列去改（猜错就是印错货）。</para>
+    /// </summary>
+    private static void ApplyItemNoTail(
+        RowLayoutSpec spec, IReadOnlyList<AiFieldBinding> mappings, bool yes, List<string> extra)
+    {
+        var header = mappings.FirstOrDefault(m => m.Field == MarkFieldKey.ItemNo)?.ColumnHeader;
+        if (string.IsNullOrWhiteSpace(header))
+        {
+            extra.Add("货号那一列它没报过绑定，* 号这条改不了——排版落地后你在「② 连接字段」里连上货号，再回来点这条");
+            return;
+        }
+        var colToken = "{{col:" + header + "}}";
+        var changed = 0;
+        foreach (var row in spec.Rows)
+        {
+            if (yes && row.Content.Contains("{{ItemNo}}", StringComparison.OrdinalIgnoreCase))
+            {
+                row.Content = row.Content.Replace("{{ItemNo}}", colToken);
+                changed++;
+            }
+            else if (!yes && row.Content.Contains(colToken, StringComparison.OrdinalIgnoreCase))
+            {
+                row.Content = row.Content.Replace(colToken, "{{ItemNo}}");
+                changed++;
+            }
+        }
+        extra.Add(changed == 0
+            ? (yes ? "模板里没用到货号那一列，已经是「连 * 后面一起印」了，没改"
+                   : "模板里没用到货号那一列，已经是「只印 * 前面」了，没改")
+            : (yes ? $"货号改成连 * 后面一起原样印（按表里「{header}」那一列）"
+                   : $"货号改成只印 * 前面（把「{header}」那一列换成软件清洗过的货号）"));
+    }
+
+    /// <summary>
+    /// 把<strong>读表阶段的理解</strong>与<strong>排版阶段的版式</strong>合成一份可落地的提案（第 40 棒）。
+    /// <para>为什么要合：两次请求各回一份，而落地只认一份（<see cref="ToChoice"/> + 版式 + 纸规）。
+    /// 理解那半边一律取读表阶段的——它是老板逐条拍过板的；版式与纸那半边取排版阶段的。
+    /// 字段绑定两边都可能有：读表阶段的优先（拍过板），排版阶段只补它没给的那些字段。</para>
+    /// <para><strong>攒着的货号答复在这里补落</strong>：读表阶段版式还不存在，那次替换办不成，
+    /// 版式一到就照答复改占位符，不用再问模型一遍。</para>
+    /// </summary>
+    public static AiSheetProposal MergeLayout(AiSheetProposal read, AiSheetProposal layout)
+    {
+        var notes = read.Notes.Concat(layout.Notes).ToList();
+
+        var mappings = read.Mappings.ToList();
+        foreach (var m in layout.Mappings)
+            if (!mappings.Any(x => x.Field == m.Field)) mappings.Add(m);
+
+        // 版式出来了才念得出「一行 BOLAROM 加粗居中」这种话，所以这几行取排版阶段的；
+        // 张数列与模板来源列取读表阶段的——老板可能已经把它们改掉了。
+        var readout = read.Readout with
+        {
+            TemplateLines = layout.Readout.TemplateLines.Count > 0
+                ? layout.Readout.TemplateLines
+                : read.Readout.TemplateLines,
+        };
+
+        var merged = read with
+        {
+            Layout = layout.Layout,
+            SheetSpecName = layout.SheetSpecName,
+            PaperWidthMm = layout.PaperWidthMm,
+            PaperHeightMm = layout.PaperHeightMm,
+            Columns = layout.Columns,
+            Rows = layout.Rows,
+            FollowsLabel = layout.FollowsLabel,
+            Mappings = mappings,
+            Readout = readout,
+            Questions = layout.Questions,
+            Warnings = read.Warnings.Concat(layout.Warnings).ToList(),
+            Notes = notes,
+            Errors = layout.Errors,
+        };
+
+        if (merged.Layout is { } spec)
+        {
+            var extra = new List<string>();
+            foreach (var answer in merged.Answers.Where(a => a.Question.Action == AiSheetQuestion.ActionItemNoTail))
+                ApplyItemNoTail(spec, merged.Mappings, answer.Yes, extra);
+            if (extra.Count > 0) merged = merged with { Notes = merged.Notes.Concat(extra).ToList() };
+        }
+        return merged;
+    }
+
+    /// <summary>
+    /// 把<strong>读表阶段定下来的那几件事</strong>念成几行人话（第 40 棒）。
+    /// <para>两处共用同一份：排版那一步的提示词把它当<em>既成事实</em>带过去（不许模型再问一遍、也不许推翻），
+    /// 面板把它摆给老板看（他得知道软件到底把这张表读成了什么）。两处各写一份早晚说法不一致，
+    /// 那就是 §五 里那类「面板说的一套、落地的一套」。</para>
+    /// <para>老板拍过板之后这些行是<strong>改过之后的</strong>（<see cref="WithAnswer"/> 会改剔行名单、
+    /// 有无列名行、张数列、模板来源列），所以念出来就是他认下的那一版，不是模型最初那一版。</para>
+    /// </summary>
+    public IReadOnlyList<string> DescribeUnderstanding()
+    {
+        var lines = new List<string>();
+        if (Readout.DataCols is int cols) lines.Add($"真正有用的数据是 {cols} 列");
+        lines.Add(HasHeader == false
+            ? "这张表没有列名行，第一行就是货"
+            : HeaderRow is int hr ? $"列名在原表第 {hr} 行" : "列名在第几行还没定");
+        if (TotalValueRows.Count > 0)
+            lines.Add("这些行不当货印（合计/批注行）：第 " + string.Join("、", TotalValueRows) + " 行");
+        lines.Add(Readout.TemplateSource is { Length: > 0 } src
+            ? $"标签上的字抄在表里 {src}"
+            : "表里没有抄标签的那一块");
+        if (Readout.QtyColumn is { Length: > 0 } qty) lines.Add($"出几张纸按「{qty}」这一列数");
+        else lines.Add("出几张纸按哪一列数还没定");
+        if (Mappings.Count > 0)
+            lines.Add("字段绑定：" + string.Join("；", Mappings.Select(m => $"{m.ColumnHeader} 是{m.FieldName}")));
+        if (Readout.PaperText is { Length: > 0 } paper) lines.Add($"表里自己写的纸那句话是「{paper}」");
+        foreach (var fact in Facts.Take(5)) lines.Add("它看出来的：" + fact);
+        return lines;
+    }
 
     /// <summary>
     /// 折成切表指令。<paramref name="rawRowCount"/> 是原表总行数（用来把 1 起的行号换成 0 起并挡住越界）。
@@ -462,12 +704,28 @@ public sealed record AiSheetProposal(
     /// <strong>给了就由软件照它算标签上每行字该多大</strong>，不再用模型填的那几个数（见 <see cref="RowFormatEvidence"/>）；
     /// CSV 与量不到的场合传 null，照旧用模型填的。
     /// </param>
+    /// <param name="stage">
+    /// 这份回包是<strong>哪一步</strong>要来的（第 40 棒）。<see cref="AiProposalStage.Read"/> 只采纳理解与问题，
+    /// <strong>排版字段一律不采纳</strong>——模型不听话硬给了 rows 与纸规，也只记一句 Note 说明"没理它"，
+    /// 不让它落地（用户的红线是「这层先不要对预览纸张进行调整」，光靠提示词拦不住，解析层要再拦一道）。
+    /// <see cref="AiProposalStage.Layout"/> 反过来：只要版式与纸规，理解字段缺失不算错（那一步已经问过了）。
+    /// <para><strong>刻意不给默认值</strong>：给了默认（无论哪个）都会让漏改的调用点<em>静默</em>丢掉半边字段
+    /// ——按 Read 解析就丢 rows 与纸规，按 Layout 解析就丢掉"这一步不许动模板"那道闸。
+    /// 必填才能让编译器把每个调用点一次点出来。</para>
+    /// </param>
+    /// <param name="read">
+    /// 排版阶段用：<strong>读表阶段那份提案</strong>。这一步的模型不必再重复报「模板抄在哪一列」「列名在第几行」，
+    /// 可软件量字号偏偏要这两件（<see cref="RowFormatEvidence"/>），所以从上一步带过来——
+    /// 不带就会重犯第 39 棒修过的坑：列名那一格混进标签那块、行数对不上、整块证据白量。
+    /// </param>
     public static AiSheetProposal Parse(
         string? modelText,
         IReadOnlyList<ColumnPortrait>? columns,
         int rawRowCount,
+        AiProposalStage stage,
         IReadOnlyList<string>? sheetSpecNames = null,
-        IReadOnlyList<CellFormat>? cellFormats = null)
+        IReadOnlyList<CellFormat>? cellFormats = null,
+        AiSheetProposal? read = null)
     {
         var notes = new List<string>();
         var errors = new List<string>();
@@ -531,15 +789,26 @@ public sealed record AiSheetProposal(
             // 只有它真给了 rows 那段才拿版式的错去整份拒——提示词明说「没参照时把版式那段省略」，
             // 省略不是错，拿它当错等于把「只报事实」这份提案也拒了。
             var hasRows = fields.ContainsKey("rows");
-            var layout = hasRows ? RowLayoutJsonParser.Parse(modelText, columns) : null;
-            if (layout is not null)
+            // 第 40 棒：**读表这一步不许动模板**。模型不听话硬给了 rows 也不解析——解析出来就会被落地，
+            // 那就是用户圈的「乱改模板」。提示词里已经交代过分工，但模型会不听话，所以解析层再拦一道。
+            RowLayoutProposal? layout = null;
+            if (stage == AiProposalStage.Read)
             {
-                foreach (var n in layout.Notes) notes.Add("标签内容：" + n);
-                foreach (var e in layout.Errors) errors.Add("标签内容：" + e);
+                if (hasRows)
+                    notes.Add("它这一步就想改你的标签内容，我没理它——按你要的先只读表、只提问，模板一个字没动");
             }
             else
             {
-                notes.Add("这次没重排你的标签内容（它没说标签上该印哪几行），模板还是你现在用的那张");
+                layout = hasRows ? RowLayoutJsonParser.Parse(modelText, columns) : null;
+                if (layout is not null)
+                {
+                    foreach (var n in layout.Notes) notes.Add("标签内容：" + n);
+                    foreach (var e in layout.Errors) errors.Add("标签内容：" + e);
+                }
+                else
+                {
+                    notes.Add("这次没重排你的标签内容（它没说标签上该印哪几行），模板还是你现在用的那张");
+                }
             }
 
             // ── 字号/粗细/居中：由软件照表里量到的算，不用模型填的（第 39 棒）──
@@ -547,44 +816,67 @@ public sealed record AiSheetProposal(
             // 先念后改就又是「面板说的一套、落地的一套」两张皮（§五 里这类账不止一笔）。
             // templateSource 也顺势提到这里读——原来它在末尾构造 SheetReadout 时才读，
             // 一份 JSON 里同一个键读两次，早晚有一处改了另一处忘。
-            var templateSource = TextField(fields, "templateSource", 20);
+            var templateSource = TextField(fields, "templateSource", 20) ?? read?.Readout.TemplateSource;
             if (layout?.Spec is { } evidenceSpec && cellFormats is { Count: > 0 })
             {
                 var (_, templateColumn) = ResolveColumn(templateSource, columns);
                 // 抄标签那块通常就贴在列名下面，连着量会多出一格（1 格列名 + 4 行标签读成 5 行），
                 // 于是跟标签的 4 行对不上、整块证据白量。列名在第几行上面已经解析过了，
-                // 传下去不是猜；它没说或说这张表没有列名，就传 -1 让那边按"认不出就整块不改"走。
-                var headerIndex0 = hasHeader == false || headerRow is null ? -1 : headerRow.Value - 1;
+                // 传下去不是猜；这一步没报就从读表阶段那份里兜底（第 40 棒），两边都没有才传 -1
+                // 让那边按"认不出就整块不改"走。
+                var evidenceHeaderRow = headerRow ?? read?.HeaderRow;
+                var evidenceHasHeader = hasHeader ?? read?.HasHeader;
+                var headerIndex0 = evidenceHasHeader == false || evidenceHeaderRow is null
+                    ? -1
+                    : evidenceHeaderRow.Value - 1;
                 RowFormatEvidence.TryApply(evidenceSpec, cellFormats, templateColumn ?? -1, notes, headerIndex0);
             }
 
             // ── 纸规：只能选真有的，或给一张合法的新纸 ──
-            var specName = TextField(fields, "sheetSpec", 60);
-            if (specName is not null && sheetSpecNames is { Count: > 0 })
+            // 第 40 棒：读表阶段**一律不采纳**（用户的红线是「这层先不要对预览纸张进行调整」）。
+            // 这里刻意**不往 errors 里加**：读表阶段报一句「你说的那张纸这台机器上没有」会把整份提案判成不可用，
+            // 用户看到的就是「这次没采纳它的方案」——比当没看见更坏。忽略 + 记一句人话就够。
+            string? specName = null;
+            double? paperW = null, paperH = null;
+            int? cols = null, rowsPerPage = null;
+            bool? followsLabel = null;
+            if (stage == AiProposalStage.Read)
             {
-                var hit = MatchSpec(specName, sheetSpecNames);
-                if (hit is null)
-                    errors.Add($"你说的那张纸「{specName}」这台机器上没有，不能凭空造一张。" +
-                               $"现在能选的：{string.Join("、", sheetSpecNames.Take(8))}");
-                else if (!string.Equals(hit, specName, StringComparison.Ordinal))
+                if (fields.ContainsKey("sheetSpec") || fields.ContainsKey("paperWidthMm")
+                    || fields.ContainsKey("paperHeightMm") || fields.ContainsKey("columns")
+                    || fields.ContainsKey("paperRows") || fields.ContainsKey("followsLabel"))
+                    notes.Add("它这一步就想换你的纸，我没理它——按你要的先只读表、只提问，纸张一个字没动");
+            }
+            else
+            {
+                specName = TextField(fields, "sheetSpec", 60);
+                if (specName is not null && sheetSpecNames is { Count: > 0 })
                 {
-                    notes.Add($"它写的纸规名字有点差，按你机器上那张「{hit}」算");
-                    specName = hit;
+                    var hit = MatchSpec(specName, sheetSpecNames);
+                    if (hit is null)
+                        errors.Add($"你说的那张纸「{specName}」这台机器上没有，不能凭空造一张。" +
+                                   $"现在能选的：{string.Join("、", sheetSpecNames.Take(8))}");
+                    else if (!string.Equals(hit, specName, StringComparison.Ordinal))
+                    {
+                        notes.Add($"它写的纸规名字有点差，按你机器上那张「{hit}」算");
+                        specName = hit;
+                    }
                 }
-            }
 
-            var paperW = DoubleField(fields, "paperWidthMm");
-            var paperH = DoubleField(fields, "paperHeightMm");
-            foreach (var (val, name) in new[] { (paperW, "纸宽"), (paperH, "纸高") })
-            {
-                if (val is null) continue;
-                if (val is < 30 or > 2000)
-                    notes.Add($"{name} {val:0.#} 毫米不在合理范围（30~2000），这条没采纳");
-            }
-            if (paperW is < 30 or > 2000 || paperH is < 30 or > 2000) { paperW = null; paperH = null; }
+                paperW = DoubleField(fields, "paperWidthMm");
+                paperH = DoubleField(fields, "paperHeightMm");
+                foreach (var (val, name) in new[] { (paperW, "纸宽"), (paperH, "纸高") })
+                {
+                    if (val is null) continue;
+                    if (val is < 30 or > 2000)
+                        notes.Add($"{name} {val:0.#} 毫米不在合理范围（30~2000），这条没采纳");
+                }
+                if (paperW is < 30 or > 2000 || paperH is < 30 or > 2000) { paperW = null; paperH = null; }
 
-            var cols = Clamp(IntField(fields, "columns"), 0, 40, "每行枚数", notes);
-            var rowsPerPage = Clamp(IntField(fields, "paperRows"), 0, 40, "每页行数", notes);
+                cols = Clamp(IntField(fields, "columns"), 0, 40, "每行枚数", notes);
+                rowsPerPage = Clamp(IntField(fields, "paperRows"), 0, 40, "每页行数", notes);
+                followsLabel = BoolField(fields, "followsLabel");
+            }
 
             // ── 给人看的那五行：几列、模板抄在哪一块、按哪一列数张数、逐条问题 ──
             var dataCols = Clamp(IntField(fields, "dataCols"), 1, 200, "有效列数", notes);
@@ -596,11 +888,12 @@ public sealed record AiSheetProposal(
             var mappings = ParseMappings(fields, columns, notes);
             var questions = ParseQuestions(fields, rawRowCount, notes);
             // 第 34 棒：软件兜底问那条该问的（货号列里带 * 就问"* 后那截留不留"）。
-            AddMissingTailQuestion(questions, columns, mappings, layout?.Spec, notes);
+            // 第 40 棒：读表阶段就要问出来（那时候还没有版式），答复记在提案上，排版时由 MergeLayout 落。
+            AddMissingTailQuestion(questions, columns, mappings, notes);
 
             return new AiSheetProposal(
                 headerRow, hasHeader, totalRows, layout?.Spec, specName,
-                paperW, paperH, cols, rowsPerPage, BoolField(fields, "followsLabel"),
+                paperW, paperH, cols, rowsPerPage, followsLabel,
                 StringListField(fields, "warnings"), TextField(fields, "reason", 400),
                 notes, errors,
                 new SheetReadout(dataCols, templateSource,
@@ -701,18 +994,34 @@ public sealed record AiSheetProposal(
         return null;
     }
 
-    /// <summary>同义词→四个认得的动作（模型会写 keepRow、也会写「重排」）。</summary>
+    /// <summary>同义词→认得的动作（模型会写 keepRow、也会写「重排」）。第 40 棒补上读表阶段那五个。</summary>
     private static readonly Dictionary<string, string> ActionAliases = new(StringComparer.OrdinalIgnoreCase)
     {
         ["row-keep"] = AiSheetQuestion.ActionRowKeep, ["keeprow"] = AiSheetQuestion.ActionRowKeep,
         ["keep-row"] = AiSheetQuestion.ActionRowKeep, ["row"] = AiSheetQuestion.ActionRowKeep,
         ["droprow"] = AiSheetQuestion.ActionRowKeep, ["这一行"] = AiSheetQuestion.ActionRowKeep,
+        ["totalrow"] = AiSheetQuestion.ActionRowKeep, ["合计行"] = AiSheetQuestion.ActionRowKeep,
         ["retemplate"] = AiSheetQuestion.ActionRetemplate, ["re-template"] = AiSheetQuestion.ActionRetemplate,
         ["template"] = AiSheetQuestion.ActionRetemplate, ["重排"] = AiSheetQuestion.ActionRetemplate,
         ["paper"] = AiSheetQuestion.ActionPaper, ["sheet"] = AiSheetQuestion.ActionPaper,
         ["换纸"] = AiSheetQuestion.ActionPaper,
         ["itemno-tail"] = AiSheetQuestion.ActionItemNoTail, ["tail"] = AiSheetQuestion.ActionItemNoTail,
         ["itemno"] = AiSheetQuestion.ActionItemNoTail, ["星号"] = AiSheetQuestion.ActionItemNoTail,
+        // ── 第 40 棒：读表阶段的五类风险。模型写不中这些别名，那条问题就被丢掉，白名单等于没给 ──
+        ["qty-column"] = AiSheetQuestion.ActionQtyColumn, ["qtycolumn"] = AiSheetQuestion.ActionQtyColumn,
+        ["qty"] = AiSheetQuestion.ActionQtyColumn, ["sheetscolumn"] = AiSheetQuestion.ActionQtyColumn,
+        ["哪列数张数"] = AiSheetQuestion.ActionQtyColumn, ["张数列"] = AiSheetQuestion.ActionQtyColumn,
+        ["template-source"] = AiSheetQuestion.ActionTemplateSource,
+        ["templatesource"] = AiSheetQuestion.ActionTemplateSource,
+        ["sourcecolumn"] = AiSheetQuestion.ActionTemplateSource,
+        ["模板在哪列"] = AiSheetQuestion.ActionTemplateSource, ["抄在哪列"] = AiSheetQuestion.ActionTemplateSource,
+        ["header-row"] = AiSheetQuestion.ActionHeaderRow, ["headerrow"] = AiSheetQuestion.ActionHeaderRow,
+        ["header"] = AiSheetQuestion.ActionHeaderRow, ["noheader"] = AiSheetQuestion.ActionHeaderRow,
+        ["列名行"] = AiSheetQuestion.ActionHeaderRow, ["表头"] = AiSheetQuestion.ActionHeaderRow,
+        ["fixed-value"] = AiSheetQuestion.ActionFixedValue, ["fixedvalue"] = AiSheetQuestion.ActionFixedValue,
+        ["fixed"] = AiSheetQuestion.ActionFixedValue, ["死字"] = AiSheetQuestion.ActionFixedValue,
+        ["column-meaning"] = AiSheetQuestion.ActionColumnMeaning, ["columnmeaning"] = AiSheetQuestion.ActionColumnMeaning,
+        ["column"] = AiSheetQuestion.ActionColumnMeaning, ["这一列是什么"] = AiSheetQuestion.ActionColumnMeaning,
     };
 
     /// <summary>
@@ -721,17 +1030,17 @@ public sealed record AiSheetProposal(
     /// 标准动作（<c>itemno-tail</c>），但"要不要问"全看模型心情；它这次没问，用户就什么都被没问到，
     /// 而货号里那截 <c>*16</c> 该不该印上纸是**必须有人拍板**的事（印错了是印错货）。</para>
     /// <para>改成本地**确定性判定**：货号那列的样例里真出现 <c>*</c> 就问，哪怕模型没提。</para>
-    /// <para>只在**真有版式可改**时才问：没有 rows 的话点了也办不成，问了等于挖坑
-    /// （与「不许点了报成功其实没改」是同一条纪律）。模型已经问过就不重复问。</para>
+    /// <para><strong>第 40 棒去掉了「先有版式才问」这个前置</strong>：两阶段拆分后读表阶段本来就没有版式，
+    /// 而这条恰恰是用户点名要问的（「*号后面的是否保留」）。答复先记在提案上（<see cref="AiAnswer"/>），
+    /// 等排版那一步版式出来时由 <see cref="MergeLayout"/> 确定性地把占位符换掉——不是再问模型一遍。</para>
+    /// <para>模型已经问过就不重复问。</para>
     /// </summary>
     private static void AddMissingTailQuestion(
         List<AiSheetQuestion> questions,
         IReadOnlyList<ColumnPortrait>? columns,
         IReadOnlyList<AiFieldBinding> mappings,
-        RowLayoutSpec? layout,
         List<string> notes)
     {
-        if (layout is null) return;
         if (questions.Any(q => q.Action == AiSheetQuestion.ActionItemNoTail)) return;
         if (columns is null || columns.Count == 0) return;
 

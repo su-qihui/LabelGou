@@ -227,6 +227,15 @@ public sealed class AiChatPanel : UserControl
     /// </summary>
     private AiSheetProposal? _pendingProposal;
 
+    /// <summary>
+    /// <strong>读表阶段那份提案</strong>（第 40 棒）：老板的答复一条条累积在它上面（<see cref="AiSheetProposal.WithAnswer"/>）。
+    /// <para>为什么不能跟 <see cref="_pendingProposal"/> 混用一份：两阶段拆分后它要<strong>跨两次请求活着</strong>——
+    /// 排版那一步要把它当既成事实写进提示词（不许模型再问一遍、也不许推翻），落地时要拿它与排版结果合并
+    /// （<see cref="AiSheetProposal.MergeLayout"/>）。而 <c>_pendingProposal</c> 是"等着落地的那一份"，
+    /// 落地完就该清；两份东西寿命不一样，共用一个字段就是 §五 里那类"两张皮"的起点。</para>
+    /// </summary>
+    private AiSheetProposal? _readProposal;
+
     /// <summary>上一次问出去时递了哪份表画像：解析回来时要拿它对 <c>{{col:列名}}</c> 折算真表头。</summary>
     private IReadOnlyList<ColumnPortrait>? _lastColumns;
 
@@ -254,14 +263,11 @@ public sealed class AiChatPanel : UserControl
 
     /// <summary>
     /// 人点头后把整份提案交给主窗口落地（重切这张表 + 存版式 + 换纸规）。没挂上时按钮不亮（第 21 棒）。
+    /// <para><strong>第 40 棒起这是唯一一条落地路</strong>：原来还有一条「点一条问题就改一处活表」的
+    /// <c>ApplyQuestion</c>，两阶段拆分后删了——读表阶段的答复只改这份提案（<see cref="AiSheetProposal.WithAnswer"/>），
+    /// 排版阶段整份落地。留着那条只会诱导以后的人再走回"问题还没答完、模板已经被改过一遍"。</para>
     /// </summary>
     public Func<AiSheetProposal, (bool Ok, string Message)>? ApplyProposal { get; set; }
-
-    /// <summary>
-    /// 只落地「那一条问题」：第 22 棒——用户要的是一行问题配 ❌/✅ 两个按钮，
-    /// 而不是一屏文字提醒让他再去别处点（原话：「改之后更乱了」）。
-    /// </summary>
-    public Func<AiSheetProposal, AiSheetQuestion, bool, (bool Ok, string Message)>? ApplyQuestion { get; set; }
 
     /// <summary>
     /// 软件**此刻**的状态快照（阶段 29 第 1 棒）：画「原值 → 新值」必须先知道"原来是什么"。
@@ -375,16 +381,20 @@ public sealed class AiChatPanel : UserControl
         Grid.SetRow(header, 1);
         root.Children.Add(header);
 
-        // 红线那句话从两行压成一行 + ToolTip：它是本面板最不该被误删的一句实话（聊与问不会自动改唛头），
-        // 但用户圈的是「回复区太小」——那就不该拿两句加粗红字去占对话区的位置。
+        // 红线那句话必须说成**现在的真话**（它是本面板最不该被误删也最不该说错的一句）：
+        // 第 40 棒起是两步走——第一步只读表只提问、模板与纸一个字不动；答完才自动排版落地、落地后能撤回。
+        // 原来那句「AI 排的版要点『用这个』才进模板库」对提案这条路早就不成立（第 33 棒起是自动落地 + 可撤回），
+        // 只对「让 AI 出一版排版」那条老路成立——一句话里混两条路的口径，用户读到的就是假的。
         var notice = new TextBlock
         {
-            Text = "聊与问都不会自动改唛头：AI 排的版要点「用这个」才进模板库，没经你核对的值不进打印。",
+            Text = "第一步只读表、只提问，不动你的模板与纸；答完问题它才自动排版落进预览，不满意可以撤回。没经你核对的值不进打印。",
             TextWrapping = TextWrapping.Wrap,
             FontWeight = FontWeights.SemiBold,
             Foreground = WarnBrush,
-            ToolTip = "AI 排的版要你先点「用这个」才会进模板库，中间还有一道校验拦着；" +
-                      "没经你核对的值一律不进打印。打印走的还是 ⑤ 那一条命令与复核闸门。",
+            ToolTip = "两步走：①「读这张表并提案」只指出风险问题，模板、纸张与预览一个字不动；" +
+                      "② 你把问题答完，它才自动排版并落进预览，不满意点「↩ 撤回这一步」（可连点）。\n" +
+                      "「让 AI 出一版排版」那条老路不一样：它回来要你先点「用这个」才进模板库。\n" +
+                      "两条路都拦着同一件事：没经你核对的值一律不进打印，打印走的还是 ⑤ 那一条命令与复核闸门。",
         };
 
         // 对话区不单独挂了：它和下面那块（思考/问题/卡片）**同住一个滚动区**，见下面 _contentScroll。
@@ -945,32 +955,17 @@ public sealed class AiChatPanel : UserControl
     }
 
     /// <summary>
-    /// 「读这张表并提案」：把整张表（画像 + 贴图 + 纸规清单 + 原表行数）一次交给模型，
-    /// 要它回一份「这张表该怎么切、这张纸该怎么摆」的 JSON 提案（第 21 棒）。
-    /// <para>与 <see cref="AskLayoutAsync"/> 的分工：那条只要一版模板；这条管切表与选纸——
-    /// 用户 2026-09-09 判定这些判断该由看得到整张表的 AI 做，而不是由程序写死规则去猜。</para>
+    /// 「读这张表并提案」= <strong>第一步：读表理解</strong>（第 40 棒）。
+    /// 把整张表（画像 + 贴图 + 原表行数）交给模型，只要「每一列是什么字段、这张表该怎么切、有哪些风险要你拍板」。
+    /// <para><strong>这一步不动你的模板与纸</strong>：你答完问题，它才进第二步
+    /// （<see cref="RunLayoutAsync"/>）去自动排版并落地。用户 2026-09-10 给的方向就是这条顺序。</para>
+    /// <para>与 <see cref="AskLayoutAsync"/> 的分工：那条是老的一版式请求（不带读表的理解），
+    /// 这条是两步走的第一步。</para>
     /// </summary>
     public async Task AskProposalAsync()
     {
         // 人手点的那颗（工具栏 / "下一步"按钮）：自动轮次清零——他自己发起的，就该重新开始算。
         _autoReruns = 0;
-        await RunProposalAsync();
-    }
-
-    /// <summary>
-    /// **带着老板的决定再跑一轮**（第 35 棒：他要的"你收到信息后就知道怎么调整怎么做了 → 自动把排版拍出来"）。
-    /// <para>只在他把**这一轮的问题都答完**时才自动跑（答一半就跑等于白花一两分钟）；轮次有上限。</para>
-    /// </summary>
-    private async Task AskProposalFollowUpAsync()
-    {
-        if (_autoReruns >= MaxAutoReruns)
-        {
-            Append($"已经自动重出了 {MaxAutoReruns} 版，先停手（每版要一两分钟、也算一份钱，不自动烧）。"
-                 + "想接着试就点上面那颗「让 AI 重出方案（排版 + 绑定列）」。");
-            return;
-        }
-        _autoReruns++;
-        Append($"你把这一轮的问题都答完了 —— 带着你的决定重出第 {_autoReruns} 版（不满意可以撤回）。");
         await RunProposalAsync();
     }
 
@@ -990,6 +985,7 @@ public sealed class AiChatPanel : UserControl
         }
         RefreshChannel();
         ClearPending();
+        _readProposal = null;      // 重头读这张表：上一轮的理解与答复都作废，别把旧答复当既成事实带进去
 
         var attached = _image;
         var images = new List<AiChatImage>(MaxImagesPerRequest);
@@ -1007,17 +1003,19 @@ public sealed class AiChatPanel : UserControl
         _lastSpecNames = ctx.SheetSpecNames ?? Array.Empty<string>();
         _lastCellFormats = ctx.CellFormats;
 
-        var prompt = AiSheetProposalPrompt.Build(
+        // 第 40 棒：这一步**只要理解与问题**（BuildRead），排版字段一概不要——
+        // 用户的红线是「指出表格存在的问题……这层先不要对预览纸张进行调整」。
+        var prompt = AiSheetProposalPrompt.BuildRead(
             ctx.Portrait ?? "（没拿到整张表画像，只有已连字段）",
-            _lastSpecNames, ctx.RawRowCount, ctx.CurrentHeaderRow,
-            $"{ctx.WidthMm:0.#}×{ctx.HeightMm:0.#} mm", images.Count, _decisions);
+            ctx.RawRowCount, ctx.CurrentHeaderRow, images.Count, _decisions);
         var payload = new List<AiChatTurn>
         {
             new(AiChatTurn.System, AiSheetProposalPrompt.SystemText),
             new(AiChatTurn.User, prompt),
         };
-        Append($"开始读这张表：表里 {_lastRawRowCount} 行，这台机器上有 {_lastSpecNames.Count} 张纸可选，"
-               + (images.Count == 0 ? "没带图（那它只能看字）。" : $"带上 {images.Count} 张图。"));
+        Append($"第一步 · 读这张表：表里 {_lastRawRowCount} 行"
+               + (images.Count == 0 ? "，没带图（那它只能看字）。" : $"，带上 {images.Count} 张图。")
+               + "这一步只认表、只提问，**不动你的模板与纸**；你把问题答完，它才进第二步去排版。");
 
         _running = new CancellationTokenSource();
         var generation = GetDataGeneration?.Invoke() ?? -1;
@@ -1052,8 +1050,12 @@ public sealed class AiChatPanel : UserControl
     }
 
     /// <summary>
-    /// 把提案逐条摊在面板上等用户点头（表头行、合计行、版式、纸规各一条，谁不对可以只拒一份）。
-    /// <para>跟版式那条一样拆成公开方法：这条「不点头就不改用户的表」的红线要能在不联网的情况下测。</para>
+    /// <strong>第一步（读表理解）的回包</strong>：只摆「它把这张表读成了什么」与「要你拍板的事」，
+    /// <strong>模板、纸张与预览一个字都不动</strong>（第 40 棒）。
+    /// <para>用户 2026-09-10 的原话是「指出表格存在的问题……<strong>这层先不要对预览纸张进行调整</strong>」。
+    /// 而第 33 棒那版是解析一成功就整份落地（切表 + 绑定 + 存模板 + 换纸规），问题还摆在落地<em>之后</em>——
+    /// 先斩后奏，他实测的评语是「效果仍然和以前一样乱改模版乱提问题」。</para>
+    /// <para>跟版式那条一样拆成公开方法：这条「读表阶段不许落地」的红线要能在不联网的情况下测。</para>
     /// </summary>
     public void FeedProposalAnswer(string? modelText, double seconds = 0)
     {
@@ -1061,31 +1063,192 @@ public sealed class AiChatPanel : UserControl
         // 没问过就直喂（单测这条路）时不知道原表行数，那就用 int.MaxValue 让边界检查空转，
         // 而不是编一个看起来很真的行数。
         var rawRows = _lastRawRowCount > 0 ? _lastRawRowCount : int.MaxValue;
-        // 第 39 棒：把量到的格式一起交进去——字号/粗细/居中由软件算，不再用模型填的那几个数。
-        var proposal = AiSheetProposal.Parse(modelText, _lastColumns, rawRows, _lastSpecNames, _lastCellFormats);
-        _questionsAnswered = 0;      // 新一轮的问题从 0 数起（第 35 棒：答满才自动重出）
-        foreach (var note in proposal.Notes) Append($"（已修正：{note}）");
+        // 第 40 棒：按**读表阶段**解析——模型不听话硬给了 rows 与纸规，Parse 那一层就丢掉了，
+        // 光靠提示词拦不住（第 39 棒的字号也是同一条纪律：分工要写在两处，执行只认代码这处）。
+        var proposal = AiSheetProposal.Parse(modelText, _lastColumns, rawRows, AiProposalStage.Read,
+            _lastSpecNames, _lastCellFormats);
+        _questionsAnswered = 0;      // 新一轮的问题从 0 数起（第 35 棒：答满才自动进下一步）
         if (proposal.Errors.Count > 0)
         {
-            Append("这次没采纳它的方案：" + string.Join("；", proposal.Errors));
+            Append("这次没采纳它的读表结果：" + string.Join("；", proposal.Errors));
             Append("表、模板与纸规都保持原样。");
+            foreach (var note in proposal.Notes) Append("（软件这边：" + note + "）");
             ClearChangesBlock();
             ShowNextSteps(applied: false);
             return;
         }
+
+        // 这一步的产物**先攒着**：老板答完问题就带着答复进第二步，落地时还要拿它与版式合并。
+        _readProposal = proposal;
+
         if (proposal.IsEmpty)
         {
-            // 第 34 棒：这句以前是「它没给出任何可执行的改动（可能只回了话）」——技术话，而且**是死路**
-            // （用户 2026-09-10 的原话：「思考完回答啥也没做……那不应该出现下一步的按键让 AI 来排版和绑定列吗」）。
-            Append("它这次没给可落地的改动（只说了话，没给能改的项）。表、模板与纸规都保持原样。");
+            // 第 34 棒定过的纪律：任何一条路都不许收在一句技术话上把人晾着（那时有下一步按钮，现在也一样）。
+            Append("它这一步什么都没看出来（没报哪列是什么、没提问、也没说这张表长什么样）。表、模板与纸规都保持原样。");
             ClearChangesBlock();
             ShowNextSteps(applied: false);
             return;
         }
-        var items = proposal.DescribeItems(rawRows);
+
+        Append($"它读完这张表了（{seconds:F1} 秒）。**这一步只认表、只提问：你的模板、纸张与预览一个字没动。**");
+        Append("它把这张表读成了这样（下面这些就是你答完问题后它排版时的依据）：");
+        foreach (var line in proposal.DescribeUnderstanding()) Append("　· " + line);
+
         var explain = proposal.Explain();
-        // 那五行是用户逐字定的口径（表格有效数据 / 纸张 / 模版 / 张数 / 预览）；
-        // DescribeItems 那份「会改这几件事」从阶段 29 起只在改动清单出不来时兜底，不让两遍都打。
+        if (explain.Count > 0)
+        {
+            Append("它提醒（不必你拍板，但你得知道）：");
+            foreach (var e in explain) Append("　· " + e);
+        }
+        // 软件自己改过什么单独收尾。以前这一段在方法头尾各印一遍，同一句话出现两次（用户圈图那屏就是这个）。
+        foreach (var n in proposal.Notes) Append("（软件这边：" + n + "）");
+
+        if (proposal.Questions.Count == 0)
+        {
+            // 没有要他拍板的事 → 照他给的方向直接进第二步（「理解后进行自动排版」）。
+            Append("它没有要你拍板的事 —— 直接进第二步：照上面这份理解自动排版，排完落进预览（不满意可以撤回）。");
+            ClearChangesBlock();
+            _ = RunLayoutAsync();
+            return;
+        }
+        // 问题留在最后：**只有要他拍板的才问他**（第 22 棒定的形状：一条问题 + ❌/✅ 两颗按钮）。
+        ShowQuestions(proposal);
+        Append("上面这几条要你拍一下板。**答完它才会去排版**，这一步不会先动你的模板与纸。");
+        ClearChangesBlock();
+        ShowNextSteps(applied: false);
+    }
+
+    /// <summary>
+    /// <strong>第二步：自动排版</strong>（第 40 棒）。带着第一步的理解与老板逐条拍过的板，
+    /// 只要「标签上印哪几行、这张纸怎么摆」，回来<strong>直接落地</strong>
+    /// （第 33 棒定的口径：能自动判的直接进预览，靠"可撤回"兜底）。
+    /// <para><strong>与第一步的分工就是用户给的那条方向</strong>：先只提问不动纸，收到反馈后再次理解，
+    /// 理解后才自动排版。所以这一步<strong>不重摇第一步的理解</strong>——它是既成事实，
+    /// 老板说哪儿不对也只改这一步（<paramref name="complaint"/>），这正是他要的
+    /// 「若还存在问题向 AI 指出，AI 进行对那一步调整理解」。</para>
+    /// </summary>
+    /// <param name="complaint">老板说的一句"哪儿不对"（只重排这一步时带上）；空 = 正常进第二步。</param>
+    public async Task RunLayoutAsync(string? complaint = null)
+    {
+        if (_running is not null) return;
+        if (_readProposal is not { } read)
+        {
+            Append("还没读过这张表，没法直接排版：先点「读这张表并提案」——把它读明白、你拍完板，它才排。");
+            return;
+        }
+        var ctx = GetLayoutContext?.Invoke();
+        if (ctx is null)
+        {
+            Append("现在排不了：先走到 ① 导入数据，AI 才知道这张表里真有什么。");
+            return;
+        }
+        RefreshChannel();
+        // 注意：**不清 _readProposal**（这一步要拿它当既成事实），只清"等着落地的那一份"与上一轮的问题。
+        _pending = null;
+        _pendingProposal = null;
+        _questions.Children.Clear();
+        _questions.Visibility = Visibility.Collapsed;
+        _changes.Children.Clear();
+        _changes.Visibility = Visibility.Collapsed;
+        _applyLayout.IsEnabled = false;
+        _applyLayout.Content = "用这个（存成我的模板并选中）";
+
+        var attached = _image;
+        var images = new List<AiChatImage>(MaxImagesPerRequest);
+        if (attached is { } shot) images.Add(new AiChatImage(shot.Base64, shot.MimeType, shot.Name));
+        foreach (var img in ctx.SheetImages ?? Array.Empty<AiChatImage>())
+        {
+            if (images.Count >= MaxImagesPerRequest) break;
+            images.Add(img);
+        }
+        _image = null;
+        ShowAttachment();
+
+        _lastColumns = ctx.Columns;
+        _lastRawRowCount = ctx.RawRowCount;
+        _lastSpecNames = ctx.SheetSpecNames ?? Array.Empty<string>();
+        _lastCellFormats = ctx.CellFormats;
+
+        var prompt = AiSheetProposalPrompt.BuildLayout(
+            ctx.Portrait ?? "（没拿到整张表画像，只有已连字段）",
+            _lastSpecNames, ctx.RawRowCount, read,
+            $"{ctx.WidthMm:0.#}×{ctx.HeightMm:0.#} mm", images.Count);
+        if (!string.IsNullOrWhiteSpace(complaint))
+            prompt += "\n**老板看了上一版，说这里不对（只改这一步，上面那些既成事实不要推翻）：**\n  - "
+                    + complaint.Trim() + "\n";
+        var payload = new List<AiChatTurn>
+        {
+            new(AiChatTurn.System, AiSheetProposalPrompt.SystemText),
+            new(AiChatTurn.User, prompt),
+        };
+        Append($"第二步 · 自动排版：这台机器上有 {_lastSpecNames.Count} 张纸可选，"
+               + (images.Count == 0 ? "没带图。" : $"带上 {images.Count} 张图。")
+               + (string.IsNullOrWhiteSpace(complaint)
+                   ? string.Empty
+                   : "带上了你刚说的那句「哪儿不对」，只改排版这一步，第一步读懂的那些不重摇。"));
+
+        _running = new CancellationTokenSource();
+        var generation = GetDataGeneration?.Invoke() ?? -1;
+        SetBusy(true, "AI 在照你拍过的板排版");
+        try
+        {
+            var outcome = await SendStreamingAsync(
+                payload, images.Count == 0 ? null : images.Select(x => (x.Base64, x.MimeType)).ToList(), _running.Token);
+            if (!outcome.Ok)
+            {
+                if (_running.IsCancellationRequested) Append("已停止，版式没回来，你的模板与纸规都没动。");
+                else
+                {
+                    Append($"没拿到版式：{outcome.Error}");
+                    if (!string.IsNullOrWhiteSpace(outcome.Raw)) Append($"（服务原话：{outcome.Raw}）");
+                }
+                return;
+            }
+            if (GetDataGeneration is { } readGen && readGen() != generation)
+            {
+                Append("等待期间表或模板换过了——这一版是照着旧的东西排的，作废（你的数据一个字没动）。要新样子就再点一次。");
+                return;
+            }
+            FeedProposalLayoutAnswer(outcome.Text, outcome.Elapsed.TotalSeconds);
+        }
+        finally
+        {
+            _running.Dispose();
+            _running = null;
+            SetBusy(false);
+        }
+    }
+
+    /// <summary>
+    /// <strong>第二步（排版）的回包</strong>：与第一步的理解合成一份完整提案，然后<strong>直接落地</strong>（第 40 棒）。
+    /// <para>合成而不是各落一半：落地只认一份提案（切表 + 绑定 + 版式 + 纸规），
+    /// 理解那半边取第一步的（老板拍过板），版式与纸那半边取这一步的，见 <see cref="AiSheetProposal.MergeLayout"/>。</para>
+    /// </summary>
+    public void FeedProposalLayoutAnswer(string? modelText, double seconds = 0)
+    {
+        if (_readProposal is not { } read)
+        {
+            Append("第一步的读表结果已经不在了（换了表或重开过），这一版没处落——重新点「读这张表并提案」。");
+            return;
+        }
+        var rawRows = _lastRawRowCount > 0 ? _lastRawRowCount : int.MaxValue;
+        var layout = AiSheetProposal.Parse(modelText, _lastColumns, rawRows, AiProposalStage.Layout,
+            _lastSpecNames, _lastCellFormats, read);
+        _questionsAnswered = 0;
+        if (layout.Errors.Count > 0)
+        {
+            Append("这一版排版没采纳：" + string.Join("；", layout.Errors));
+            Append("第一步读懂的那些还在，模板与纸规都没动（要重来就点下面那颗「只重排这一步」）。");
+            foreach (var n in layout.Notes) Append("（软件这边：" + n + "）");
+            ShowNextSteps(applied: false);
+            return;
+        }
+
+        var proposal = AiSheetProposal.MergeLayout(read, layout);
+        Append($"它排完了（{seconds:F1} 秒）。");
+
+        // 那五行是用户逐字定的口径（表格有效数据 / 纸张 / 模版 / 张数 / 预览）——
+        // 摆在**这一步**而不是第一步：第一步还没排版，那五行里的「纸张/模版/预览」无从谈起。
         var count = OutputCounter?.Invoke(proposal.Readout.QtyColumn);
         foreach (var line in proposal.SummaryLines(count?.Labels, count?.Sheets)) Append(line);
         // 第 32 棒：版式**逐行核对**（这一行到底填哪一列）。判据是它自己报的绑定 + 真表头。
@@ -1095,8 +1258,7 @@ public sealed class AiChatPanel : UserControl
             Append("这个版式每一行填什么（对着表核一遍，带 ⚠ 的对不上）：");
             foreach (var row in rowCheck) Append("　· " + row);
         }
-        // ── 第 33 棒：**AI 判完直接落地**（用户改的架构：能自动判的直接进预览，靠"可撤回"兜底） ──
-        // 以前是逐条 ✅/❌ 卡，他明确要换掉（"直接注入预览及其他"）。四类一起落：切表 / 绑定 / 版式 / 纸规。
+
         if (ApplyProposal is { } autoApply)
         {
             var (ok, message) = autoApply(proposal);
@@ -1106,31 +1268,21 @@ public sealed class AiChatPanel : UserControl
             Append("（这个面板没接上落地入口，下面只能看。）");
 
         var shownAsList = ShowAppliedChanges(proposal);
-        if (!shownAsList && items.Count > 0 && proposal.Questions.Count == 0)
-            foreach (var item in items) Append("　· " + item);
+        if (!shownAsList)
+            foreach (var item in proposal.DescribeItems(rawRows)) Append("　· " + item);
 
-        // 问题留在最后：**只有要他拍板的才问他**（能自动判的已经落了，不拿"确认"去烦他）。
         ShowQuestions(proposal);
-
-        // 第 31 棒：它对这张表的**判断逐条**摆出来。用户 2026-09-10 截图里那段「它的说法」读着混乱——
-        // 根因是提示词逼它"一句说完"（五件事挤成一句），不是显示写错了。现在一条一件，人一行行扫。
-        if (proposal.Facts.Count > 0)
+        if (proposal.Warnings.Count > 0)
         {
-            Append("它对这张表的判断（一条一件）：");
-            foreach (var fact in proposal.Facts) Append("　· " + fact);
+            Append("它自己报的、要你核一下的：");
+            foreach (var w in proposal.Warnings) Append("　· ⚠ " + w);
         }
-        if (explain.Count > 0)
-        {
-            Append("它提醒（不采纳也能用，但你得知道）：");
-            foreach (var e in explain) Append("　· " + e);
-        }
-        // 软件自己改过什么单独收尾：以前它跟改动清单挤在一起，同一句会印两遍（用户圈图那屏就是这个）。
-        foreach (var n in proposal.Notes) Append("（软件这边：" + n + "）");
+        // 只印这一步新添的那些：第一步的 Notes 那时已经印过一遍了，再印就是同一句话出现两次。
+        foreach (var n in layout.Notes) Append("（软件这边：" + n + "）");
         _pendingProposal = proposal;
-        // 第 33 棒：整份已经自动落过了，这颗按钮改成"再落一次"没有意义 —— 收起来不用。
+        // 整份已经自动落过了，这颗按钮改成"再落一次"没有意义 —— 收起来不用（第 33 棒）。
         _applyLayout.Content = "重落一次（一般不用点）";
         _applyLayout.IsEnabled = false;
-        // 第 34 棒：**任何一条路都收在"下一步"**（哪怕它这次什么都没动）。
         ShowNextSteps(applied: shownAsList);
     }
 
@@ -1142,18 +1294,18 @@ public sealed class AiChatPanel : UserControl
     }
 
     /// <summary>
-    /// **下一步那颗按钮**（第 34 棒）。
-    /// <para>用户 2026-09-10 的原话：「*号后删不删也不问，那**即使是它觉得没问题**，
-    /// 那不应该出现下一步的按键让 AI 来排版和绑定列吗」——之前提案回来没有可落地的东西时，
-    /// 面板只剩一句技术话，人被晾在死路上。现在**任何结局都收在这里**：
-    /// 重出方案（带上他刚答的、接着上下文再来一次）或只让它排一版版式。</para>
+    /// **下一步那一排按钮**（第 34 棒：任何一条路都收在这里，不把人晾在一句技术话上）。
+    /// <para>第 40 棒改成三步各一颗：回到第一步重读这张表（只提问、不动模板与纸）、
+    /// <strong>只重排第二步</strong>（把输入框里那句"哪儿不对"当意见带过去，第一步的理解不重摇——
+    /// 这就是用户方向里的第四步「若还存在问题向 AI 指出，AI 进行对那一步调整理解」）、
+    /// 以及那条不带读表理解的老版式请求。</para>
     /// </summary>
     private void ShowNextSteps(bool applied)
     {
         _changes.Visibility = Visibility.Visible;
         _changes.Children.Add(new TextBlock
         {
-            Text = applied ? "下一步（不满意就撤回，或者让它重出一版）：" : "下一步（它没动手，那就再来一次）：",
+            Text = applied ? "下一步（不满意就撤回，或者只让它重排这一步）：" : "下一步（它这一步没动手，那就再来一次）：",
             FontSize = 12,
             FontWeight = FontWeights.SemiBold,
             TextWrapping = TextWrapping.Wrap,
@@ -1161,22 +1313,45 @@ public sealed class AiChatPanel : UserControl
         });
         var again = new Button
         {
-            Content = "让 AI 重出方案（排版 + 绑定列）",
+            Content = "重读这张表（只提问，不动模板与纸）",
             FontSize = 11,
             Padding = new Thickness(8, 2, 8, 2),
-            ToolTip = "把整张表再交给它一次：切表 + 绑定列 + 版式 + 纸规一起出；你刚答过的问题也在上下文里",
+            ToolTip = "回到第一步：把整张表再交给它一次，只要「每列是什么、有哪些风险要你拍板」。" +
+                      "这一步不会改你的模板、纸张与预览；你答完问题它才进第二步排版。",
         };
         again.Click += async (_, _) => await AskProposalAsync();
+        // 「只重排这一步」：把他随口说的那句"哪儿不对"当意见带过去，**不重摇第一步的理解**。
+        // 以前没有这颗按钮，唯一的重来方式是重发整份提案——十来个耦合输出一起重摇，
+        // 于是第 1 版有 JP、第 2 版丢了、第 3 版空白（用户 2026-09-10 实拍的那三轮）。
+        var relayout = new Button
+        {
+            Content = "只重排这一步（说一句哪儿不对）",
+            FontSize = 11,
+            Padding = new Thickness(8, 2, 8, 2),
+            Margin = new Thickness(6, 0, 0, 0),
+            ToolTip = "在下面输入框里写一句哪儿不对（如「第三行不该是死字」），再点这颗：\n" +
+                      "只重发排版那一步，第一步读懂的（每列是什么、剔哪几行、按哪列数张数）原样带过去，不重摇。\n" +
+                      "输入框空着就照常再排一版。",
+        };
+        relayout.Click += async (_, _) =>
+        {
+            var complaint = _input.Text.Trim();
+            _input.Clear();
+            _autoReruns = 0;      // 他自己点的，自动轮次重新算
+            await RunLayoutAsync(complaint.Length == 0 ? null : complaint);
+        };
         var layoutOnly = new Button
         {
             Content = "只让它排一版版式",
             FontSize = 11,
             Padding = new Thickness(8, 2, 8, 2),
             Margin = new Thickness(6, 0, 0, 0),
+            ToolTip = "老那条：不带读表的理解，只按已连字段与标签尺寸要一版模板，回来等你点「用这个」才落地。",
         };
         layoutOnly.Click += async (_, _) => await AskLayoutAsync();
         var row = new WrapPanel { Margin = new Thickness(0, 2, 0, 0) };
         row.Children.Add(again);
+        row.Children.Add(relayout);
         row.Children.Add(layoutOnly);
         _changes.Children.Add(row);
         _changes.BringIntoView();
@@ -1184,13 +1359,13 @@ public sealed class AiChatPanel : UserControl
 
     /// <summary>
     /// 把「要人拍一下」的那几条挂成一行一句 + ❌/✅ 两颗小按钮（第 22 棒真正要的东西）。
-    /// <para>点一颗只落那一条，落完两颗都置灰并把选了哪个标在行尾——
+    /// <para>点一颗只<strong>改这份提案</strong>（第 40 棒：不再逐条去改活表），落完两颗都置灰并把选了哪个标在行尾——
     /// 不然人记不住刚才点的是哪边，又变成一屏看不出结论的文字。</para>
     /// </summary>
     private void ShowQuestions(AiSheetProposal proposal)
     {
         _questions.Children.Clear();
-        if (proposal.Questions.Count == 0 || ApplyQuestion is null)
+        if (proposal.Questions.Count == 0)
         {
             _questions.Visibility = Visibility.Collapsed;
             return;
@@ -1353,37 +1528,54 @@ public sealed class AiChatPanel : UserControl
     }
 
     /// <summary>
-    /// 人拍了一条问题：先落地，再**把这条问答注入上下文**（第 33 棒）。
-    /// <para>用户的原话是「选择后将回答注入思考」——他的选择必须让 AI 下一轮知道，
-    /// 不然它下一次读表还会照原来那套判断重来一遍（那就是"答了跟没答一样"）。
-    /// 注入方式：追加一问一答进对话历史，下一轮请求自动带上；纸面上不给它刷屏（历史不进对话区）。</para>
+    /// 人拍了一条问题：<strong>只改这份提案，不碰活表</strong>，然后把这条决定攒起来（第 40 棒）。
+    /// <para>用户 2026-09-10 的红线是「指出表格存在的问题……<strong>这层先不要对预览纸张进行调整</strong>」。
+    /// 第 33 棒那版这里是逐条真落地（改剔行名单、存模板、换纸），于是问题还没答完，
+    /// 模板与纸已经被第一轮提案改过一遍了——他实测的评语是「乱改模板」。</para>
+    /// <para><strong>答满才进第二步</strong>（答一半就排等于白花一两分钟），而且第二步<strong>不重摇第一步的理解</strong>：
+    /// 那些是既成事实，带着他的答复去要版式就够。以前这里是重发整份提案，
+    /// 于是一次请求把十来个耦合输出全重摇一遍（第 1 版有 JP、第 2 版丢了、第 3 版空白就是这么来的）。</para>
     /// </summary>
     private void AnswerQuestion(AiSheetProposal proposal, AiSheetQuestion q, bool yes, TextBlock answer, Button no, Button yesButton)
     {
-        if (ApplyQuestion is not { } apply)
-        {
-            Append("这个面板没接上「逐条落地」入口（只有主窗口里的 AI 页签能这么点）。");
-            return;
-        }
         no.IsEnabled = false;
         yesButton.IsEnabled = false;
         answer.Text = (yes ? "✅ " : "❌ ") + (yes ? q.YesLabel : q.NoLabel);
-        var (ok, message) = apply(proposal, q, yes);
-        Append((ok ? "已办：" : "没办成：") + message);
-        if (!ok) return;
 
-        // 第 35 棒：他的决定要**真的回到模型手里**——下一轮请求会带上 _decisions 那一节。
-        // 以前只塞会话历史，而提案/排版那两条路**根本不读历史**，所以他答了等于没答（他自己说的
-        // 「提出问题选择了也是无效的」就是这么来的）。
-        var choice = yes ? q.YesLabel : q.NoLabel;
-        _decisions.Add($"{q.Text} → {choice}");
-        _turns.Add(new AiChatTurn(AiChatTurn.User, $"【我对你这一问的决定】{q.Text} → {choice}"));
+        if (_readProposal is not { } read)
+        {
+            Append("这条答复没处记（第一步的读表结果已经不在了）——重新点「读这张表并提案」。");
+            return;
+        }
+
+        // 能确定性办的软件就地办（剔行、有无列名行、张数列、模板来源列、货号占位符），
+        // 办不了的只记账（见 AiSheetProposal.WithAnswer）——不假装办了。
+        var notesBefore = read.Notes.Count;
+        _readProposal = read.WithAnswer(q, yes);
+        foreach (var note in _readProposal.Notes.Skip(notesBefore)) Append("　· " + note);
+
+        // 第 35 棒：他的决定要**真的回到模型手里**。第 40 棒起有两条路都带着它：
+        // ① 提案自己身上的 Answers（第二步提示词里那节「老板已经拍过板了」，也是 MergeLayout 补落货号那条的依据）；
+        // ② _decisions（跨请求累积，重跑第一步时带上，免得它再问一遍）。
+        var record = new AiAnswer(q, yes);
+        _decisions.Add(record.Line);
+        _turns.Add(new AiChatTurn(AiChatTurn.User, $"【我对你这一问的决定】{record.Line}"));
         _questionsAnswered++;
 
-        // 这一轮的问题都答完了 → 带着他的决定**自动重出一版**（他要的"你收到信息后就知道怎么调整
-        // 怎么做了 → 自动把排版拍出来"）。只答一半不跑，免得白花一两分钟。
-        if (proposal.Questions.Count > 0 && _questionsAnswered >= proposal.Questions.Count)
-            _ = AskProposalFollowUpAsync();
+        if (proposal.Questions.Count == 0 || _questionsAnswered < proposal.Questions.Count)
+        {
+            Append($"还剩 {proposal.Questions.Count - _questionsAnswered} 条要你拍板，答完它才去排版。");
+            return;
+        }
+        if (_autoReruns >= MaxAutoReruns)
+        {
+            Append($"已经自动排了 {MaxAutoReruns} 版，先停手（每版要一两分钟、也算一份钱，不自动烧）。"
+                 + "想接着排就点下面那颗「只重排这一步」。");
+            return;
+        }
+        _autoReruns++;
+        Append("你把这一步的问题都答完了 —— 进第二步：照你拍过的板自动排版（排完直接落进预览，不满意可以撤回）。");
+        _ = RunLayoutAsync();
     }
 
     /// <summary>清掉待确认的东西，并把「用这个」那颗按钮的文案还回去（两种提案共用一颗按钮，文案不能错）。</summary>
