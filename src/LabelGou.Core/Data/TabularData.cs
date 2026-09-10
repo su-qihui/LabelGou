@@ -72,7 +72,7 @@ public sealed class TabularData
     /// </summary>
     public IReadOnlyList<SheetImage> Images { get; }
 
-    /// <summary>这张表里有没有可供 AI 对照的视觉参照（没图时 AI 不许造模板，只能要参照）。</summary>
+    /// <summary>这张表里有没有可供 AI 对照的视觉参照（第 38 棒起只是事实上报：没图时 AI 可以猜一版，但必须自报是猜的）。</summary>
     public bool HasVisualReference => Images.Count > 0;
 
     /// <summary>

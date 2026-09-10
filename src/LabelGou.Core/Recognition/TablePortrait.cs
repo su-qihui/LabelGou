@@ -109,7 +109,7 @@ public static class TablePortrait
     /// <para>为什么这两块必须给模型：用户 2026-09-09 定的主路径是「AI 自己看表」，
     /// 而纸规、总件数、客户名常写在表头以上的行里，标签该长什么样常以贴图形式挂在右侧。
     /// 不给这两样，模型就只能凭列名猜——猜错就是印错货。</para>
-    /// <para>没图也要写明「没图」：这是“不许造模板”那道闸门的判据（§十-A-27 新增）。</para>
+    /// <para>没图也要写明「没图」：第 38 棒起这是「这一版是猜的」那句声明的判据，不再是造模板的硬闸。</para>
     /// </summary>
     public static string Describe(
         IReadOnlyList<ColumnPortrait> columns,

@@ -23,7 +23,8 @@ public sealed record AiChatImage(string Base64, string MimeType, string Name);
 /// <para><paramref name="Columns"/> 与 <paramref name="Portrait"/> 是第 15 棒加的：<strong>整张表</strong>的画像（含没连上字段的列）。
 /// 只递已连字段会让「先做了自动绑定」把 AI 的视野锁死在绑对的那几列上（用户 2026-09-08 点出的根因）。</para>
 /// <para><paramref name="SheetImages"/> 与 <paramref name="TemplateHasArtwork"/> 是第 20 棒加的：表里贴的效果照片
-/// 与当前模板自带的底稿。用户 2026-09-09 定的规矩：<strong>没参照就不得造</strong>，所以面板得先知道有没有参照。</para>
+/// 与当前模板自带的底稿。第 20 棒曾定「没参照就不得造」，<strong>第 38 棒撤了那道闸</strong>（三道闸口径）：
+/// 现在没参照也发请求，但面板得知道有没有参照——要声明的是「这一版是猜的」，不是不许排。</para>
 /// </summary>
 public sealed record AiLayoutContext(
     IReadOnlyList<(string Key, string Name, string Sample)> Fields,
@@ -43,8 +44,8 @@ public sealed record AiLayoutContext(
 
     /// <summary>
     /// 这张表到底有没有可对照的实物长相：表里贴的图、当前模板的底稿/图片元素、或用户这一条附的照片。
-    /// <para>三样都没时 <see cref="AskLayoutAsync"/> 就不得把请求发出去：让模型凭列名造一版，
-    /// 本质上是拿语法猜设计，错的东西会一路走到纸上。</para>
+    /// <para>第 20~37 棒它是硬闸（三样都没就不发请求）；<strong>第 38 棒降为声明用的事实</strong>：
+    /// 没参照照样排，但面板与提示词都要据此明说「这一版是猜的」，不许拿猜的装成照过参照排的。</para>
     /// </summary>
     public bool HasVisualReference(bool attachedPhoto) =>
         SheetImages is { Count: > 0 } || TemplateHasArtwork || attachedPhoto;
@@ -56,9 +57,10 @@ public sealed record AiLayoutContext(
 /// 「这个 AI 界面不应该藏起来，应该显示出来」——<strong>飘在外面的窗口对主流程来说仍然是藏</strong>。
 /// 现在它是主窗口右侧第三个常驻页签，而独立窗口只是同一个面板换个壳（<see cref="AiChatWindow"/>），
 /// <strong>不开第二份聊天代码</strong>。</para>
-/// <para>红线仍然成立，只是多了一扇有人看着的门：AI 出的版式<strong>必须人点「用这个」</strong>才会存成模板，
-/// 中间还要过 <see cref="RowLayoutSpec.Build"/>（排不出返 null）与 <see cref="TemplateValidator"/>（有 Error 拒入库）；
-/// 打印走既有的 ⑤ 那一条命令与复核闸门，这里不开第二条出纸路（§五-22）。</para>
+/// <para>约束口径（第 38 棒重分类后的三道闸，旧「必须人点用这个」的红线已于第 33 棒翻为直接落地+逐步撤回）：
+/// AI 出的版式要过<strong>出纸闸</strong>（<see cref="RowLayoutSpec.Build"/> 排不出返 null、<see cref="TemplateValidator"/> 有 Error 拒入库、
+/// 全空版拒落地），落地后靠<strong>可退闸</strong>兑底（逐步撤回）；打印仍走既有的 ⑤ 那一条命令与复核闸门，
+/// 这里不开第二条出纸路（§五-22）。</para>
 /// </summary>
 public sealed class AiChatPanel : UserControl
 {
@@ -190,8 +192,6 @@ public sealed class AiChatPanel : UserControl
     /// <summary>给单测看：老板拍过的决定（"决定真的回灌给模型了"那条链的证据）。</summary>
     public IReadOnlyList<string> Decisions => _decisions;
 
-    /// <summary>这批卡是按哪一代数据算出来的（点 ✅ 之前对一遍，不等就整批作废）。</summary>
-    private int _changesGeneration = -1;
     private DateTime _waitSince;
     private string _waitingFor = "AI";
     private readonly Button _send = new() { Content = "发送（Ctrl+Enter）", Padding = new Thickness(12, 6, 12, 6), Margin = new Thickness(0, 0, 8, 0) };
@@ -651,7 +651,8 @@ public sealed class AiChatPanel : UserControl
           .Append("  ① 模板里写死的文字（不是 {{字段}} 那类空位）会跟着模板跑到别家客户头上，换客户时必须逐字核对；\n")
           .Append("  ② 没有表头的工厂表，首行会被当成表头吃掉，那一行就少印一张；要用户确认「表头在第几行/确实没表头」；\n")
           .Append("  ③ 表底部的「合计/TOTAL/小计」行会被当成一条真实货物排进版面，多出一张没意义的唛头。\n")
-          .Append("还有一条红线：没看到效果图、模板截图或底稿时，不要凭列名编一版设计出来，先让用户给你一张参照。\n")
+          .Append("参照优先：看得到效果图、模板截图或底稿时，一律照参照排；表里有把标签字拄抄一遍的那一块，它就是模板。\n")
+          .Append("真没有任何参照时，你可以凭表里的列猜一版，但开头必须说清「这一版是无参照猜的」，并提醒用户发一张样张再照排（第 38 棒改的旧红线：从「不许猜」改成「猜了必须自报」）。\n")
           .Append("注意：软件是中文界面，请一律用中文回答。");
         return new AiChatTurn(AiChatTurn.System, sb.ToString());
     }
@@ -733,19 +734,15 @@ public sealed class AiChatPanel : UserControl
         if (ctx.Fields.Count == 0)
             AppendNotice("一个字段都没连上，那就把整张表原样交给它（含没连上的列），让它照样张排——软件不替你猜哪列是什么。");
 
-        // 没有参照就不发这一趟请求（用户 2026-09-09 原话：「表格里没有效果图或者模版的时候，AI 识别到不应该直接制作，
-        // 应该等人先做出模版导入照片然后再理解做出模版对照表格」）。拦在发送之前：
-        // 一发就是几十秒与一笔钱，回来还是一版凭列名猜的样张。
+        // 第 38 棒：「无参照就不发这一趟请求」那道硬闸撤了（用户拍板：只拦三道闸，其余放）。
+        // 判据：猜出来的版看得见（预览+只读清单）、退得回（逐步撤回），不赔钱，不配被事前拦；
+        // 而拦着它只会制造第 26 棒那种死路（重读一百次也出不来版式）。不拦不等于不声明：
+        // 面板这里说给老板听，提示词里说给模型听，两头都得知道这一版是猜的。
         var attached = _image;
-        if (!ctx.HasVisualReference(attached is not null))
-        {
-            AppendNotice("没有参照，我不出模板。这张表里没有贴效果图或模板截图，当前模板也不带底稿，你这一条也没附照片——" +
-                "让我在这种条件下排版就是凭列名猜设计，猜错要重印。请先做其中一件：" +
-                "① 在 ③ 步「导入底稿」把 CorelDRAW/AI 导出的 SVG 或 .cdr 递过来；" +
-                "② 或点本面板「附上图片…」，把这枚唛头拍下来或截图给我。" +
-                "参照到了我再对照整张表出模板（那一步不用改数据，只要给我看一眼）。现在你可以先把字段连好。");
-            return;
-        }
+        var hasReference = ctx.HasVisualReference(attached is not null);
+        if (!hasReference)
+            AppendNotice("没有任何参照（表里没贴效果图、模板不带底稿、这条也没附图）——我先凭表里的列名和内容猜一版。"
+                + "这一版是猜的不是对照：不满意点「↩ 撤回这一步」；要排准就附上样张图，我再照图出一版。");
 
         var images = new List<AiChatImage>(MaxImagesPerRequest);
         if (attached is { } shot) images.Add(new AiChatImage(shot.Base64, shot.MimeType, shot.Name));
@@ -759,7 +756,8 @@ public sealed class AiChatPanel : UserControl
         RefreshChannel();
         ClearPending();
 
-        var prompt = RowLayoutPrompt.Build(ctx.Fields, ctx.WidthMm, ctx.HeightMm, ctx.Note, ctx.Portrait, _decisions)
+        var prompt = RowLayoutPrompt.Build(ctx.Fields, ctx.WidthMm, ctx.HeightMm, ctx.Note, ctx.Portrait, _decisions,
+                hasVisualReference: hasReference)
             + (images.Count == 0 ? string.Empty : $"\n本条随附 {images.Count} 张图：它们是这张表里贴的效果照片/模板截图，或用户拍的样张。" +
               "版式必须照图上的行序与字面排，图上没有的行不要造，图与表格文字冲突时以图为准。");
         _lastColumns = ctx.Columns;
@@ -1382,7 +1380,6 @@ public sealed class AiChatPanel : UserControl
         _questions.Visibility = Visibility.Collapsed;
         _changes.Children.Clear();
         _changes.Visibility = Visibility.Collapsed;
-        _changesGeneration = -1;
         _applyLayout.IsEnabled = false;
         _applyLayout.Content = "用这个（存成我的模板并选中）";
     }

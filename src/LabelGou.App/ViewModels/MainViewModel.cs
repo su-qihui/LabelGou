@@ -1996,6 +1996,22 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
                 IncludeReference: true, TextCase: _textCase));
     }
 
+    /// <summary>
+    /// 出纸闸（第 38 棒 · 三道闸之一）：这份模板拿当前数据渲染后到底印不印得出东西。
+    /// <para>第 36 棒的整张白纸就是从这漏的：令牌全取不到值 → 四行整条隐藏 → 空版照样落地
+    /// （第 33 棒免点头之后这一层没人拦了）。<strong>只判「全空」不判「个别空」</strong>——
+    /// 某一列本来就没值是常态，拦那种就是误伤（第 36 棒原口径）。</para>
+    /// <para><c>IncludeReference:false</c>：参考底图不上纸，拿它撑「有内容」就是骗闸门。</para>
+    /// </summary>
+    public bool TemplatePrintsAnything(LabelTemplate template)
+    {
+        var record = _records.Count > 0 ? _records[0] : SampleRecords.StandardSample();
+        var layout = LayoutEngine.Build(template, record,
+            new LayoutContext(1, Math.Max(1, _records.Count), Path.GetFileName(_sourcePath),
+                IncludeReference: false, TextCase: _textCase));
+        return layout.Items.Count > 0;
+    }
+
     /// <summary>调试/自动化用：当前标签记录集（已按编号规则展开）。</summary>
     public IReadOnlyList<MarkRecord> CurrentRecords => _records;
 

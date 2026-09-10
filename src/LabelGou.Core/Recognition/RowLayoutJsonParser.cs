@@ -403,7 +403,8 @@ public static class RowLayoutPrompt
         IReadOnlyList<(string Key, string Name, string Sample)> fields,
         double widthMm, double heightMm, string? userNote,
         string? tablePortrait = null,
-        IReadOnlyList<string>? decisions = null)
+        IReadOnlyList<string>? decisions = null,
+        bool hasVisualReference = true)
     {
         var sb = new System.Text.StringBuilder();
         sb.Append("你是外贸纸箱唛头排版助手。请给这张标签出行式版式：唛头 = 自上而下若干行文字，")
@@ -432,6 +433,13 @@ public static class RowLayoutPrompt
             sb.Append("\n【老板已经拍过板的决定（照这些来，不要再按相反的做）】：\n");
             foreach (var d in decisions.Take(12)) sb.Append("  - ").Append(d).Append('\n');
         }
+        // 第 38 棒：「无参照不许造模板」那道硬闸撤了（三道闸里没有这一条：猜出来的版看得见、退得回，
+        // 不拦）。但**不拦不等于不声明**：没参照时这一版是猜的，人与模型都得知道它的依据是零。
+        if (!hasVisualReference)
+            sb.Append("\n【本次没有参照】没有效果图，表里也没有可抄的模板块——这一版只能凭表里的列猜：")
+              .Append("按外贸唛头的通用长相排（收货人/标志行最上最大，明细行在下更小），")
+              .Append("只用上面列出的字段键与 {{col:列名}}，表里没有的固定文字（品牌、品名、规格号）一个都不许编；")
+              .Append("并在 note 里写明「无参照猜测版」。\n");
         sb.Append("\n只回一个 JSON 对象，不要任何解释文字、不要 Markdown 围栏。形状：\n")
           .Append("{\"name\":\"...\",\"widthMm\":").Append(widthMm.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture))
           .Append(",\"heightMm\":").Append(heightMm.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture))

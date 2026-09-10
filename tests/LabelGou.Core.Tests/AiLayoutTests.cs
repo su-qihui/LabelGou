@@ -150,4 +150,28 @@ public class AiLayoutTests
         Assert.Contains("第四行要印本行箱数", prompt);
         Assert.DoesNotContain("Consignee", prompt);                 // 没连上的字段不许出现在清单里诱导模型去用
     }
+
+    [Fact]
+    public void 无参照时提示词要求它自报是猜的并且不许编表外文字()
+    {
+        var fields = new[] { ("ItemNo", "货号", "olu830-35") };
+
+        var prompt = RowLayoutPrompt.Build(fields, 140, 100, null, hasVisualReference: false);
+
+        // 第 38 棒：「无参照不许造」的硬闸撤了，但声明留着——猜的版必须自报是猜的，
+        // 且只能拿表里有的东西猜（面板提示词与聊天 system prompt 同一口径）。
+        Assert.Contains("本次没有参照", prompt);
+        Assert.Contains("无参照猜测版", prompt);
+        Assert.Contains("一个都不许编", prompt);
+    }
+
+    [Fact]
+    public void 有参照时不出现猜测条款()
+    {
+        var fields = new[] { ("ItemNo", "货号", "olu830-35") };
+
+        Assert.DoesNotContain("本次没有参照", RowLayoutPrompt.Build(fields, 140, 100, null));
+        Assert.DoesNotContain("本次没有参照",
+            RowLayoutPrompt.Build(fields, 140, 100, null, "整张表画像", new[] { "* 号不印" }, hasVisualReference: true));
+    }
 }

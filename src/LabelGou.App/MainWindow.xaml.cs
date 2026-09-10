@@ -720,6 +720,9 @@ public partial class MainWindow : Window
         var template = spec.Build();
         if (template is null)
             return (false, "这份方案排不进这块标签（留白与行距把版面吃光了），当前模板没被动过。");
+        // 出纸闸（第 38 棒 · 三道闸之一，销第 36 棒欠账 #2）：一个要素都印不出的空版不配上预览。
+        if (!_viewModel.TemplatePrintsAnything(template))
+            return (false, "这一版排出来是空的（模板里的占位符在当前数据里一个都取不到值），我没往上放——当前模板没被动过。");
         var (saved, fileName, issues) = _viewModel.Templates.Save(template);
         if (!saved)
             return (false, "校验拦下了，没入库：" + string.Join("；",
