@@ -1550,8 +1550,9 @@ public sealed class AiChatPanel : UserControl
 
         // 能确定性办的软件就地办（剔行、有无列名行、张数列、模板来源列、货号占位符），
         // 办不了的只记账（见 AiSheetProposal.WithAnswer）——不假装办了。
+        // 带 _lastColumns：qty-column 答「是」而那一列读表时没落进 Readout，要靠列画像把它真对回表里那一列再设上去。
         var notesBefore = read.Notes.Count;
-        _readProposal = read.WithAnswer(q, yes);
+        _readProposal = read.WithAnswer(q, yes, _lastColumns);
         foreach (var note in _readProposal.Notes.Skip(notesBefore)) Append("　· " + note);
 
         // 第 35 棒：他的决定要**真的回到模型手里**。第 40 棒起有两条路都带着它：

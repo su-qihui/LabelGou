@@ -143,4 +143,38 @@ public sealed class ExpandColumnPickerTests : IDisposable
         Assert.False(keepData);
         Assert.True(expand);
     }
+
+    [Fact]
+    public void AI落地张数列_一步把档与列都设好_真按那一列展开()
+    {
+        // 用户实测问题 #3：「AI 问了是否将 x 列设为张数、答了是，结果仍是模版那一张。」
+        // 根因最后一环：ApplyAiProposal 要把 Readout.QtyColumn 接到这里——不只是拼那五行摘要，
+        // 得真把拼版切到「按张数展开」并选中那一列，预览才会一行出 5 张整张纸而不是一行一张。
+        var (labels, mode, ruleColumn, msg) = OnSta(() =>
+        {
+            var vm = LoadInto(WriteSheetCsv("张数.csv"), NumberingMode.KeepData);   // 故意从默认档起步
+            var m = vm.Sheet.ApplyQtyColumn("打印张数");
+            return (vm.Sheet.Labels.Count, vm.Sheet.Mode, vm.Sheet.BuildRule().ExpandCountColumn, m);
+        });
+
+        Assert.StartsWith("已按", msg);
+        Assert.Equal(NumberingMode.ExpandByCartonTotal, mode);   // 档被这一步切过来了
+        Assert.Equal("打印张数", ruleColumn);
+        Assert.Equal(8, labels);                                  // 5 + 3，不是一行一张的 2
+    }
+
+    [Fact]
+    public void AI落地张数列_表里没那一列就如实说没接上_不改档不猜列()
+    {
+        var (labels, mode, msg) = OnSta(() =>
+        {
+            var vm = LoadInto(WriteSheetCsv("张数.csv"), NumberingMode.KeepData);
+            var m = vm.Sheet.ApplyQtyColumn("根本没有这一列");
+            return (vm.Sheet.Labels.Count, vm.Sheet.Mode, m);
+        });
+
+        Assert.Contains("没接上", msg);
+        Assert.Equal(NumberingMode.KeepData, mode);   // 接不上就不动档
+        Assert.Equal(2, labels);                       // 仍是一行一张
+    }
 }

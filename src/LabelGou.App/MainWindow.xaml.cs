@@ -685,6 +685,17 @@ public partial class MainWindow : Window
             lines.Add(msg);
             anyOk |= msg.StartsWith("纸规已切到", StringComparison.Ordinal);
         }
+        // 张数列接到拼版上（第 40 棒补）：必须排在切表与字段绑定都落完之后——切表会重建展开列候选并把展开列复位，
+        // 早接会被它冲掉。Readout.QtyColumn 来自模型报的 qtyColumn 或老板对「qty-column」那条答的「是」。
+        if (proposal.Readout.QtyColumn is { Length: > 0 } qtyHeader)
+        {
+            var qtyMsg = _viewModel.Sheet.ApplyQtyColumn(qtyHeader);
+            if (qtyMsg.Length > 0)
+            {
+                lines.Add(qtyMsg);
+                anyOk |= qtyMsg.StartsWith("已按", StringComparison.Ordinal);
+            }
+        }
         foreach (var w in proposal.Warnings) lines.Add("⚠ " + w);
         if (lines.Count == 0) return (false, "这份提案里没有可落地的改动（它什么都没提）。当前表、模板与纸规都没动。");
         Services.AppLog.Info("AI 提案落地（第 33 棒起自动落地，可撤回）：" + string.Join(" / ", lines));

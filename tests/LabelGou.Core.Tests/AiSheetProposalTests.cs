@@ -257,9 +257,11 @@ public class AiSheetProposalTests
         // 第 34 棒起这一列会**多一条**：货号列的样例里带 *（olu830-35*144），软件按确定性判定补问
         // 「* 号后面那截要不要印」——模型这次问的是 row-keep，那条兜底问题照样补上
         // （用户 2026-09-10 抱怨过「* 号后删不删也不问」）。顺序：模型先、软件兜底后。
-        Assert.Equal(new[] { "row-keep", "itemno-tail" }, p.Questions.Select(q => q.Action));
-        Assert.Equal(34, p.Questions[0].Row);
-        Assert.Equal(("不需要", "需要"), (p.Questions[0].NoLabel, p.Questions[0].YesLabel));
+        // 第 40 棒：提问归**读表阶段**（排版阶段不提问），所以同样这份 JSON 要用读表阶段解才看得到这两条。
+        var readP = AiSheetProposal.Parse(json, cols, 34, AiProposalStage.Read, Specs);
+        Assert.Equal(new[] { "row-keep", "itemno-tail" }, readP.Questions.Select(q => q.Action));
+        Assert.Equal(34, readP.Questions[0].Row);
+        Assert.Equal(("不需要", "需要"), (readP.Questions[0].NoLabel, readP.Questions[0].YesLabel));
     }
 
     [Theory]
@@ -292,7 +294,8 @@ public class AiSheetProposalTests
             { "text": "最后一行要不要印", "action": "row-keep", "row": 99 } ] }
         """;
 
-        var p = AiSheetProposal.Parse(text, null, 13, AiProposalStage.Layout, Specs);
+        // 第 40 棒：提问归读表阶段（排版阶段一律不提问），所以这条用读表阶段解。
+        var p = AiSheetProposal.Parse(text, null, 13, AiProposalStage.Read, Specs);
 
         Assert.Empty(p.Questions);                       // recolor 没这个开关；row-keep 那条行号不在表里
         Assert.Contains(p.Notes, n => n.Contains("接不住", StringComparison.Ordinal));
@@ -497,5 +500,59 @@ public class AiSheetProposalTests
         Assert.Equal("F列", merged.Readout.TemplateSource);
         // 版式出来了，那几行"念给人听"的话也跟着有
         Assert.NotEmpty(merged.Readout.TemplateLines);
+    }
+
+    [Fact]
+    public void 排版阶段不提问_模型硬塞的与软件兜底的一律不再冒出来()
+    {
+        // 用户实测：第一遍问题答完，第二步又把同一条吐回来，面板再弹一次（「答了还问」）。
+        // 提示词写了「第二步不提问」，但模型会不听话，解析层再拦一道。
+        var cols = new[] { new ColumnPortrait(0, "货号", "货号", null, null, new[] { "olu830-35*144" }, 4) };
+        var p = AiSheetProposal.Parse(
+            """{ "sheetSpec": "一页一枚（纸面跟标签走）", "rows": [ { "content": "ITEM NO.{{ItemNo}}" } ], "questions": [ { "text": "A 列货号带 * 号，后面那截要不要印", "action": "itemno-tail" } ] }""",
+            cols, 13, AiProposalStage.Layout, Specs);
+
+        Assert.True(p.IsUsable, string.Join("；", p.Errors));
+        Assert.NotNull(p.Layout);
+        // 模型那条问题一条都不采纳；连软件兜底的「* 号那条」也不在排版阶段补问（cols 里明明有带 * 的货号）
+        Assert.Empty(p.Questions);
+        Assert.Contains(p.Notes, n => n.Contains("又想提问"));
+    }
+
+    [Fact]
+    public void 张数列那条答是_而读表时没落那一列_靠问题带的列补认上去()
+    {
+        // 用户实测：「AI 问了是否将 x 列设为张数、答了是，结果仍是模版那一张。」
+        // 根因：模型只在问题里提了一嘴 B 列、没在顶层 qtyColumn 里报，Readout.QtyColumn 是空的；
+        // 旧 WithAnswer 答「是」只记一句话，没把那一列设上去 → OutputCounter 拿到空的张数列只能出一张。
+        var cols = new[]
+        {
+            new ColumnPortrait(0, "货号", "货号", null, null, new[] { "olu830-35" }, 4),
+            new ColumnPortrait(1, "件数", "件数 CTN", null, null, new[] { "5" }, 4),
+        };
+        var read = AiSheetProposal.Parse(
+            """{ "headerRow": 1, "questions": [ { "text": "出几张纸是按 B 列（件数）数吗", "no": "不是这列", "yes": "是", "action": "qty-column", "value": "B" } ] }""",
+            cols, 13, AiProposalStage.Read);
+        Assert.Null(read.Readout.QtyColumn);          // 读表时没报 qtyColumn，那一列是空的
+        var q = Assert.Single(read.Questions);        // 货号样例不带 *，软件不会再兜底补问，只剩这一条
+
+        // 老板答「是」→ 软件拿列画像把问题里带的 B 列（q.Value）真对回「件数」再设上去
+        var answered = read.WithAnswer(q, yes: true, cols);
+        Assert.Equal("件数", answered.Readout.QtyColumn);
+        Assert.Equal(1, answered.Readout.QtyColumnIndex);
+        Assert.Contains(answered.Notes, n => n.Contains("按「件数」这一列数"));
+    }
+
+    [Fact]
+    public void 张数列答是但那一列对不回表里_如实说设不了_不猜一列()
+    {
+        // 补认也要真对回表里的列：对不上（或没拿到列画像）就如实说设不了，绝不猜一列——猜错就是数错张数、印错货。
+        var cols = new[] { new ColumnPortrait(0, "货号", "货号", null, null, new[] { "x" }, 4) };
+        var read = AiSheetProposal.Parse("""{ "headerRow": 1 }""", cols, 13, AiProposalStage.Read);
+
+        var answered = read.WithAnswer(new AiSheetQuestion(
+            "出几张纸是按 Z 列数吗", "不是这列", "是", AiSheetQuestion.ActionQtyColumn, 0, "Z"), yes: true, cols);
+        Assert.Null(answered.Readout.QtyColumn);
+        Assert.Contains(answered.Notes, n => n.Contains("这一列我设不了"));
     }
 }

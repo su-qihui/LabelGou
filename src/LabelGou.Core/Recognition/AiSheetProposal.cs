@@ -105,7 +105,12 @@ public sealed record AiSheetProposal(
     /// 货号占位符这五件软件自己就能改对；<c>fixed-value</c> 与 <c>column-meaning</c> 改不动这份提案里的任何字段，
     /// 就只把那句决定记下来喂给排版那一步——不假装办了。</para>
     /// </summary>
-    public AiSheetProposal WithAnswer(AiSheetQuestion q, bool yes)
+    /// <param name="columns">
+    /// 这张表的列画像（第 40 棒补）。<c>qty-column</c> 答「是」而读表时那一列没落进 <see cref="SheetReadout.QtyColumn"/>
+    /// （模型只在问题里提了一嘴、或当时没对回表里的列）时，要用它把问题带的列（<see cref="AiSheetQuestion.Value"/>）
+    /// 真对回表里那一列再设上去——没有列画像就对不回，只能如实说设不了，绝不猜一列（猜错 = 数错张数 = 印错货）。
+    /// </param>
+    public AiSheetProposal WithAnswer(AiSheetQuestion q, bool yes, IReadOnlyList<ColumnPortrait>? columns = null)
     {
         var extra = new List<string>();
         var totalRows = TotalValueRows;
@@ -124,7 +129,26 @@ public sealed record AiSheetProposal(
                 break;
 
             case AiSheetQuestion.ActionQtyColumn:
-                if (yes) extra.Add("照你说的，出几张纸就按它认的那一列数");
+                if (yes)
+                {
+                    // 它认的那一列若在读表时已经落进 Readout，就直接用；没落（只在问题里提了一嘴、
+                    // 或那一列当时没对回表里）就照问题里带的列（q.Value）补认一次。补认也要真对回表里的列——
+                    // 对不上就如实说设不了，绝不猜一列（猜错 = 数错张数 = 印错货）。
+                    // 用户实测的「AI 问了是否将 x 列设为张数、结果仍是模版那一张」就卡在这：以前答「是」只记一句话，
+                    // 没把那一列设上去，OutputCounter 拿到空的张数列就只能出一张。
+                    if (Readout.QtyColumn is not { Length: > 0 })
+                    {
+                        var (qtyHeader, qtyIndex) = ResolveColumn(q.Value, columns);
+                        if (qtyHeader is null)
+                        {
+                            extra.Add("你说按它认的那一列数张数，可它没报出是哪一列、表里也没对上 —— 这一列我设不了，"
+                                    + "排版落地后你在「② 连接字段」里自己点一列当张数");
+                            break;
+                        }
+                        readout = Readout with { QtyColumn = qtyHeader, QtyColumnIndex = qtyIndex };
+                    }
+                    extra.Add($"照你说的，出几张纸就按「{readout.QtyColumn}」这一列数");
+                }
                 else
                 {
                     readout = Readout with { QtyColumn = null, QtyColumnIndex = null };
@@ -886,10 +910,23 @@ public sealed record AiSheetProposal(
                 notes.Add($"它说按「{qtyWanted}」这一列数张数，可表里没对上这一列 —— 这条没采纳");
 
             var mappings = ParseMappings(fields, columns, notes);
-            var questions = ParseQuestions(fields, rawRowCount, notes);
-            // 第 34 棒：软件兜底问那条该问的（货号列里带 * 就问"* 后那截留不留"）。
-            // 第 40 棒：读表阶段就要问出来（那时候还没有版式），答复记在提案上，排版时由 MergeLayout 落。
-            AddMissingTailQuestion(questions, columns, mappings, notes);
+            // 第 40 棒（补）：排版这一步**不提问**。用户实测：答完第一遍问题，第二步又把同一条问题吐了回来，
+            // 于是面板再弹一次——「答了还问」。提示词里写了「第二步不提问」，但模型会不听话，解析层再拦一道：
+            // Layout 阶段一律不采纳 questions，软件兜底的「* 号那条」也只在读表阶段问（那时才该问、那时还没版式）。
+            List<AiSheetQuestion> questions;
+            if (stage == AiProposalStage.Read)
+            {
+                questions = ParseQuestions(fields, rawRowCount, notes);
+                // 第 34 棒：软件兜底问那条该问的（货号列里带 * 就问"* 后那截留不留"）。
+                // 第 40 棒：读表阶段就要问出来（那时候还没有版式），答复记在提案上，排版时由 MergeLayout 落。
+                AddMissingTailQuestion(questions, columns, mappings, notes);
+            }
+            else
+            {
+                questions = new List<AiSheetQuestion>();
+                if (fields.ContainsKey("questions"))
+                    notes.Add("它这一步又想提问，我没理它——排版这一步不提问，还有疑问它会写进上面的「警告」里");
+            }
 
             return new AiSheetProposal(
                 headerRow, hasHeader, totalRows, layout?.Spec, specName,

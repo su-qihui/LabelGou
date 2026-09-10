@@ -397,6 +397,27 @@ public sealed class ImpositionViewModel : ObservableObject
         Raise(nameof(SelectedExpandColumn));
     }
 
+    /// <summary>
+    /// AI 提案落地时把「按哪一列数张数」真接到拼版上（第 40 棒补）。
+    /// <para>用户实测：AI 问了「是否将 x 列设为张数」、答了「是」，预览仍是每行一张——因为提案只把那一列
+    /// 记在 <c>Readout.QtyColumn</c> 上（够拼那五行摘要里的「预览:31个,155张」），却没接到这里的展开列，
+    /// 拼版引擎仍按默认的「沿用数据件号」一行出一张。这就是他说的「权限接口没给到 AI」。</para>
+    /// <para>切表会重建展开列候选并把展开列复位，所以这一步必须在切表与字段绑定都落完之后调用。
+    /// 表里找不到那一列（切表后列名变了）就如实说没接上，不猜一列——猜错就是数错张数、印错货。</para>
+    /// </summary>
+    /// <returns>一句人话：接上了 / 没接上（表里没这一列）；header 为空返回空串（调用方不必显示）。</returns>
+    public string ApplyQtyColumn(string? header)
+    {
+        if (string.IsNullOrWhiteSpace(header)) return string.Empty;
+        var match = ExpandColumnOptions.FirstOrDefault(o => o.Value == header);
+        if (match is null)
+            return $"「按哪一列数张数」没接上：表里找不到「{ColumnLabel.SingleLine(header)}」这一列，你在 ④ 步自己点一列";
+        // 先选列再换档：选列时还是默认档（展开列被忽略，重算一遍无害），换到「按张数展开」再重算才真按那一列展开。
+        SelectedExpandColumn = match;
+        Mode = NumberingMode.ExpandByCartonTotal;
+        return $"已按「{ColumnLabel.SingleLine(header)}」这一列数张数（一行写几张就出几张整张纸）";
+    }
+
     public NumberingMode Mode
     {
         get => _mode;

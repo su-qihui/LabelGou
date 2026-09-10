@@ -346,11 +346,11 @@ public class AiChangeTests
     [Fact]
     public void 货号列里带星号_模型没问软件也替你问()
     {
-        // 第 40 棒起第一步（读表）就会问这条，那时候还没有版式；这里给的是第二步那种带 rows 的回包，
-        // 钉的是「模型自己没问时软件补问」这半边，两步都一样。
-        const string json = """{ "rows": [ { "content": "ITEM No: {{col:ITEM NO}}" } ] }""";
+        // 第 40 棒起提问归**第一步（读表）**：软件兜底那条「* 号」只在读表阶段补问，
+        // 那时还没有版式，而排版阶段一律不提问。这里钉的是「模型自己没问时软件补问」这半边。
+        const string json = """{ "headerRow": 1 }""";
 
-        var p = AiSheetProposal.Parse(json, StarColumns, 13, AiProposalStage.Layout, null);
+        var p = AiSheetProposal.Parse(json, StarColumns, 13, AiProposalStage.Read, null);
 
         var q = Assert.Single(p.Questions);
         Assert.Equal(AiSheetQuestion.ActionItemNoTail, q.Action);
@@ -361,14 +361,14 @@ public class AiChangeTests
     [Fact]
     public void 模型自己问过了就不重复问()
     {
+        // 读表阶段（提问归这一步）：模型已经问过 * 号那条，软件就不再叠加一条同样的。
         const string json = """
             {
-              "rows": [ { "content": "ITEM No: {{col:ITEM NO}}" } ],
               "questions": [ { "text": "货号里*号要不要保留", "action": "itemno-tail" } ]
             }
             """;
 
-        var p = AiSheetProposal.Parse(json, StarColumns, 13, AiProposalStage.Layout, null);
+        var p = AiSheetProposal.Parse(json, StarColumns, 13, AiProposalStage.Read, null);
 
         Assert.Single(p.Questions);     // 只留模型问的那一条，不叠加成两条
     }
