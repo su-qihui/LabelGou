@@ -90,15 +90,22 @@ public sealed class AiChatPanel : UserControl
         IsReadOnly = true,
         AcceptsReturn = true,
         TextWrapping = TextWrapping.Wrap,
-        VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-        // 第 31 棒：横向也留一条。WPF 的 Wrap **不会在"单词"中间断行**，而对话里会出现不可断的长 token
-        // （端点 URL、报错里的地址）——那种行会超出可视宽度**再也看不到**。Wrap + 横向 Auto 只为这种行给滚动条，
-        // 正常换行时它不出现（用户 2026-09-10：「上面的字被挤出去看不见，往上滚也不行」）。
+        // 自己不再滚：整块内容由 _contentScroll 统一滚（第 33 棒），两层滚动条会让人不知道该拖哪一条。
+        VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
+        // 横向留着：WPF 的 Wrap **不会在"单词"中间断行**，不可断的长 token（端点 URL、报错里的地址）会超出可视宽度
+        // 再也看不到。Wrap + 横向 Auto 只为这种行给滚动条，正常换行时它不出现（用户 2026-09-10：「滚也不行」）。
         HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
         FontSize = 13,
         MinHeight = 160,
         Margin = new Thickness(0, 0, 0, 6),
     };
+
+    /// <summary>
+    /// 中间那一整块内容（对话 + 思考 + 问题 + 改动卡）的滚动区（第 33 棒重做）。
+    /// <para>新内容进来要把它带进视野：对话行滚到底、改动卡片直接 BringIntoView——
+    /// 否则"它明明回了"和"它就是没看见"永远分不清（用户报了三次的就是这件事）。</para>
+    /// </summary>
+    private ScrollViewer? _contentScroll;
     private readonly TextBox _input = new()
     {
         AcceptsReturn = true,
@@ -304,8 +311,8 @@ public sealed class AiChatPanel : UserControl
         var root = new Grid();
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });                        // 0：拖拽握把（拆窗 / 吸附的唯一手势入口）
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });                        // 1：通道行
-        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });    // 2：对话区（唯一可变的那块）
-        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });                        // 3：附图状态
+        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });    // 2：内容区（对话 + 思考 + 问题 + 卡片，整块可滚）
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });                        // 3：空（内容区吃掉了它，保留行号免得下面几行的号要全改）
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });                        // 4：一排按钮（聊天 + 排版）
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });                        // 5：输入框与一行脚注
 
@@ -338,8 +345,7 @@ public sealed class AiChatPanel : UserControl
                       "没经你核对的值一律不进打印。打印走的还是 ⑤ 那一条命令与复核闸门。",
         };
 
-        Grid.SetRow(_transcript, 2);
-        root.Children.Add(_transcript);
+        // 对话区不单独挂了：它和下面那块（思考/问题/卡片）**同住一个滚动区**，见下面 _contentScroll。
 
         Grid.SetRow(_waitLine, 3);
         // 等的那一句、附图那一行、逐条问题同一格堆着：窄栏里多一行固定高就是从对话区扣一块，StackPanel 只在需要时占高。
@@ -364,16 +370,25 @@ public sealed class AiChatPanel : UserControl
         // 「输出结果存在下面遮挡看不到」。修法：给它**封顶 + 自己滚**（上限跟面板高度走，见下面的 SizeChanged），
         // 让对话区（唯一的 Star 行）去吸收剩余高度 —— 这样按钮与输入框**仍然钉在底部**。
         // 为什么不做"整页滚"：那会把输入框也滚走，手感更差；"上划能看见"这个目的，这一块自己滚已经达到。
-        var statusScroll = new ScrollViewer
+        // ───────── 内容区：对话 + 思考 + 问题 + 卡片，**整块一个滚动**（第 33 棒重做） ─────────
+        // 用户 2026-09-10 报了三次「上面的内容被下面的 UI 遮挡、看不到」：
+        // 前两次我都在局部打补丁（① 横向裁切 → 修窗口重夹；② 给状态块封顶 + 自己滚），**都没解决根本**。
+        // 根因是这一块的结构：对话区是唯一的 Star 行，而下面那几行（按钮/输入框/脚注）是 Auto——
+        // 一旦内容比面板高，Star 行就被压到 MinHeight，多出来的部分被裁掉，而**面板本身不会滚**。
+        // 现在改成聊天软件那种形状：**中间一整块内容自己滚，底部那一排（按钮 + 输入框）钉住不动**。
+        // 于是"看不到的东西"在物理上不存在了——凡是有内容的都在这个滚动区里。
+        var content = new StackPanel();
+        content.Children.Add(_transcript);
+        content.Children.Add(status);
+        _contentScroll = new ScrollViewer
         {
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,   // 横向不滚：内容自己换行（第 31 棒那条教训）
+            Content = content,
         };
-        statusScroll.Content = status;
-        Grid.SetRow(statusScroll, 3);
-        root.Children.Add(statusScroll);
-        // 上限 = 面板高的 45%（至少 150）：面板高时它多露几行，面板矮时它自己滚，两种情况都不顶掉下面的东西。
-        SizeChanged += (_, _) => statusScroll.MaxHeight = Math.Max(150, ActualHeight * 0.45);
+        Grid.SetRow(_contentScroll, 2);
+        Grid.SetRowSpan(_contentScroll, 2);      // 顺带吃掉原来"附图状态"那一行的位置
+        root.Children.Add(_contentScroll);
 
         // 两排按钮合成一排 WrapPanel：窄的时候自己换行，不再固定吃掉两行高。
         var buttons = new WrapPanel { Margin = new Thickness(0, 0, 0, 2) };
@@ -525,7 +540,7 @@ public sealed class AiChatPanel : UserControl
     private void AppendRaw(string text)
     {
         _transcript.AppendText(text + Environment.NewLine);
-        _transcript.ScrollToEnd();
+        ScrollTranscriptToEnd();
     }
 
     /// <summary>把最后一行换掉（只给 <see cref="AppendNotice"/> 用：同一句只占一行，次数就地更新）。</summary>
@@ -534,7 +549,21 @@ public sealed class AiChatPanel : UserControl
         var all = _transcript.Text.TrimEnd('\r', '\n');
         var cut = all.LastIndexOf('\n');
         _transcript.Text = (cut < 0 ? string.Empty : all.Substring(0, cut + 1)) + line + Environment.NewLine;
-        _transcript.ScrollToEnd();
+        ScrollTranscriptToEnd();
+    }
+
+    /// <summary>
+    /// 让**刚追加的那一行**露出来（第 33 棒）。
+    /// <para>为什么不是 <c>_contentScroll.ScrollToEnd()</c>：整块内容里对话区在上面、思考/卡片在下面，
+    /// "滚到最底"看到的是卡片那一块，刚写的那行反而在视野上方之外。
+    /// 所以按"对话区底边那一点"去 BringIntoView——这才是聊天软件里"新消息自己滚出来"的手感。</para>
+    /// <para>文本框自己不再滚（<c>VerticalScrollBarVisibility=Disabled</c>），它被外层无限高测量，
+    /// 于是它会长到全文高度，这一句就是唯一在动的滚动。</para>
+    /// </summary>
+    private void ScrollTranscriptToEnd()
+    {
+        if (_transcript.ActualHeight <= 0) return;
+        _transcript.BringIntoView(new Rect(0, Math.Max(0, _transcript.ActualHeight - 1), 1, 1));
     }
 
     private void SetBusy(bool busy)
@@ -1192,6 +1221,9 @@ public sealed class AiChatPanel : UserControl
             yes.Click += (_, _) => AnswerChange(proposal, change, true, answer, no, yes);
             _changes.Children.Add(block);
         }
+        // 卡片出来了就把它带进视野（第 33 棒）：它在整块内容的下半部分，
+        // 不主动露出来的话人只看到一屏日志，还以为"它没给方案"（用户报了三次的就是这类）。
+        _changes.BringIntoView();
         return true;
     }
 
