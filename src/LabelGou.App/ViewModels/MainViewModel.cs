@@ -1452,9 +1452,16 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         var data = _data;
         if (data is null) return null;
         var columns = TablePortrait.Build(data, _working);
+        // 第 31 棒：把「哪几块的字长得跟别处不一样」也递过去——这是字号/粗体/居中的**唯一依据**。
+        // 用户 2026-09-10 实测指出「AI 排版效果差，差在字体大小」，并自己判断出根因是「AI 读不到表格中
+        // 字体、粗细、居中」；确实如此（styles.xml 以前只用来看日期与小数位）。CSV 没有格式可言，跳过。
+        var ext = Path.GetExtension(SourcePath ?? string.Empty).ToLowerInvariant();
+        IReadOnlyList<string>? formats = ext is ".xlsx" or ".xlsm"
+            ? XlsxTableReader.DescribeCellFormats(SourcePath!, SelectedSheet)
+            : null;
         // 前导批注行与贴图也一并摊出去（第 20 棒）：纸规常写在表头以上，样张常贴在右侧，
         // 不递过去模型就只能凭列名猜，而用户 2026-09-09 定的主路径是「AI 自己看这张表」。
-        return (columns, TablePortrait.Describe(columns, data.RowCount, data.Preamble, data.Images));
+        return (columns, TablePortrait.Describe(columns, data.RowCount, data.Preamble, data.Images, formats));
     }
 
     /// <summary>这张表里贴着的图（模板截图 / 效果照片）。CSV 与没图的表是空表。</summary>

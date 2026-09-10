@@ -670,9 +670,17 @@ public partial class MainWindow : Window
             {
                 if (proposal.Layout is not { } tailSpec)
                     return (false, "它这次没给出模板内容，这一条改不了——先让版式出来（再读一次表，或点「让 AI 出一版排版」），出来后再点这条。");
-                var header = _viewModel.ColumnBoundToField(LabelGou.Core.Marks.MarkFieldKey.ItemNo);
+                // 第 31 棒修回归：AI 模式下导入后**不先绑定字段**（第 30 棒），而这一条原来只认"已绑定的货号列"
+                // → 一律报「没连上字段」，用户点了「去掉 *16」什么都不会发生（2026-09-10 真机截图里那句
+                // 「没办成：这张表里货号那一列没连上字段」就是这里）。
+                // 正解：**优先用它自己刚报的绑定**（proposal.Mappings 里的货号列——它明明已经说了"第1列是货号"），
+                // 再退回已绑字段。两条都没有才报错，且如实说清下一步。
+                var header = proposal.Mappings
+                                 .FirstOrDefault(m => m.Field == LabelGou.Core.Marks.MarkFieldKey.ItemNo)?.ColumnHeader
+                             ?? _viewModel.ColumnBoundToField(LabelGou.Core.Marks.MarkFieldKey.ItemNo);
                 if (string.IsNullOrWhiteSpace(header))
-                    return (false, "这张表里货号那一列没连上字段，我不知道该改哪一行（去 ② 连接字段里先连上）。");
+                    return (false, "不知道货号是表里哪一列，这一条改不了：先在面板上把「字段绑定：货号/款号」那条卡点 ✅，"
+                        + "或者去 ② 连接字段里手工连上，然后再点这条。");
                 var colToken = "{{col:" + header + "}}";
                 var changed = 0;
                 foreach (var row in tailSpec.Rows)

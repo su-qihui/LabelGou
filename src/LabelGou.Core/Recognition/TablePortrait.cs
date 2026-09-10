@@ -115,7 +115,8 @@ public static class TablePortrait
         IReadOnlyList<ColumnPortrait> columns,
         int rowCount,
         IReadOnlyList<IReadOnlyList<string>>? preamble,
-        IReadOnlyList<SheetImage>? images)
+        IReadOnlyList<SheetImage>? images,
+        IReadOnlyList<string>? cellFormats = null)
     {
         if (columns is null || columns.Count == 0) return "（这张表一列都没读出来）";
         var sb = new System.Text.StringBuilder();
@@ -147,6 +148,17 @@ public static class TablePortrait
                 if (!cells.Any()) continue;
                 sb.Append("  - 原表第 ").Append(i + 1).Append(" 行：").Append(string.Join(" ｜ ", cells)).Append('\n');
             }
+        }
+
+        // 第 31 棒：哪几块的字**长得跟别处不一样**（字号/粗体/居中）。
+        // 用户 2026-09-10 自己判断出「AI 读不到表格中字体,粗细,居中等」——确实如此，以前一个字都没读。
+        // 而表里那块"抄标签"的样例（哪行加粗、哪行大、哪行居中）正是"标签该长什么样"的唯一依据，
+        // 没有它，AI 只能凭空猜字号（用户的原话就是「AI 排版效果差，差在字体大小」）。
+        if (cellFormats is { Count: > 0 })
+        {
+            sb.Append("这张表里有几块的字长得跟同一列其他格不一样")
+              .Append("（这就是「标签上那些字该多大、要不要加粗、居不居中」的依据，照它排）：\n");
+            foreach (var line in cellFormats) sb.Append("  - ").Append(line).Append('\n');
         }
 
         if (images is { Count: > 0 })

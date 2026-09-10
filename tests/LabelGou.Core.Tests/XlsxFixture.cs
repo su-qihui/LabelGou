@@ -21,7 +21,9 @@ internal static class XlsxFixture
         IReadOnlyList<string>? unitSuffixCells = null,          // s=5 自定义 numFmtId 165 = #,##0"mm"
         IReadOnlyList<string>? unitPcsCells = null,             // s=6 自定义 numFmtId 166 = 0"pcs"
         bool rowsWithoutNumbers = false,                        // row 元素省略 r 属性(极简生成器写法)
-        string sheetName = "Sheet1")
+        string sheetName = "Sheet1",
+        IReadOnlyList<string>? bigBoldCells = null,             // s=7 14pt 粗体 居中（第 31 棒：给字号那条链用）
+        IReadOnlyList<string>? smallCells = null)               // s=8 10pt 常规 左对齐
     {
         using var memory = new MemoryStream();
         using (var archive = new ZipArchive(memory, ZipArchiveMode.Create, leaveOpen: true))
@@ -36,7 +38,7 @@ internal static class XlsxFixture
             Write(archive, "xl/worksheets/sheet1.xml",
                 Sheet(rows, sharedStrings, merges, dateCells, decimalCells,
                     twoDecimalBuiltinCells, thousandBuiltinCells, unitSuffixCells, unitPcsCells,
-                    rowsWithoutNumbers));
+                    rowsWithoutNumbers, bigBoldCells, smallCells));
         }
         return memory.ToArray();
     }
@@ -60,7 +62,9 @@ internal static class XlsxFixture
         IReadOnlyList<string>? thousandBuiltinCells,
         IReadOnlyList<string>? unitSuffixCells,
         IReadOnlyList<string>? unitPcsCells,
-        bool rowsWithoutNumbers)
+        bool rowsWithoutNumbers,
+        IReadOnlyList<string>? bigBoldCells,
+        IReadOnlyList<string>? smallCells)
     {
         var dateSet = new HashSet<string>(dateCells ?? Array.Empty<string>(), StringComparer.OrdinalIgnoreCase);
         var decSet = new HashSet<string>(decimalCells ?? Array.Empty<string>(), StringComparer.OrdinalIgnoreCase);
@@ -68,6 +72,8 @@ internal static class XlsxFixture
         var thousandSet = new HashSet<string>(thousandBuiltinCells ?? Array.Empty<string>(), StringComparer.OrdinalIgnoreCase);
         var unitSet = new HashSet<string>(unitSuffixCells ?? Array.Empty<string>(), StringComparer.OrdinalIgnoreCase);
         var unitPcsSet = new HashSet<string>(unitPcsCells ?? Array.Empty<string>(), StringComparer.OrdinalIgnoreCase);
+        var bigBoldSet = new HashSet<string>(bigBoldCells ?? Array.Empty<string>(), StringComparer.OrdinalIgnoreCase);
+        var smallSet = new HashSet<string>(smallCells ?? Array.Empty<string>(), StringComparer.OrdinalIgnoreCase);
 
         var sb = new StringBuilder();
         sb.Append("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>");
@@ -89,6 +95,8 @@ internal static class XlsxFixture
                     : thousandSet.Contains(reference) ? " s=\"4\""
                     : unitSet.Contains(reference) ? " s=\"5\""
                     : unitPcsSet.Contains(reference) ? " s=\"6\""
+                    : bigBoldSet.Contains(reference) ? " s=\"7\""
+                    : smallSet.Contains(reference) ? " s=\"8\""
                     : string.Empty;
 
                 if (value.StartsWith("s:", StringComparison.Ordinal) && sharedStrings is not null)
@@ -167,8 +175,8 @@ internal static class XlsxFixture
         <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
         <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
           <numFmts count="3"><numFmt numFmtId="164" formatCode="0.00"/><numFmt numFmtId="165" formatCode="#,##0&quot;mm&quot;"/><numFmt numFmtId="166" formatCode="0&quot;pcs&quot;"/></numFmts>
-          <fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts>
-          <cellXfs count="7">
+          <fonts count="3"><font><sz val="11"/><name val="Calibri"/></font><font><sz val="14"/><b/><name val="Calibri"/></font><font><sz val="10"/><name val="Calibri"/></font></fonts>
+          <cellXfs count="9">
             <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
             <xf numFmtId="14" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>
             <xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>
@@ -176,6 +184,8 @@ internal static class XlsxFixture
             <xf numFmtId="3" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>
             <xf numFmtId="165" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>
             <xf numFmtId="166" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>
+            <xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"><alignment horizontal="center"/></xf>
+            <xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0" applyFont="1"><alignment horizontal="left"/></xf>
           </cellXfs>
         </styleSheet>
         """;

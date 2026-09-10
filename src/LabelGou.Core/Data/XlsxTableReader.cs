@@ -47,9 +47,132 @@ public static class XlsxTableReader
 
         var sharedStrings = ReadSharedStrings(zip);
         var styleInfo = ReadStyles(zip);
-        var (rowsByIndex, maxCol) = ReadSheetCells(zip, target.EntryPath, sharedStrings, styleInfo);
+        var (rowsByIndex, maxCol, _) = ReadSheetCells(zip, target.EntryPath, sharedStrings, styleInfo);
 
         return Materialize(rowsByIndex, maxCol);
+    }
+
+    /// <summary>
+    /// 「这张表里哪几块的字长得跟别处不一样」——字号 / 粗体 / 居中的依据（第 31 棒）。
+    /// <para><strong>为什么要有它</strong>：用户 2026-09-10 真机实测指出「AI 排版效果差，差在字体大小」，
+    /// 并且自己判断出了根因——*"可能存在问题原因 AI 读不到表格中字体,粗细,居中等"*。<strong>确实如此</strong>：
+    /// 在这之前 <c>styles.xml</c> 只被用来认日期与小数位，字体、粗体、对齐一个字都没读。
+    /// 而表里那块"抄标签"的样例（哪行加粗、哪行大、哪行居中）**正是"标签该长什么样"的唯一依据**，
+    /// 不读它，AI 只能凭空猜字号。</para>
+    /// <para>口径：**只报跟同一列主流格式不一样的格子**（按列归并成几行）。理由是别的写法没法用——
+    /// 逐格流水账会把画像淹掉，而且真表里"整列都是 11pt"这种默认格式报出来纯属噪音。
+    /// 拿不准（文件读不了、没有样式表）就返回空，**不编**。</para>
+    /// </summary>
+    /// <param name="filePath">xlsx 路径（CSV 没有格式可言，调用方不该走到这里）。</param>
+    /// <param name="sheetName">工作表名；null = 第一个。</param>
+    public static IReadOnlyList<string> DescribeCellFormats(string filePath, string? sheetName = null)
+    {
+        try
+        {
+            using var zip = ZipFile.OpenRead(filePath);
+            var sheets = ReadWorkbook(zip);
+            if (sheets.Count == 0) return Array.Empty<string>();
+            var target = sheetName is null
+                ? sheets[0]
+                : sheets.FirstOrDefault(s => string.Equals(s.Name, sheetName, StringComparison.OrdinalIgnoreCase))
+                  ?? sheets[0];
+
+            var styles = ReadStyles(zip);
+            if (styles.Fonts.Count == 0 && styles.CellXfAligns.Count == 0) return Array.Empty<string>();
+
+            var sharedStrings = ReadSharedStrings(zip);
+            var (rows, maxCol, stylesUsed) = ReadSheetCells(zip, target.EntryPath, sharedStrings, styles);
+            if (stylesUsed.Count == 0) return Array.Empty<string>();
+
+            // 每列一格一格排好（行序），标出它的格式；再找这一列的"主流格式"当基准。
+            var byColumn = new SortedDictionary<int, List<(int Row, (double Size, bool Bold, string? Align)? Format)>>();
+            foreach (var ((row, col), styleIndex) in stylesUsed)
+            {
+                if (!byColumn.TryGetValue(col, out var list))
+                {
+                    list = new List<(int, (double, bool, string?)?)>();
+                    byColumn[col] = list;
+                }
+                list.Add((row, styles.FormatOf(styleIndex)));
+            }
+
+            var lines = new List<string>();
+            foreach (var (col, cells) in byColumn)
+            {
+                cells.Sort((a, b) => a.Row.CompareTo(b.Row));
+                // 只在这列**真有格式**时才说话：全是默认格式的列没什么可报的。
+                // 基准取"这一列里非默认格式中最常见的那个"——为什么不把"默认"也算进候选：
+                // 表头那一格通常是默认格式，混进来会让"表头跟明细不一样"变成一条噪音（实测踩到过）。
+                var formatted = cells.Where(c => c.Format is not null).ToList();
+                if (formatted.Count == 0) continue;
+                var dominant = formatted
+                    .GroupBy(c => Describe(c.Format))
+                    .OrderByDescending(g => g.Count())
+                    .First().Key;
+
+                // 把连续同格式的格子并成一段，只报与主流不同的段。
+                for (var i = 0; i < formatted.Count; i++)
+                {
+                    var text = Describe(formatted[i].Format);
+                    if (string.Equals(text, dominant, StringComparison.Ordinal)) continue;
+                    var start = formatted[i].Row;
+                    var end = start;
+                    var j = i;
+                    while (j + 1 < formatted.Count
+                           && string.Equals(Describe(formatted[j + 1].Format), text, StringComparison.Ordinal)
+                           && formatted[j + 1].Row == formatted[j].Row + 1)
+                    {
+                        j++;
+                        end = formatted[j].Row;
+                    }
+                    i = j;
+                    var where = start == end ? $"第 {start + 1} 行" : $"第 {start + 1}~{end + 1} 行";
+                    lines.Add($"{ColumnName(col)} 列{where}：{text}（这一列其余格是{dominant}）");
+                    if (lines.Count >= MaxFormatLines)
+                    {
+                        lines.Add($"（还有更多格式差异，只列了前 {MaxFormatLines} 处）");
+                        return lines;
+                    }
+                }
+            }
+            return lines;
+
+            static string Describe((double Size, bool Bold, string? Align)? format)
+            {
+                if (format is not { } f) return "默认（跟工作簿一样）";
+                var parts = new List<string>();
+                if (f.Size > 0) parts.Add($"{f.Size:0.#}pt");
+                parts.Add(f.Bold ? "粗体" : "常规");
+                if (!string.IsNullOrEmpty(f.Align)) parts.Add(AlignText(f.Align!));
+                return string.Join(" ", parts);
+            }
+
+            static string AlignText(string align) => align switch
+            {
+                "center" => "居中",
+                "centerContinuous" => "跨列居中",
+                "right" => "右对齐",
+                "left" => "左对齐",
+                "justify" => "两端对齐",
+                _ => align,
+            };
+        }
+        catch (Exception)
+        {
+            // 格式读不出来不该挡主流程：画像少这一段，AI 照旧按文字排（顶多字号回到"猜"）。
+            return Array.Empty<string>();
+        }
+    }
+
+    /// <summary>格式差异最多报几处（多了等于没有，而且会把画像淹掉）。</summary>
+    private const int MaxFormatLines = 8;
+
+    /// <summary>列号 → 列名（0→A）。</summary>
+    private static string ColumnName(int col)
+    {
+        var name = string.Empty;
+        for (var c = col; c >= 0; c = c / 26 - 1) name = (char)('A' + c % 26) + name;
+        return name;
     }
 
     // ---------- workbook ----------
@@ -308,6 +431,15 @@ public static class XlsxTableReader
         /// <summary>自定义 numFmtId → formatCode。</summary>
         public Dictionary<int, string> CustomFormats { get; } = new();
 
+        /// <summary>fonts 顺序 → (字号磅, 是否粗体)。第 31 棒加：以前只读数字格式，字体一个字没读。</summary>
+        public List<(double SizePt, bool Bold)> Fonts { get; } = new();
+
+        /// <summary>cellXfs 索引 → fontId。</summary>
+        public List<int> CellXfFontIds { get; } = new();
+
+        /// <summary>cellXfs 索引 → 水平对齐（<c>center</c>/<c>left</c>/<c>right</c>；没写就是 null）。</summary>
+        public List<string?> CellXfAligns { get; } = new();
+
         public bool IsDateStyle(int styleIndex)
         {
             var fmtId = StyleToNumFmt(styleIndex);
@@ -320,6 +452,21 @@ public static class XlsxTableReader
             var fmtId = StyleToNumFmt(styleIndex);
             if (CustomFormats.TryGetValue(fmtId, out var code)) return CountDecimals(code);
             return BuiltinDecimalPlaces(fmtId);
+        }
+
+        /// <summary>
+        /// 这一格的**可见格式**：字号、粗体、水平对齐（第 31 棒）。
+        /// <para>返回 null = 跟工作簿默认一个样（fontId 是默认那个、也没单独设对齐），不必上报——
+        /// 否则每张表都会刷出一屏"11pt 常规"，把真正要紧的那几格淹掉。</para>
+        /// </summary>
+        public (double SizePt, bool Bold, string? Align)? FormatOf(int styleIndex)
+        {
+            if (styleIndex < 0 || styleIndex >= CellXfFontIds.Count) return null;
+            var fontId = CellXfFontIds[styleIndex];
+            var align = styleIndex < CellXfAligns.Count ? CellXfAligns[styleIndex] : null;
+            if (fontId <= 0 && align is null) return null;                 // 全默认
+            var (size, bold) = fontId >= 0 && fontId < Fonts.Count ? Fonts[fontId] : (0d, false);
+            return (size, bold, align);
         }
 
         private int StyleToNumFmt(int styleIndex)
@@ -343,12 +490,27 @@ public static class XlsxTableReader
             if (id > 0 && !string.IsNullOrEmpty(code)) info.CustomFormats[id] = code;
         }
 
+        // 第 31 棒：字体表（字号 + 粗体）。用户 2026-09-10 自己判断出「AI 读不到表格中字体、粗细、居中」——
+        // 而表里那块"抄标签"的样例（哪行加粗、哪行大）正是模板该长什么样的唯一依据。
+        var fonts = doc.Descendants(Main + "fonts").FirstOrDefault();
+        if (fonts is not null)
+        {
+            foreach (var font in fonts.Elements(Main + "font"))
+            {
+                var size = ParseDouble((string?)font.Element(Main + "sz")?.Attribute("val"), 0);
+                var bold = font.Element(Main + "b") is not null;
+                info.Fonts.Add((size, bold));
+            }
+        }
+
         var cellXfs = doc.Descendants(Main + "cellXfs").FirstOrDefault();
         if (cellXfs is not null)
         {
             foreach (var xf in cellXfs.Elements(Main + "xf"))
             {
                 info.CellXfNumFmtIds.Add(ParseInt((string?)xf.Attribute("numFmtId"), 0));
+                info.CellXfFontIds.Add(ParseInt((string?)xf.Attribute("fontId"), 0));
+                info.CellXfAligns.Add((string?)xf.Element(Main + "alignment")?.Attribute("horizontal"));
             }
         }
         return info;
@@ -426,7 +588,7 @@ public static class XlsxTableReader
 
     // ---------- worksheet ----------
 
-    private static (Dictionary<int, Dictionary<int, string>> Rows, int MaxCol) ReadSheetCells(
+    private static (Dictionary<int, Dictionary<int, string>> Rows, int MaxCol, Dictionary<(int Row, int Col), int> Styles) ReadSheetCells(
         ZipArchive zip, string entryPath, List<string> sharedStrings, StyleInfo styles)
     {
         var entry = FindEntry(zip, entryPath) ?? FindEntry(zip, "xl/worksheets/sheet1.xml");
@@ -434,6 +596,8 @@ public static class XlsxTableReader
 
         var rows = new Dictionary<int, Dictionary<int, string>>();
         var maxCol = -1;
+        // 第 31 棒：格子 → 样式下标（只有"哪块字长得不一样"要它，见 DescribeCellFormats）。
+        var stylesUsed = new Dictionary<(int Row, int Col), int>();
         // 合并单元格：锚点值稍后传播到整个区域
         var merges = new List<(int MinRow, int MinCol, int MaxRow, int MaxCol)>();
 
@@ -469,6 +633,8 @@ public static class XlsxTableReader
                 bucket ??= new Dictionary<int, string>();
                 bucket[colIndex] = value;
                 if (colIndex > maxCol) maxCol = colIndex;
+                // 第 31 棒：样式下标顺手留在旁边（原来它是用完就丢的）——"这块字长得不一样"要有据可查。
+                stylesUsed[(rowIndex, colIndex)] = styleIndex;
             }
 
             if (bucket is { Count: > 0 }) rows[rowIndex] = bucket;
@@ -504,7 +670,7 @@ public static class XlsxTableReader
             }
         }
 
-        return (rows, maxCol);
+        return (rows, maxCol, stylesUsed);
     }
 
     private static string ExtractCellValue(
@@ -643,6 +809,9 @@ public static class XlsxTableReader
 
     private static int ParseInt(string? text, int fallback)
         => int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var v) ? v : fallback;
+
+    private static double ParseDouble(string? text, double fallback)
+        => double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var v) ? v : fallback;
 
     /// <summary>"AB12" → 列号 0 起（A=0，Z=25，AA=26）。</summary>
     private static int ColumnOf(string cellRef)
