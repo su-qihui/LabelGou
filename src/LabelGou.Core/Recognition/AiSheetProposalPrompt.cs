@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 using LabelGou.Core.Marks;
 
 namespace LabelGou.Core.Recognition;
@@ -36,9 +36,19 @@ public static class AiSheetProposalPrompt
         int rawRowCount,
         int detectedHeaderRow,
         string currentLabelSizeText,
-        int imageCount)
+        int imageCount,
+        IReadOnlyList<string>? decisions = null)
     {
         var sb = new StringBuilder();
+        // 第 35 棒：**老板拍过板的决定必须回到模型手里**（这就是他要的"将信息回馈给你"）。
+        // 以前提案那条路一个字的上下文都不带，于是他答完问题，模型下一轮看到的还是原来那张表那句话——
+        // "选择了也是无效的"就是这么来的。
+        if (decisions is { Count: > 0 })
+        {
+            sb.Append("**老板已经就下面这些拍过板了（照这些来，不要再问一遍，也不要再按相反的做）：**\n");
+            foreach (var d in decisions.Take(12)) sb.Append("  - ").Append(d).Append('\n');
+            sb.Append('\n');
+        }
         sb.Append("任务：看下面这张表，给出「每一列是什么字段、这张表该怎么切、这张纸该怎么摆」的提案。\n\n");
         sb.Append(portrait).Append('\n');
         sb.Append("\n原表一共 ").Append(rawRowCount).Append(" 行；软件目前把表头猜在第 ")

@@ -381,4 +381,29 @@ public class AiChangeTests
 
         Assert.Empty(p.Questions);
     }
+
+    // ───────── 他的决定要真的回到模型手里（第 35 棒：用户说"选择了也是无效的"） ─────────
+
+    [Fact]
+    public void 老板拍过板的决定会写进提示词()
+    {
+        // 根因钉在这里：提案那条路原来只发 [system, user]，一个字的上下文都不带 ——
+        // 于是他答完问题，模型下一轮看到的还是原来那张表那句话，"答了等于没答"。
+        var prompt = AiSheetProposalPrompt.Build(
+            "整张表 12 行 × 3 列", new[] { "A4 底纸" }, 12, 1, "140×100 mm", 0,
+            decisions: new[] { "货号里 * 号后面那截要不要印？ → 不用", "件数末尾总数 155 要不要印？ → 不需要" });
+
+        Assert.Contains("老板已经就下面这些拍过板", prompt);
+        Assert.Contains("货号里 * 号后面那截要不要印？ → 不用", prompt);
+        Assert.Contains("不要再问一遍", prompt);
+    }
+
+    [Fact]
+    public void 没有决定时不写那一节_少占字()
+    {
+        var prompt = AiSheetProposalPrompt.Build(
+            "整张表 12 行 × 3 列", new[] { "A4 底纸" }, 12, 1, "140×100 mm", 0);
+
+        Assert.DoesNotContain("老板已经就下面这些拍过板", prompt);
+    }
 }

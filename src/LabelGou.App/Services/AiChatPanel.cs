@@ -170,6 +170,26 @@ public sealed class AiChatPanel : UserControl
     /// </summary>
     private readonly StackPanel _changes = new() { Visibility = Visibility.Collapsed };
 
+    /// <summary>
+    /// **老板拍过板的决定**（第 35 棒）：一条一件，跨轮累积，每一轮请求都带上。
+    /// <para>为什么单独存一份而不是只用会话历史：提案与排版那两条路**原来一个字的上下文都不带**，
+    /// 于是他答完问题、模型下一轮看到的还是原来那张表那句话——"选择了也是无效的"就是这么来的。
+    /// 单独成节还省 token，也不会被闲聊稀释。</para>
+    /// </summary>
+    private readonly List<string> _decisions = new();
+
+    /// <summary>这一轮提案里他已经答了几条问题（答满就自动重出一版）。</summary>
+    private int _questionsAnswered;
+
+    /// <summary>连续自动重跑了几轮（人手点按钮会清零；封顶见 <see cref="MaxAutoReruns"/>）。</summary>
+    private int _autoReruns;
+
+    /// <summary>自动重跑的轮次上限：每轮一两分钟 + 一份 token，不许无限自动烧。</summary>
+    private const int MaxAutoReruns = 3;
+
+    /// <summary>给单测看：老板拍过的决定（"决定真的回灌给模型了"那条链的证据）。</summary>
+    public IReadOnlyList<string> Decisions => _decisions;
+
     /// <summary>这批卡是按哪一代数据算出来的（点 ✅ 之前对一遍，不等就整批作废）。</summary>
     private int _changesGeneration = -1;
     private DateTime _waitSince;
@@ -739,7 +759,7 @@ public sealed class AiChatPanel : UserControl
         RefreshChannel();
         ClearPending();
 
-        var prompt = RowLayoutPrompt.Build(ctx.Fields, ctx.WidthMm, ctx.HeightMm, ctx.Note, ctx.Portrait)
+        var prompt = RowLayoutPrompt.Build(ctx.Fields, ctx.WidthMm, ctx.HeightMm, ctx.Note, ctx.Portrait, _decisions)
             + (images.Count == 0 ? string.Empty : $"\n本条随附 {images.Count} 张图：它们是这张表里贴的效果照片/模板截图，或用户拍的样张。" +
               "版式必须照图上的行序与字面排，图上没有的行不要造，图与表格文字冲突时以图为准。");
         _lastColumns = ctx.Columns;
@@ -921,6 +941,30 @@ public sealed class AiChatPanel : UserControl
     /// </summary>
     public async Task AskProposalAsync()
     {
+        // 人手点的那颗（工具栏 / "下一步"按钮）：自动轮次清零——他自己发起的，就该重新开始算。
+        _autoReruns = 0;
+        await RunProposalAsync();
+    }
+
+    /// <summary>
+    /// **带着老板的决定再跑一轮**（第 35 棒：他要的"你收到信息后就知道怎么调整怎么做了 → 自动把排版拍出来"）。
+    /// <para>只在他把**这一轮的问题都答完**时才自动跑（答一半就跑等于白花一两分钟）；轮次有上限。</para>
+    /// </summary>
+    private async Task AskProposalFollowUpAsync()
+    {
+        if (_autoReruns >= MaxAutoReruns)
+        {
+            Append($"已经自动重出了 {MaxAutoReruns} 版，先停手（每版要一两分钟、也算一份钱，不自动烧）。"
+                 + "想接着试就点上面那颗「让 AI 重出方案（排版 + 绑定列）」。");
+            return;
+        }
+        _autoReruns++;
+        Append($"你把这一轮的问题都答完了 —— 带着你的决定重出第 {_autoReruns} 版（不满意可以撤回）。");
+        await RunProposalAsync();
+    }
+
+    private async Task RunProposalAsync()
+    {
         if (_running is not null) return;
         var ctx = GetLayoutContext?.Invoke();
         if (ctx is null)
@@ -954,7 +998,7 @@ public sealed class AiChatPanel : UserControl
         var prompt = AiSheetProposalPrompt.Build(
             ctx.Portrait ?? "（没拿到整张表画像，只有已连字段）",
             _lastSpecNames, ctx.RawRowCount, ctx.CurrentHeaderRow,
-            $"{ctx.WidthMm:0.#}×{ctx.HeightMm:0.#} mm", images.Count);
+            $"{ctx.WidthMm:0.#}×{ctx.HeightMm:0.#} mm", images.Count, _decisions);
         var payload = new List<AiChatTurn>
         {
             new(AiChatTurn.System, AiSheetProposalPrompt.SystemText),
@@ -1006,6 +1050,7 @@ public sealed class AiChatPanel : UserControl
         // 而不是编一个看起来很真的行数。
         var rawRows = _lastRawRowCount > 0 ? _lastRawRowCount : int.MaxValue;
         var proposal = AiSheetProposal.Parse(modelText, _lastColumns, rawRows, _lastSpecNames);
+        _questionsAnswered = 0;      // 新一轮的问题从 0 数起（第 35 棒：答满才自动重出）
         foreach (var note in proposal.Notes) Append($"（已修正：{note}）");
         if (proposal.Errors.Count > 0)
         {
@@ -1312,9 +1357,20 @@ public sealed class AiChatPanel : UserControl
         answer.Text = (yes ? "✅ " : "❌ ") + (yes ? q.YesLabel : q.NoLabel);
         var (ok, message) = apply(proposal, q, yes);
         Append((ok ? "已办：" : "没办成：") + message);
-        if (ok)
-            _turns.Add(new AiChatTurn(AiChatTurn.User,
-                $"【我对你这一问的决定】{q.Text} → {(yes ? q.YesLabel : q.NoLabel)}"));
+        if (!ok) return;
+
+        // 第 35 棒：他的决定要**真的回到模型手里**——下一轮请求会带上 _decisions 那一节。
+        // 以前只塞会话历史，而提案/排版那两条路**根本不读历史**，所以他答了等于没答（他自己说的
+        // 「提出问题选择了也是无效的」就是这么来的）。
+        var choice = yes ? q.YesLabel : q.NoLabel;
+        _decisions.Add($"{q.Text} → {choice}");
+        _turns.Add(new AiChatTurn(AiChatTurn.User, $"【我对你这一问的决定】{q.Text} → {choice}"));
+        _questionsAnswered++;
+
+        // 这一轮的问题都答完了 → 带着他的决定**自动重出一版**（他要的"你收到信息后就知道怎么调整
+        // 怎么做了 → 自动把排版拍出来"）。只答一半不跑，免得白花一两分钟。
+        if (proposal.Questions.Count > 0 && _questionsAnswered >= proposal.Questions.Count)
+            _ = AskProposalFollowUpAsync();
     }
 
     /// <summary>清掉待确认的东西，并把「用这个」那颗按钮的文案还回去（两种提案共用一颗按钮，文案不能错）。</summary>

@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using LabelGou.Core.Marks;
 using LabelGou.Core.Templates;
 
@@ -402,7 +402,8 @@ public static class RowLayoutPrompt
     public static string Build(
         IReadOnlyList<(string Key, string Name, string Sample)> fields,
         double widthMm, double heightMm, string? userNote,
-        string? tablePortrait = null)
+        string? tablePortrait = null,
+        IReadOnlyList<string>? decisions = null)
     {
         var sb = new System.Text.StringBuilder();
         sb.Append("你是外贸纸箱唛头排版助手。请给这张标签出行式版式：唛头 = 自上而下若干行文字，")
@@ -424,6 +425,12 @@ public static class RowLayoutPrompt
               .Append("包括大小写与冒号，不要自己翻译或改字）。\n");
             sb.Append("【取舍】样张（图）里有的行就要排；表里那些不像唛头内容的列（整列只填了一两行、")
               .Append("看着像厂商批注或纸规备注的）不要拿来印；上面没列出的列也一律不许凭空造。\n");
+        }
+        // 第 35 棒：老板拍过板的决定必须回到模型手里（"将信息回馈给你"），否则它下一版还会照旧判断。
+        if (decisions is { Count: > 0 })
+        {
+            sb.Append("\n【老板已经拍过板的决定（照这些来，不要再按相反的做）】：\n");
+            foreach (var d in decisions.Take(12)) sb.Append("  - ").Append(d).Append('\n');
         }
         sb.Append("\n只回一个 JSON 对象，不要任何解释文字、不要 Markdown 围栏。形状：\n")
           .Append("{\"name\":\"...\",\"widthMm\":").Append(widthMm.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture))

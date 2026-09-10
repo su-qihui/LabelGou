@@ -47,6 +47,17 @@ public sealed class AiProposalFlowTests : IDisposable
         }
         """;
 
+    /// <summary>带两条问题的提案（专门用来验"答满才自动重跑"）。</summary>
+    private const string TwoQuestionsJson = """
+        {
+          "facts": [ "第1列是货号" ],
+          "questions": [
+            { "text": "货号里*号和后面那截要不要印", "no": "不用", "yes": "要", "action": "itemno-tail" },
+            { "text": "件数末尾总数155要不要印", "no": "不需要", "yes": "要", "action": "row-keep", "row": 12 }
+          ]
+        }
+        """;
+
     private static AiChangeContext CurrentState() => new(
         RawRowCount: 13, HeaderRow: 1, HasHeader: true, ExcludedRows: null,
         TemplateName: "一开四 140×100", LabelWidthMm: 140, LabelHeightMm: 100,
@@ -182,5 +193,32 @@ public sealed class AiProposalFlowTests : IDisposable
         Assert.Equal(1, probe.again);
         Assert.Equal(1, probe.layout);
         Assert.Contains("没给可落地的改动", probe.text);
+    }
+
+    [Fact]
+    public void 答完这一轮的问题_会带着他的决定自动重出一版()
+    {
+        var probe = OnSta(() =>
+        {
+            var panel = new AiChatPanel { GetChangeContext = CurrentState };
+            panel.ApplyProposal = _ => (true, "已落");
+            panel.ApplyQuestion = (_, _, _) => (true, "已办");
+            // 这一版带 2 条问题（ProposalJson 只有 1 条，所以这里用专用夹具）。
+            panel.FeedProposalAnswer(TwoQuestionsJson);
+            var yes = Buttons(panel).Where(b => (b.Content as string) == "✅ 要").ToList();
+            Assert.Equal(2, yes.Count);
+            Click(yes[0]);
+            var afterOne = panel.Transcript;             // 只答一条：不该自动跑
+            Click(yes[1]);
+            return (afterOne, afterBoth: panel.Transcript, decisions: panel.Decisions);
+        });
+
+        // 他的决定进了清单（下一轮请求会带上它 —— 这条链以前是断的）
+        Assert.Equal(2, probe.decisions.Count);
+        Assert.Contains("→ 要", string.Join(" | ", probe.decisions));
+
+        // 只答一半不自动跑（省一两分钟），答满才带着决定重出一版
+        Assert.DoesNotContain("带着你的决定重出", probe.afterOne);
+        Assert.Contains("带着你的决定重出第 1 版", probe.afterBoth);
     }
 }
