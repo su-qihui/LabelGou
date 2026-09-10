@@ -37,16 +37,53 @@ public sealed class RecognitionSettings
     /// <summary>本机实测可用的视觉模型名（3.3GB）。没有它时识别会降级为纯 OCR，不报错。</summary>
     public string Model { get; set; } = "qwen3-vl:4b";
 
-    /// <summary>单次请求上限（用户填的那格）。真生效的是 <see cref="EffectiveTimeoutSeconds"/>。</summary>
+    /// <summary>单次请求上限（用户填的那格；0=不设限）。真生效的是 <see cref="EffectiveTimeoutSeconds"/>。</summary>
     public int TimeoutSeconds { get; set; } = 180;
 
     /// <summary>
-    /// 真正生效的超时：<b>10…180 秒硬顶</b>（用户 2026-09-09 定的纪律：180 秒不到就报明确失败，
-    /// 不许自动重试、不许把界面吊在一条没希望的请求上）。
-    /// <para>为什么要单独这一格：上一版请求层直接吃 <see cref="TimeoutSeconds"/>，而设置窗允许到 900——
-    /// 用户照错误文案「云端慢就把超时调大」填了 900，「读这张表」就真挂满 900 秒没回应（第 25 棒现场取证）。
-    /// 存着的 900 不改用户的文件，用的时候夹到 180。</para></summary>
-    public int EffectiveTimeoutSeconds => Math.Clamp(TimeoutSeconds, 10, 180);
+    /// 真正生效的超时：<b>0 = 不设限</b>（只靠手动停止），否则至少 10 秒。
+    /// <para>口径变迁（都写在这免得下次又翻烧饼）：第 25 棒定过 180 秒硬顶夹顶；
+    /// 同日用户实测 1 图+290 行的提案被 180 秒拦死，原话「把这个时间上限关了」——
+    /// 硬顶作废，改可关；下限 10 秒保留（比这短只剩「秒失败」假象）。死连接挂死的根因已由
+    /// 连接池 30 秒换新堵掉，不设限等到的只会是真在算的云端。</para></summary>
+    public int EffectiveTimeoutSeconds => TimeoutSeconds <= 0 ? 0 : Math.Max(10, TimeoutSeconds);
+
+    /// <summary>思考档：不设 = 跟着云端默认发（一个字都不发）。</summary>
+    public const string ThinkingAuto = "";
+
+    /// <summary>可选的思考档（设置窗下拉就这五项）。档位值是百炼 qwen3.8 系列认的 low/medium/xhigh。</summary>
+    public static readonly string[] ThinkingLevels = { ThinkingAuto, "off", "low", "medium", "xhigh" };
+
+    /// <summary>
+    /// 思考强度（第 27 棒）。百炼官方口径（2026-09-04 文档）：qwen3.8 系列 <c>reasoning_effort</c>
+    /// 只认 low/medium/xhigh（默认 xhigh，设其它值直接报错）；关思考走 <c>enable_thinking:false</c>；
+    /// <b>reasoning_effort 与 thinking_budget 同时设置会报错</b>——所以一次只发一个参数。
+    /// </summary>
+    public string Thinking { get; set; } = ThinkingAuto;
+
+    /// <summary>思考档的人话名（设置窗与通道行共用）。</summary>
+    public static string ThinkingLabel(string? level) => level switch
+    {
+        "off" => "关思考",
+        "low" => "思考 low",
+        "medium" => "思考 medium",
+        "xhigh" => "思考 xhigh",
+        _ => "思考默认（不发参数）",
+    };
+
+    /// <summary>
+    /// 把思考档注进 OpenAI 兼容请求体的顶层（HTTP 直调时这两个参数就放 body 顶层，官方文档口径）。
+    /// <para>auto 时一个字都不发：不是所有模型/网关都认这两个键，发了换来的是 400。
+    /// 本机 Ollama 那条路不走这里（旧版 ollama 不认 think 参数，不冒险）。</para></summary>
+    public void ApplyThinkingTo(Dictionary<string, object?> payload)
+    {
+        switch (Thinking?.Trim().ToLowerInvariant())
+        {
+            case "off": payload["enable_thinking"] = false; break;
+            case "low" or "medium" or "xhigh": payload["reasoning_effort"] = Thinking.Trim().ToLowerInvariant(); break;
+            default: break;   // auto 与任何陌生值：不发，陌生值不值得替它编一个请求
+        }
+    }
 
     /// <summary>
     /// 协议：<c>ollama</c> 走本机原生接口（/api/tags、/api/generate）；
@@ -186,7 +223,8 @@ public sealed class RecognitionSettings
         // 不再用预设里写死的吃图标记，而是按最终模型名猜：换成 qwen3-max 与 qwen-vl-max 待遇不同
         ModelAcceptsImages = GuessAcceptsImages(preset.Model);
         // 云端一律把超时拉到 60 秒以上：公网往返 + 排队，180 秒是个不折腾人的上限。
-        if (TimeoutSeconds < 60) TimeoutSeconds = 120;
+        // 0（不限，第 27 棒）是用户故意选的，切预设不许给他顶回 120。
+        if (TimeoutSeconds != 0 && TimeoutSeconds < 60) TimeoutSeconds = 120;
     }
 
     /// <summary>协议名。只有两个值，所以用常量而不是枚举：设置文件里要能直接看懂。</summary>

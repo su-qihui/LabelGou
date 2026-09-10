@@ -154,7 +154,9 @@ public static partial class OllamaVisionClient
         try
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancel);
-            timeout.CancelAfter(TimeSpan.FromSeconds(settings.EffectiveTimeoutSeconds));   // 180 秒硬顶（第 25 棒）
+            // 超时口径（第 27 棒）：0 = 不设限只靠手动停止；思考档不注进本机 Ollama 的 payload（旧版不认 think 参数，不冒险）。
+            var seconds = settings.EffectiveTimeoutSeconds;
+            if (seconds > 0) timeout.CancelAfter(TimeSpan.FromSeconds(seconds));
 
             using var content = new StringContent(payload, Encoding.UTF8, "application/json");
             var url = settings.Endpoint.TrimEnd('/') + "/api/generate";
@@ -206,7 +208,7 @@ public static partial class OllamaVisionClient
         catch (OperationCanceledException) when (!cancel.IsCancellationRequested)
         {
             sw.Stop();
-            return new ModelOutcome { Error = $"模型响应超时（上限 {settings.EffectiveTimeoutSeconds} 秒；180 秒是硬顶，不往大调）。要重试就人手再点一次，不自动重试。", Elapsed = sw.Elapsed };
+            return new ModelOutcome { Error = $"模型响应超时（{settings.EffectiveTimeoutSeconds} 秒没等到）。冷启动加载模型会慢，再点一次通常就快了；要重试就人手点，不自动重试。", Elapsed = sw.Elapsed };
         }
         catch (Exception ex)
         {

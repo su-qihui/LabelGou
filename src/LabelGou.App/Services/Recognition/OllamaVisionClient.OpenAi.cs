@@ -250,7 +250,7 @@ public static partial class OllamaVisionClient
             });
         }
 
-        var payload = JsonSerializer.Serialize(new Dictionary<string, object?>
+        var requestBody = new Dictionary<string, object?>
         {
             ["model"] = settings.Model,
             ["temperature"] = 0,
@@ -260,13 +260,16 @@ public static partial class OllamaVisionClient
             },
             // 不是所有云端都认这个键（百炼认、有些网关不认），所以解析端不依赖它，仍然从文本里抠 JSON。
             ["response_format"] = new Dictionary<string, object?> { ["type"] = "json_object" },
-        });
+        };
+        settings.ApplyThinkingTo(requestBody);   // 思考档（第 27 棒）：抽字段这条路同样吃思考的时间
+        var payload = JsonSerializer.Serialize(requestBody);
 
+        var seconds = settings.EffectiveTimeoutSeconds;   // 0 = 不设限（第 27 棒）
         var sw = Stopwatch.StartNew();
         try
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancel);
-            timeout.CancelAfter(TimeSpan.FromSeconds(settings.EffectiveTimeoutSeconds));   // 180 秒硬顶（第 25 棒）
+            if (seconds > 0) timeout.CancelAfter(TimeSpan.FromSeconds(seconds));
             using var request = new HttpRequestMessage(HttpMethod.Post, OpenAiUrl(settings.Endpoint, "chat/completions"))
             {
                 Content = new StringContent(payload, Encoding.UTF8, "application/json"),
@@ -317,7 +320,7 @@ public static partial class OllamaVisionClient
         catch (OperationCanceledException) when (!cancel.IsCancellationRequested)
         {
             sw.Stop();
-            return new ModelOutcome { Error = $"云端响应超时（上限 {settings.EffectiveTimeoutSeconds} 秒；180 秒是硬顶，不往大调；等不起就减图或换快模型）。要重试就人手再点一次。", Elapsed = sw.Elapsed };
+            return new ModelOutcome { Error = $"云端响应超时（{seconds} 秒没等到）。嫌慢可在设置里把思考档调 low/关掉，或把超时填 0＝不设限；要重试就人手再点一次。", Elapsed = sw.Elapsed };
         }
         catch (Exception ex)
         {

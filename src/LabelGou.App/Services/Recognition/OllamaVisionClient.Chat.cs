@@ -88,12 +88,15 @@ public static partial class OllamaVisionClient
             }
         }
 
-        // 刻意不发 response_format、不发 temperature：这是聊天，不是抽字段，套上 json_object 模型就只能回 JSON。
-        var payload = JsonSerializer.Serialize(new Dictionary<string, object?>
+        // 刻意不发 response_format、不带 temperature：这是聊天，不是抽字段，套上 json_object 模型就只能回 JSON。
+        // 思考档（第 27 棒）：聊天/提案是最慢的一条路，用户可选关思考或降档换速度。
+        var body = new Dictionary<string, object?>
         {
             ["model"] = settings.Model,
             ["messages"] = messages,
-        });
+        };
+        settings.ApplyThinkingTo(body);
+        var payload = JsonSerializer.Serialize(body);
 
         return await PostChatAsync(settings, OpenAiUrl(settings.Endpoint, "chat/completions"), payload,
             extractOpenAi, $"Bearer {key}", cancel, handler).ConfigureAwait(false);
@@ -134,17 +137,16 @@ public static partial class OllamaVisionClient
         Func<string, (string? Text, string? ServerError)> extract,
         string? authorization, CancellationToken cancel, HttpMessageHandler? handler)
     {
-        // 180 秒硬顶（第 25 棒）：用户存的更大值用的时候夹住——旧版直接吃 TimeoutSeconds，
-        // 而它被错误文案诱导到了 900，「读这张表」就真挂满 900 秒。超时就报明确失败，不自动重试。
+        // 超时口径（第 27 棒）：0 = 不设限，只靠手动停止——用户实测 180 秒硬顶会拦下真在算的云端请求，当日改口径。
         var seconds = settings.EffectiveTimeoutSeconds;
         var host = Uri.TryCreate(url, UriKind.Absolute, out var uri) ? uri.Host : url;
         var sw = Stopwatch.StartNew();
         ChatOutcome outcome;
-        AppLog.Info($"AI 聊天/提案请求发出 → {host}（请求体约 {payload.Length / 1024} KB，上限 {seconds} 秒）");
+        AppLog.Info($"AI 聊天/提案请求发出 → {host}（请求体约 {payload.Length / 1024} KB，{(seconds == 0 ? "不设时限" : $"上限 {seconds} 秒")}）");
         try
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancel);
-            timeout.CancelAfter(TimeSpan.FromSeconds(seconds));
+            if (seconds > 0) timeout.CancelAfter(TimeSpan.FromSeconds(seconds));
             using var request = new HttpRequestMessage(HttpMethod.Post, url)
             {
                 Content = new StringContent(payload, Encoding.UTF8, "application/json"),
@@ -180,8 +182,8 @@ public static partial class OllamaVisionClient
             sw.Stop();
             outcome = new ChatOutcome
             {
-                Error = $"{seconds} 秒内没等到 {host} 的回答。180 秒是定死的上限，不再往大调：等不起就把附的图减少几张或换更快的模型；"
-                      + "第一次就这么久多半是云端排队，隔几秒再点一次（不自动重试，重试也得人手点）。",
+                Error = $"{seconds} 秒内没等到 {host} 的回答。嫌慢就去「打开通道设置…」把思考档调到 low 或关思考，"
+                      + "也可以把超时填 0＝不设限（只靠手动停止）；想再试就人手再点一次，不自动重试。",
                 Elapsed = sw.Elapsed,
             };
         }

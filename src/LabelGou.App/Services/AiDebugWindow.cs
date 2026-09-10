@@ -43,6 +43,7 @@ public sealed class AiDebugWindow : Window
     private readonly CheckBox _clearApiKey = new() { Content = "清掉已存的密钥（连磁盘上那份加密的一起删，本次也不留）", Margin = new Thickness(0, 2, 0, 6) };
     private readonly TextBox _ocrLanguage = new() { Margin = new Thickness(0, 2, 0, 10) };
     private readonly TextBox _timeout = new() { Margin = new Thickness(0, 2, 0, 10) };
+    private readonly ComboBox _thinking = new() { Margin = new Thickness(0, 2, 0, 10) };
     private readonly TextBlock _networkNotice = new() { TextWrapping = TextWrapping.Wrap, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 10) };
     private readonly TextBlock _log = new() { TextWrapping = TextWrapping.Wrap, FontFamily = new FontFamily("Consolas"), FontSize = 12 };
     private readonly ScrollViewer _logScroll;
@@ -79,7 +80,11 @@ public sealed class AiDebugWindow : Window
         form.Children.Add(_useVision);
         form.Children.Add(_clearApiKey);
         form.Children.Add(Labeled("OCR 语言（留空用系统里第一个可用包，如 zh-Hans-CN / en-US）", _ocrLanguage));
-        form.Children.Add(Labeled("单次请求超时（秒，5~180；180 是硬顶，超时就报明确失败）", _timeout));
+        form.Children.Add(Labeled("单次请求超时（秒，0~3600；填 0＝不设限，只靠手动停止）", _timeout));
+        foreach (var level in RecognitionSettings.ThinkingLevels)
+            _thinking.Items.Add(RecognitionSettings.ThinkingLabel(level));
+        // 档位名与官方参数同名（low/medium/xhigh）不翻译：报错信息里冒出来的就是这三个词，对得上才查得动。
+        form.Children.Add(Labeled("思考强度（只对云端 OpenAI 兼容通道生效；本机 Ollama 不发这个参数。百炼 qwen3.8 只认 low/medium/xhigh 与关，其它档位可能直接报错）", _thinking));
         form.Children.Add(_networkNotice);
 
         var buttons = new StackPanel { Orientation = Orientation.Horizontal };
@@ -236,7 +241,9 @@ public sealed class AiDebugWindow : Window
         _apiKeyPlain.Text = _settings.ApiKey ?? string.Empty;
         _rememberApiKey.IsChecked = _settings.RememberApiKey;
         _ocrLanguage.Text = _settings.OcrLanguage ?? string.Empty;
-        _timeout.Text = _settings.EffectiveTimeoutSeconds.ToString(CultureInfo.InvariantCulture);   // 显示真生效值（第 26 棒）：存着的 900 不改文件，但显示不许说谎
+        _timeout.Text = _settings.EffectiveTimeoutSeconds.ToString(CultureInfo.InvariantCulture);   // 显示真生效值（第 26 棒）；第 27 棒起 0＝不限也是真值
+        var thinkingIndex = Array.IndexOf(RecognitionSettings.ThinkingLevels, _settings.Thinking?.Trim().ToLowerInvariant() ?? string.Empty);
+        _thinking.SelectedIndex = thinkingIndex >= 0 ? thinkingIndex : 0;   // 陌生值退回「默认不发」，不替它编一个档位
     }
 
     private void ApplySelection()
@@ -328,14 +335,18 @@ public sealed class AiDebugWindow : Window
         _settings.UseLocalOcr = _useLocalOcr.IsChecked == true;
         _settings.OcrLanguage = string.IsNullOrWhiteSpace(_ocrLanguage.Text) ? null : _ocrLanguage.Text.Trim();
         if (int.TryParse(_timeout.Text.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var seconds)
-            && seconds is >= 5 and <= 180)
+            && seconds is >= 0 and <= 3600)
         {
-            _settings.TimeoutSeconds = seconds;
+            _settings.TimeoutSeconds = seconds;   // 0 = 不设限（第 27 棒：用户把 180 硬顶关了）
         }
         else
         {
-            WriteLine($"超时那个数（{_timeout.Text.Trim()}）不在 5~180 秒之间（180 是硬顶），这次沿用 {_settings.TimeoutSeconds} 秒。");
+            WriteLine($"超时那个数（{_timeout.Text.Trim()}）不在 0~3600 秒之间（0＝不设限），这次沿用 {_settings.TimeoutSeconds} 秒。");
         }
+        var thinkingAt = _thinking.SelectedIndex;
+        _settings.Thinking = thinkingAt >= 0 && thinkingAt < RecognitionSettings.ThinkingLevels.Length
+            ? RecognitionSettings.ThinkingLevels[thinkingAt]
+            : RecognitionSettings.ThinkingAuto;
         return _settings;
     }
 
