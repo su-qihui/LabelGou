@@ -944,6 +944,17 @@ public partial class MainWindow : Window
         Services.AppLog.Info($"删除用户模板：{option.Name}");
     }
 
+    /// <summary>
+    /// 打开「批量管理模板」那一屏（用户 2026-09-10 点名要的多选删除）。
+    /// <para>关掉之后刷一次模板下拉：他刚删掉的那几份若正是当前选中的那份，下拉得跟着换，
+    /// 不能留着一个已经不存在的选中项。</para>
+    /// </summary>
+    private void OnManageTemplatesClick(object sender, RoutedEventArgs e)
+    {
+        new TemplateManagerWindow(_viewModel.Templates) { Owner = this }.ShowDialog();
+        _viewModel.ReloadTemplates();
+    }
+
     private void OnSheetFitClick(object sender, RoutedEventArgs e) => SheetFitNow();
 
     private void OnPreviewHostSizeChanged(object sender, SizeChangedEventArgs e)

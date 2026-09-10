@@ -1,0 +1,60 @@
+<Window x:Class="LabelGou.App.TemplateManagerWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="批量管理模板 · 勾选后一次删掉多份"
+        Width="900" Height="560"
+        FontFamily="Microsoft YaHei" FontSize="12.5"
+        Background="#F4F6F8"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
+
+    <!--
+        为什么单独开一个窗口：用户 2026-09-10 的现场是「③ 步那个下拉里堆了 14 个同名「AI 建议版式」」，
+        他找不到哪份是哪份，也没法一次删多份（原来那颗「删除这份模板…」一次只删一个）。
+        这一屏只干一件事：**让每一份都能认出来（名字/尺寸/要素数/印的是什么/来源/最后改动）+ 多选删除**。
+        删除本身走 TemplateCleanup（先备份再删），所以"万一删了有用的"还能从备份拿回来。
+    -->
+    <Grid Margin="14">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0" TextWrapping="Wrap" Foreground="#444444" Margin="0,0,0,10"
+                   Text="勾上要删的模板（内置的勾不了），点下面那颗「删除选中的」一次删掉。&#10;删除前会自动把模板文件备份一份，删完会告诉你备份在哪 —— 万一删错了能拿回来。" />
+
+        <ListView x:Name="Rows" Grid.Row="1" SelectionMode="Single"
+                  ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+            <ListView.View>
+                <GridView>
+                    <GridViewColumn Header="选" Width="40">
+                        <GridViewColumn.CellTemplate>
+                            <DataTemplate>
+                                <CheckBox IsChecked="{Binding Selected, Mode=TwoWay}"
+                                          IsEnabled="{Binding CanDelete}"
+                                          HorizontalAlignment="Center"
+                                          ToolTip="内置模板删不了，所以勾不了" />
+                            </DataTemplate>
+                        </GridViewColumn.CellTemplate>
+                    </GridViewColumn>
+                    <GridViewColumn Header="模板名" Width="220" DisplayMemberBinding="{Binding Name}" />
+                    <GridViewColumn Header="尺寸" Width="118" DisplayMemberBinding="{Binding SizeText}" />
+                    <GridViewColumn Header="要素" Width="56" DisplayMemberBinding="{Binding ElementText}" />
+                    <GridViewColumn Header="印的是什么" Width="210" DisplayMemberBinding="{Binding Summary}" />
+                    <GridViewColumn Header="来源" Width="76" DisplayMemberBinding="{Binding SourceText}" />
+                    <GridViewColumn Header="最后改动" Width="130" DisplayMemberBinding="{Binding TimeText}" />
+                </GridView>
+            </ListView.View>
+        </ListView>
+
+        <WrapPanel Grid.Row="2" Orientation="Horizontal" Margin="0,10,0,0">
+            <Button Content="全选可删的" Click="OnSelectAllClick" MinWidth="96" Margin="0,0,6,0"
+                    ToolTip="把所有「自己存的 / AI 排的」都勾上（内置的跳过）" />
+            <Button Content="全不选" Click="OnSelectNoneClick" MinWidth="72" Margin="0,0,18,0" />
+            <Button x:Name="DeleteButton" Content="删除选中的…" Click="OnDeleteClick" MinWidth="120" Margin="0,0,6,0" />
+            <Button Content="关闭" Click="OnCloseClick" MinWidth="72" />
+            <TextBlock x:Name="StatusText" VerticalAlignment="Center" Margin="14,0,0,0"
+                       Foreground="#666666" TextWrapping="Wrap" />
+        </WrapPanel>
+    </Grid>
+</Window>

@@ -1,4 +1,4 @@
-<Window x:Class="LabelGou.App.MainWindow"
+﻿<Window x:Class="LabelGou.App.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:render="clr-namespace:LabelGou.App.Rendering"
@@ -332,8 +332,12 @@
                                         ToolTip="拿 CorelDRAW/AI 导出的 SVG 当底图，对得上样例数据的文字可以直接绑字段（Ctrl+I）" />
                                 <!--  删除以前只藏在「模板(T)」菜单里，用户找不到（2026-09-09：「模板删除的UI调到模板栏目」）。
                                       菜单那一行仍留着：同一个 OnDeleteTemplateClick，不开第二套删除逻辑。  -->
-                                <Button Content="删除这份模板…" Click="OnDeleteTemplateClick" MinWidth="106"
+                                <Button Content="删除这份模板…" Click="OnDeleteTemplateClick" MinWidth="106" Margin="0,0,6,0"
                                         ToolTip="只删自己存的用户模板（内置模板删不了也不占磁盘）；删前会弹一次确认" />
+                                <!--  第 37 棒：用户 2026-09-10 的现场是下拉里堆了 14 个同名「AI 建议版式」，
+                                      既认不出哪份是哪份、又只能一个个删。这一颗开的是**多选删除**那一屏。  -->
+                                <Button Content="批量管理模板…" Click="OnManageTemplatesClick" MinWidth="106"
+                                        ToolTip="把所有模板摊开（名字/尺寸/印的是什么/来源/最后改动），勾选后一次删掉多份；删前自动备份" />
                             </WrapPanel>
                             <TextBlock Text="{Binding TemplateInfoText}" Style="{StaticResource Hint}" Margin="0,6,0,0" />
                             <!--  纸与模板对不上时说一句该换哪一份，而不是让用户去拼版告警里自己找  -->
