@@ -62,11 +62,35 @@ public sealed record AiSheetProposal(
     /// <summary>
     /// 折成切表指令。<paramref name="rawRowCount"/> 是原表总行数（用来把 1 起的行号换成 0 起并挡住越界）。
     /// <para>表头那一行永远从剔除名单里去掉：模型确实会一边说「表头在第 1 行」一边把第 1 行列进合计行。</para>
+    /// <para><strong>落地只有这一条路</strong>：逐条确认（阶段 29 第 1 棒）也走它，只是在 App 侧按"被点名的类"
+    /// 把结果合到当前切法上（见 <c>MainViewModel.ChoiceFrom(p, only)</c>）——Core 不再出一份"只落部分"的
+    /// 平行实现，两套落地口径长得不一样正是 §五-62 那类"换路复发"的根。</para>
     /// </summary>
     public SheetLayoutChoice ToChoice(int rawRowCount)
     {
-        var headerIndex = HasHeader == false ? (int?)null
+        var (rowIndex, hasHeader) = BuildHeaderSide(rawRowCount);
+        return new SheetLayoutChoice(rowIndex, hasHeader, BuildExcluded(rawRowCount));
+    }
+
+    /// <summary>
+    /// 表头那一侧折成 <see cref="SheetLayoutChoice"/> 要的两个值。
+    /// <para>「首行不是列名」时 <c>HeaderRowIndex</c> 记 0（第 24 棒定的口径：第 0 行 = 第一行也当数据），
+    /// 但**剔除名单的护栏要按"没有表头行"算**（没有哪一行需要被保护），两者不是同一个值，别合并。</para>
+    /// </summary>
+    private (int? RowIndex, bool HasHeader) BuildHeaderSide(int rawRowCount)
+        => HasHeader == false
+            ? (0, false)
+            : (HeaderIndexForExclusion(rawRowCount), true);
+
+    /// <summary>剔除名单里要挡住的表头行下标（0 起）；null = 没表头行可挡。</summary>
+    private int? HeaderIndexForExclusion(int rawRowCount)
+        => HasHeader == false ? null
             : HeaderRow is int hr ? Math.Clamp(hr - 1, 0, Math.Max(0, rawRowCount - 1)) : null;
+
+    /// <summary>提案点名的剔除名单折成 0 起下标（越界的不理、表头行不剔、去重）。</summary>
+    private IReadOnlyList<int>? BuildExcluded(int rawRowCount)
+    {
+        var headerIndex = HeaderIndexForExclusion(rawRowCount);
         var excluded = new List<int>();
         foreach (var row in TotalValueRows)
         {
@@ -74,10 +98,7 @@ public sealed record AiSheetProposal(
             if (headerIndex is int hi && row - 1 == hi) continue;   // 表头自己不能又被剔掉
             if (!excluded.Contains(row - 1)) excluded.Add(row - 1);
         }
-        return new SheetLayoutChoice(
-            HasHeader == false ? 0 : headerIndex,
-            HasHeader ?? true,
-            excluded.Count == 0 ? null : excluded);
+        return excluded.Count == 0 ? null : excluded;
     }
 
     /// <summary>
@@ -111,6 +132,82 @@ public sealed record AiSheetProposal(
             items.Add($"改完之后会出 {Math.Max(0, rawRowCount - (HasHeader == false ? 0 : 1) - TotalValueRows.Count)} 张标签（以软件重切结果为准）");
         return items;
     }
+
+    /// <summary>
+    /// 把提案折成逐条「原值 → 新值」的改动清单（阶段 29 第 1 棒）。
+    /// <para><strong>与 <see cref="DescribeItems"/> 只差一件事，但就是最要命的那件</strong>：那一份只说
+    /// 「它会改成什么」，人没法判断该不该点头；这一份带 <paramref name="ctx"/> 里的原值，才审得动 ——
+    /// 用户 2026-09-10 的原话是「AI 会弹出「修改 xxxx ✅/❌」这样的 UI 来确认取消」。</para>
+    /// <para><strong>无变化不出卡</strong>：两边一样、或它这次压根没提这一类，都不进清单。卡上出现
+    /// 「改成一样的东西」等于逼人白审一条（与 <see cref="AiSheetQuestion"/>「不点报成功其实没改」同一条口径）。</para>
+    /// <para>纯函数、不抛：拿不到原值就显示「还没定」，绝不编一个数出来。</para>
+    /// </summary>
+    /// <param name="ctx">软件此刻的状态快照。null = 什么都不知道（原值一律显示成"还没定"）。</param>
+    public IReadOnlyList<AiChange> DescribeChanges(AiChangeContext? ctx = null)
+    {
+        var c = ctx ?? AiChangeContext.Empty;
+        var list = new List<AiChange>();
+
+        // ── 列名在第几行（含「这张表首行不是列名」那一档）──
+        var beforeHeader = c.HasHeader == false
+            ? "这张表第一行不是列名"
+            : c.HeaderRow is int chr ? $"列名在第 {chr} 行" : "列名行还没定";
+        var afterHeader = HasHeader == false
+            ? "这张表第一行不是列名（首行也当货印，会多出 1 张）"
+            : HeaderRow is int phr ? $"列名在第 {phr} 行" : null;
+        if (afterHeader is not null && !string.Equals(beforeHeader, afterHeader, StringComparison.Ordinal))
+            list.Add(new AiChange(AiChangeKind.HeaderRow, "列名在第几行", beforeHeader, afterHeader));
+
+        // ── 哪几行不当货印 ──
+        // 落地的口径是**并集**（App 侧第 21 棒定死的：只会多剔，不会把已经剔掉的行放回来）。
+        // 所以卡上的"新值"必须写并集之后**真会落成的那一份** —— 写模型的原始清单就是骗人，
+        // 人点完 ✅ 会发现第 5 行怎么还剔着（阶段 29 那条「不许点了报成功其实改的不是它」）。
+        var effectiveExcluded = UnionRows(c.ExcludedRows, TotalValueRows);
+        if (!SameRows(c.ExcludedRows, effectiveExcluded))
+            list.Add(new AiChange(AiChangeKind.ExcludedRows, "哪几行不当货印",
+                DescribeRows(c.ExcludedRows), DescribeRows(effectiveExcluded)));
+
+        // ── 标签版式（它会排出一版新的，存成模板）──
+        if (Layout is { } spec)
+        {
+            var size = $"{spec.WidthMm:0.#} × {spec.HeightMm:0.#} mm";
+            var beforeLayout = c.TemplateName is { Length: > 0 } name
+                ? $"现在这张「{name}」"
+                : c.LabelWidthMm is double bw && c.LabelHeightMm is double bh
+                    ? $"现在这张 {bw:0.#} × {bh:0.#} mm"
+                    : "现在这张（还不知道）";
+            list.Add(new AiChange(AiChangeKind.Layout, "标签版式",
+                beforeLayout, $"它排的新版式 {spec.Rows.Count} 行 · {size}"));
+        }
+
+        // ── 用哪张纸 ──
+        if (SheetSpecName is { } specName
+            && !string.Equals(c.SheetSpecName, specName, StringComparison.Ordinal))
+        {
+            list.Add(new AiChange(AiChangeKind.SheetSpec, "用哪张纸",
+                c.SheetSpecName is { Length: > 0 } old ? old : "（软件自动挑一张）", specName));
+        }
+
+        return list;
+    }
+
+    /// <summary>剔除名单那句话（给人看的口径，不出现"下标"这种词）。</summary>
+    private static string DescribeRows(IReadOnlyList<int>? rows)
+        => rows is { Count: > 0 }
+            ? "第 " + string.Join("、", rows) + " 行不印"
+            : "没剔任何行（整张表都按货印）";
+
+    /// <summary>两份剔除名单是不是同一件事（顺序不同不算变，重复不算变）。</summary>
+    private static bool SameRows(IReadOnlyList<int>? a, IReadOnlyList<int>? b)
+    {
+        var x = a ?? Array.Empty<int>();
+        var y = b ?? Array.Empty<int>();
+        return x.Count == y.Count && !x.Except(y).Any();
+    }
+
+    /// <summary>两份剔除名单并起来（排好序）——落地口径就是并集，卡上也照它写。</summary>
+    private static IReadOnlyList<int> UnionRows(IReadOnlyList<int>? a, IReadOnlyList<int>? b)
+        => (a ?? Array.Empty<int>()).Union(b ?? Array.Empty<int>()).OrderBy(i => i).ToList();
 
     /// <summary>
     /// 它自己说的话：提醒（去重、最多 <see cref="MaxExplainLines"/> 条）加一句理由。

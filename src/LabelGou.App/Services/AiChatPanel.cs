@@ -62,8 +62,22 @@ public sealed record AiLayoutContext(
 /// </summary>
 public sealed class AiChatPanel : UserControl
 {
-    private static readonly Brush WarnBrush = new SolidColorBrush(Color.FromRgb(0xB3, 0x26, 0x1E));
-    private static readonly Brush OkBrush = new SolidColorBrush(Color.FromRgb(0x1D, 0x4E, 0xD8));
+    private static readonly Brush WarnBrush = Frozen(new SolidColorBrush(Color.FromRgb(0xB3, 0x26, 0x1E)));
+    private static readonly Brush OkBrush = Frozen(new SolidColorBrush(Color.FromRgb(0x1D, 0x4E, 0xD8)));
+
+    /// <summary>
+    /// 静态画刷<strong>必须冻结</strong>：Freezable 有线程亲和，未冻结的静态画刷被两个 STA 线程同时用时，
+    /// WPF 会在 <c>Freezable.AddContextToList</c> 里抛 <c>IndexOutOfRangeException</c>——
+    /// 而且崩在**别人的构造函数**里，从堆栈上根本看不出跟这条画刷有关系。
+    /// <para>2026-09-10 阶段 29 第 1 棒真踩到：<c>AiAssistantPanelTests</c> 单跑 11/11 绿，
+    /// 与新增的测试类并行跑就随机崩在 <c>AiChatPanel..ctor</c>（新坑 §五-127）。
+    /// 同一条规矩 <c>RenderRules</c> / <c>TemplateEditorControl</c> / <c>LabelRenderer</c> 早就有了，这里漏了。</para>
+    /// </summary>
+    private static T Frozen<T>(T value) where T : Freezable
+    {
+        value.Freeze();
+        return value;
+    }
 
     private readonly TextBlock _channelLine = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 6) };
 
@@ -113,6 +127,16 @@ public sealed class AiChatPanel : UserControl
 
     /// <summary>逐条问题那一块：一条一行，行尾挂 ❌/✅ 两颗小按钮（第 22 棒）。</summary>
     private readonly StackPanel _questions = new() { Visibility = Visibility.Collapsed };
+
+    /// <summary>
+    /// 逐条「改哪里 + 原值 → 新值 + ✅/❌」的改动卡（阶段 29 第 1 棒）。
+    /// <para>与 <see cref="_questions"/> 是两件事：那份是<em>模型拿不准、要人二选一</em>的问题；
+    /// 这份是<em>它打算动手的每一处改动</em>，人逐条放行。</para>
+    /// </summary>
+    private readonly StackPanel _changes = new() { Visibility = Visibility.Collapsed };
+
+    /// <summary>这批卡是按哪一代数据算出来的（点 ✅ 之前对一遍，不等就整批作废）。</summary>
+    private int _changesGeneration = -1;
     private DateTime _waitSince;
     private string _waitingFor = "AI";
     private readonly Button _send = new() { Content = "发送（Ctrl+Enter）", Padding = new Thickness(12, 6, 12, 6), Margin = new Thickness(0, 0, 8, 0) };
@@ -170,6 +194,18 @@ public sealed class AiChatPanel : UserControl
     /// 而不是一屏文字提醒让他再去别处点（原话：「改之后更乱了」）。
     /// </summary>
     public Func<AiSheetProposal, AiSheetQuestion, bool, (bool Ok, string Message)>? ApplyQuestion { get; set; }
+
+    /// <summary>
+    /// 软件**此刻**的状态快照（阶段 29 第 1 棒）：画「原值 → 新值」必须先知道"原来是什么"。
+    /// <para>没挂上时改动卡不出现，退回第 21~28 棒那种"只说会改成什么"的文字清单（不静默丢信息）。</para>
+    /// </summary>
+    public Func<AiChangeContext?>? GetChangeContext { get; set; }
+
+    /// <summary>
+    /// 只落地改动卡上的**那一条**（阶段 29 第 1 棒）：人点 ✅ 走这里，点 ❌ 也要走（回一句"没动"）。
+    /// <para>这是阶段 29 那条红线的落点——AI 的每一次写都要人点过 ✅，一步都不许自己落地。</para>
+    /// </summary>
+    public Func<AiSheetProposal, AiChange, bool, (bool Ok, string Message)>? ApplyChange { get; set; }
 
     /// <summary>软件自己数「几枚标签、几张纸」（预览那行用真数，不用模型报的数）。</summary>
     public Func<string?, (int Labels, int Sheets)?>? OutputCounter { get; set; }
@@ -282,6 +318,7 @@ public sealed class AiChatPanel : UserControl
         var status = new StackPanel();
         status.Children.Add(_waitLine);
         status.Children.Add(_questions);
+        status.Children.Add(_changes);
         status.Children.Add(_attachment);
         Grid.SetRow(status, 3);
         root.Children.Add(status);
@@ -807,11 +844,12 @@ public sealed class AiChatPanel : UserControl
         var items = proposal.DescribeItems(rawRows);
         var explain = proposal.Explain();
         // 那五行是用户逐字定的口径（表格有效数据 / 纸张 / 模版 / 张数 / 预览）；
-        // DescribeItems 那份「会改这几件事」只在它没读出新结构时兜底，不让两遍都打。
+        // DescribeItems 那份「会改这几件事」从阶段 29 起只在改动卡出不来时兜底，不让两遍都打。
         var count = OutputCounter?.Invoke(proposal.Readout.QtyColumn);
         foreach (var line in proposal.SummaryLines(count?.Labels, count?.Sheets)) Append(line);
         ShowQuestions(proposal);
-        if (items.Count > 0 && proposal.Questions.Count == 0)
+        var shownAsCards = ShowChanges(proposal);
+        if (!shownAsCards && items.Count > 0 && proposal.Questions.Count == 0)
             foreach (var item in items) Append("　· " + item);
         if (explain.Count > 0)
         {
@@ -887,6 +925,121 @@ public sealed class AiChatPanel : UserControl
         }
     }
 
+    /// <summary>
+    /// 把提案摊成逐条「改哪里 + 原值 → 新值 + ✅/❌」的改动卡（阶段 29 第 1 棒）。
+    /// <para><strong>这是阶段 29 那条红线的界面落点</strong>：AI 的每一次写都要人点 ✅ 才落地。
+    /// 用户 2026-09-10 的原话是「AI 会弹出「修改 xxxx ✅/❌」这样的 UI 来确认取消」，
+    /// 而且他特意纠正过一版写法——<em>不能靠"人的改动一定对"来防冲突</em>，要让 AI 的每次写都可确认可取消。</para>
+    /// <para>返回 false = 这张卡出不来（没上下文、没接落地入口，或压根没改动），调用方退回旧文字清单，
+    /// <strong>不静默丢信息</strong>。</para>
+    /// </summary>
+    private bool ShowChanges(AiSheetProposal proposal)
+    {
+        _changes.Children.Clear();
+        _changesGeneration = -1;
+        if (ApplyChange is null)
+        {
+            _changes.Visibility = Visibility.Collapsed;
+            return false;
+        }
+        var changes = proposal.DescribeChanges(GetChangeContext?.Invoke());
+        if (changes.Count == 0)
+        {
+            _changes.Visibility = Visibility.Collapsed;
+            return false;
+        }
+        _changesGeneration = GetDataGeneration?.Invoke() ?? -1;
+        _changes.Visibility = Visibility.Visible;
+        _changes.Children.Add(new TextBlock
+        {
+            Text = $"它打算改这 {changes.Count} 处，逐条确认（点「采用」才动，点「取消」就不动）：",
+            FontSize = 12,
+            FontWeight = FontWeights.SemiBold,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 6, 0, 2),
+        });
+        foreach (var change in changes)
+        {
+            var block = new StackPanel { Margin = new Thickness(0, 3, 0, 3) };
+            block.Children.Add(new TextBlock
+            {
+                Text = "· " + change.Target,
+                FontSize = 12,
+                TextWrapping = TextWrapping.Wrap,
+            });
+            // 原值 → 新值单独一行、缩进、次要色：这一行才是人判断的依据（旧清单只有后半截）。
+            block.Children.Add(new TextBlock
+            {
+                Text = change.DiffText,
+                FontSize = 11,
+                Foreground = Brushes.Gray,
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(10, 1, 0, 0),
+            });
+            var answer = new TextBlock
+            {
+                FontSize = 11,
+                Foreground = OkBrush,
+                FontWeight = FontWeights.SemiBold,
+                Margin = new Thickness(6, 0, 0, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            var yes = new Button
+            {
+                Content = "✅ 采用",
+                FontSize = 11,
+                Padding = new Thickness(6, 1, 6, 1),
+                Margin = new Thickness(4, 0, 0, 0),
+            };
+            var no = new Button
+            {
+                Content = "❌ 取消",
+                FontSize = 11,
+                Padding = new Thickness(6, 1, 6, 1),
+            };
+            var actions = new WrapPanel
+            {
+                HorizontalAlignment = HorizontalAlignment.Right,
+                Margin = new Thickness(0, 2, 0, 0),
+            };
+            actions.Children.Add(no);
+            actions.Children.Add(yes);
+            actions.Children.Add(answer);
+            block.Children.Add(actions);
+            no.Click += (_, _) => AnswerChange(proposal, change, false, answer, no, yes);
+            yes.Click += (_, _) => AnswerChange(proposal, change, true, answer, no, yes);
+            _changes.Children.Add(block);
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// 点一条改动卡：**先对数据代数**（这张卡还算不算数），再走落地。
+    /// <para><strong>卡过期一律整批作废重出</strong>：它出方案那几十秒里人改了别处，卡上写的"原来是什么"
+    /// 就已经不是现在了——拿旧原值往新状态上盖，等于静默改错东西（阶段 29 决议里点名的第二条）。</para>
+    /// </summary>
+    private void AnswerChange(AiSheetProposal proposal, AiChange change, bool yes,
+        TextBlock answer, Button no, Button yesButton)
+    {
+        if (ApplyChange is not { } apply)
+        {
+            Append("这个面板没接上「逐条落地」入口（只有主窗口里的 AI 页签能这么点）。");
+            return;
+        }
+        if (GetDataGeneration is { } generation && generation() != _changesGeneration)
+        {
+            Append("这批卡作废了：等它出方案的时候，表或模板换过了——卡上写的「原来是什么」已经不是现在。"
+                 + "你的数据一个字没动；要新样子就再点一次「读这张表并提案」。");
+            ClearPending();
+            return;
+        }
+        no.IsEnabled = false;
+        yesButton.IsEnabled = false;
+        answer.Text = yes ? "✅ 采用" : "❌ 取消";
+        var (ok, message) = apply(proposal, change, yes);
+        Append((ok ? "已办：" : "没办成：") + message);
+    }
+
     private void AnswerQuestion(AiSheetProposal proposal, AiSheetQuestion q, bool yes, TextBlock answer, Button no, Button yesButton)
     {
         if (ApplyQuestion is not { } apply)
@@ -908,6 +1061,9 @@ public sealed class AiChatPanel : UserControl
         _pendingProposal = null;
         _questions.Children.Clear();
         _questions.Visibility = Visibility.Collapsed;
+        _changes.Children.Clear();
+        _changes.Visibility = Visibility.Collapsed;
+        _changesGeneration = -1;
         _applyLayout.IsEnabled = false;
         _applyLayout.Content = "用这个（存成我的模板并选中）";
     }

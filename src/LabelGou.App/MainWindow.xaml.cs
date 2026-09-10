@@ -561,6 +561,25 @@ public partial class MainWindow : Window
         // 第 23 棒：AI 请求在飞期间换文件/表/模板，旧结果落地前按代数对一遍，不等就作废。
         panel.GetDataGeneration = () => _viewModel.DataGeneration;
         panel.ApplyQuestion = ApplyAiQuestion;
+        // 阶段 29 第 1 棒：改动卡要先说清「原来是什么」，所以把软件此刻的状态单拎一份给它。
+        // 拿不到的字段一律留 null（Core 那边会显示成"还没定"），**不许在这里补一个看起来很像的值**。
+        panel.GetChangeContext = () =>
+        {
+            var choice = _viewModel.CurrentChoice;
+            var excluded = (choice.ExcludedRawRows ?? Array.Empty<int>())
+                .OrderBy(i => i).Select(i => i + 1).ToList();     // 卡上给人看的是 Excel 口径（1 起）
+            var template = _viewModel.SelectedTemplate?.Template;
+            return new LabelGou.Core.Recognition.AiChangeContext(
+                _viewModel.RawRowCount,
+                _viewModel.DetectedHeaderRow > 0 ? _viewModel.DetectedHeaderRow : null,
+                choice.HasHeader,
+                excluded.Count == 0 ? null : excluded,
+                _viewModel.SelectedTemplate?.Name,
+                template?.WidthMm,
+                template?.HeightMm,
+                _viewModel.Sheet.SelectedSheetOption?.Spec.Name);
+        };
+        panel.ApplyChange = ApplyAiChange;
         // 「预览:31个模板,155张」那一句的数由软件自己数（按 AI 点的那一列逐行加），不信模型报的总数。
         panel.OutputCounter = qtyColumn => _viewModel.CountOutput(qtyColumn);
         panel.GoPrint = PrintFromAi;
@@ -648,6 +667,47 @@ public partial class MainWindow : Window
                         : "模板里没用到货号那一列，已经是「只印 * 前面」了，没改。");
                 var (tailOk, tailMsg) = ApplyAiLayout(tailSpec);
                 return (tailOk, (yes ? "货号连 * 后面一起印（按表里原样）：" : "货号只印 * 前面：") + tailMsg);
+            }
+        }
+    }
+
+    /// <summary>
+    /// 落地改动卡上的**那一条**（阶段 29 第 1 棒）。
+    /// <para>点 ❌ 不装作"办成了"：如实回一句「这条不动」，并且**什么都不碰**——人点取消就是要它别动。</para>
+    /// <para>四类各走各的既有落地路，不新开第二条：切表 → <c>ApplySheetChoice</c>；版式 → <c>ApplyAiLayout</c>；
+    /// 纸 → <c>SelectSheetSpecByName</c>。逐条的要害在 <c>ChoiceFrom(p, only)</c>：
+    /// 只 ✅ 了「哪几行不当货印」时，列名行不许跟着动。</para>
+    /// <para>红线：走到这里之前，人已经在卡上点过 ✅ 了 —— AI 自己一步都落不了地。</para>
+    /// </summary>
+    private (bool Ok, string Message) ApplyAiChange(
+        LabelGou.Core.Recognition.AiSheetProposal proposal,
+        LabelGou.Core.Recognition.AiChange change, bool yes)
+    {
+        if (!yes) return (true, $"「{change.Target}」照你说的不动，保持现在这样。");
+
+        switch (change.Kind)
+        {
+            case LabelGou.Core.Recognition.AiChangeKind.HeaderRow:
+            case LabelGou.Core.Recognition.AiChangeKind.ExcludedRows:
+            {
+                var next = _viewModel.ChoiceFrom(proposal, new[] { change.Kind });
+                var (ok, msg) = _viewModel.ApplySheetChoice(next);
+                return (ok, $"「{change.Target}」{msg}");
+            }
+
+            case LabelGou.Core.Recognition.AiChangeKind.Layout:
+                if (proposal.Layout is not { } spec)
+                    // 与第 28 棒同一口径：不把用户往"必须附图"那条死路上指。
+                    return (false, "它这次没给出模板内容，这一条改不了——再点一次「读这张表并提案」，"
+                        + "或直接点「让 AI 出一版排版」；附上更清楚的样张图最稳。");
+                return ApplyAiLayout(spec);
+
+            default:   // SheetSpec
+            {
+                var name = proposal.SheetSpecName;
+                if (name is null) return (false, "它没点名要用哪张纸。");
+                var msg = _viewModel.Sheet.SelectSheetSpecByName(name);
+                return (msg.StartsWith("纸规已切到", StringComparison.Ordinal), msg);
             }
         }
     }

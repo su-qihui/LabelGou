@@ -18,8 +18,19 @@ namespace LabelGou.App.Services;
 /// </summary>
 public sealed class AiDebugWindow : Window
 {
-    private static readonly Brush WarnBrush = new SolidColorBrush(Color.FromRgb(0xB3, 0x26, 0x1E));
-    private static readonly Brush OkBrush = new SolidColorBrush(Color.FromRgb(0x1D, 0x4E, 0xD8));
+    private static readonly Brush WarnBrush = Frozen(new SolidColorBrush(Color.FromRgb(0xB3, 0x26, 0x1E)));
+    private static readonly Brush OkBrush = Frozen(new SolidColorBrush(Color.FromRgb(0x1D, 0x4E, 0xD8)));
+
+    /// <summary>
+    /// 静态画刷必须冻结：Freezable 有线程亲和，未冻结的静态画刷跨 STA 线程用会抛
+    /// <c>IndexOutOfRangeException</c>（崩在别人的构造函数里，极难定位）。口径与
+    /// <c>AiChatPanel</c>/<c>RenderRules</c> 一致，2026-09-10 阶段 29 第 1 棒补（新坑 §五-127）。
+    /// </summary>
+    private static T Frozen<T>(T value) where T : Freezable
+    {
+        value.Freeze();
+        return value;
+    }
 
     private readonly ComboBox _channel = new() { Margin = new Thickness(0, 2, 0, 10) };
     private readonly TextBox _endpoint = new() { Margin = new Thickness(0, 2, 0, 10) };

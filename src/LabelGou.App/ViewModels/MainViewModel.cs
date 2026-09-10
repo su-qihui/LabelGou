@@ -1007,6 +1007,29 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
             rows.Count == 0 ? null : rows, _choice.SkipSummaryRows);
     }
 
+    /// <summary>
+    /// 只把提案里<strong>被点名的那几类</strong>合到当前切法上（阶段 29 第 1 棒：改动卡逐条落地）。
+    /// <para>没被点到的类一律保留 <see cref="_choice"/> 的值——人只 ✅ 了「哪几行不当货印」那一条，
+    /// 列名行就不许跟着动。剔除行仍是<strong>并集</strong>：直接复用上面那份口径（<see cref="ChoiceFrom(AiSheetProposal)"/>），
+    /// <strong>不另写第二套合并逻辑</strong>，否则"整份落地"与"逐条落地"会长得不一样（§五-62 那类换路复发）。</para>
+    /// </summary>
+    /// <param name="p">AI 提案。</param>
+    /// <param name="only">只落地这几类。</param>
+    public SheetLayoutChoice ChoiceFrom(LabelGou.Core.Recognition.AiSheetProposal p,
+        IReadOnlyCollection<LabelGou.Core.Recognition.AiChangeKind> only)
+    {
+        var takeHeader = only.Contains(LabelGou.Core.Recognition.AiChangeKind.HeaderRow);
+        var takeRows = only.Contains(LabelGou.Core.Recognition.AiChangeKind.ExcludedRows);
+        if (!takeHeader && !takeRows) return _choice;      // 版式与纸规不走切表这条路
+
+        var full = ChoiceFrom(p);
+        return new SheetLayoutChoice(
+            takeHeader ? full.HeaderRowIndex : _choice.HeaderRowIndex,
+            takeHeader ? full.HasHeader : _choice.HasHeader,
+            takeRows ? full.ExcludedRawRows : _choice.ExcludedRawRows,
+            _choice.SkipSummaryRows);
+    }
+
     /// <summary>回到「软件自动猜表头、不剔行」的那一份切法（用户说「改错了，恢复」时走这条）。</summary>
     public (bool Ok, string Message) ResetSheetChoice() => ApplySheetChoice(SheetLayoutChoice.Auto);
 
