@@ -1038,6 +1038,12 @@ public sealed class AiChatPanel : UserControl
         answer.Text = yes ? "✅ 采用" : "❌ 取消";
         var (ok, message) = apply(proposal, change, yes);
         Append((ok ? "已办：" : "没办成：") + message);
+        // 落地成功后**重出剩余卡片**（第 30 棒），三件事一起解决：
+        // ① 刚办完那一条因为"无变化"自己消失（无变化不出卡那条纪律顺带办了收尾）；
+        // ② 其余卡片带着**新的原值**重出，不会出现"卡上写的原值已经过期"；
+        // ③ 顺带把数据代数重新记一遍——落地会 BumpDataGeneration，不重记的话点第二张卡就被
+        //    我们自己刚做的改动判成"卡过期"，人会觉得"怎么点一张就全废了"。
+        if (yes && ok) ShowChanges(proposal);
     }
 
     private void AnswerQuestion(AiSheetProposal proposal, AiSheetQuestion q, bool yes, TextBlock answer, Button no, Button yesButton)

@@ -64,6 +64,14 @@ public sealed class UiState
     public string LeftPaneMode { get; set; } = "";
 
     public string RightPaneMode { get; set; } = "";
+
+    /// <summary>
+    /// 运行模式：<c>"ai"</c> / <c>"offline"</c>；**空 = 没记过 = AI 模式**（第 30 棒）。
+    /// <para>与上面左右栏那两个不一样：那两个「空 = 展开」是为了让旧状态文件的行为零变化，
+    /// 这一个「空 = AI」是**用户 2026-09-10 明确要的默认**——导入表格后先不绑定，交给 AI 读懂再由它绑。</para>
+    /// <para>同样是存名字不存枚举值：序号以后重排就全错，名字坏了也只是退回默认。</para>
+    /// </summary>
+    public string RunMode { get; set; } = "";
 }
 
 /// <summary>

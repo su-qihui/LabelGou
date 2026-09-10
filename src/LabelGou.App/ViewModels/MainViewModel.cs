@@ -7,6 +7,7 @@ using System.Windows.Media;
 using LabelGou.App.Export;
 using LabelGou.App.Mvvm;
 using LabelGou.App.Services;
+using LabelGou.Core;
 using LabelGou.Core.Data;
 using LabelGou.Core.Docking;
 using LabelGou.Core.Layout;
@@ -230,6 +231,8 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         _textCase = remembered.TextCase;
         // ① 步表格高度接回上次选的那档（没记过、或记的不是三档里的数，用默认）。同样直接写字段不走 setter。
         _previewTableHeight = RememberedPreviewTableHeight(remembered.PreviewTableHeight);
+        // 运行模式（第 30 棒）：没记过就是 AI 模式（用户 2026-09-10 定的默认）。直接写字段，理由同上。
+        _mode = RememberedMode(remembered.RunMode);
         // 兜底跟 ReloadTemplates 用同一个档（行式四行）：上一版构造兜 IdStandard、刷新兜 IdRowsFour，
         // 冷启动与触发一次刷新后看到的不是同一套模板。
         _bootstrapping = true;
@@ -715,6 +718,78 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         _uiState.Save(state);
     }
 
+    // ───────────────────────── 运行模式（第 30 棒） ─────────────────────────
+
+    private RunMode _mode = RunMode.Ai;
+
+    /// <summary>状态文件里那个名字只能当候选：只认 <c>"offline"</c>，其余（空/旧文件/写坏了/认不出）一律 AI 模式。</summary>
+    private static RunMode RememberedMode(string? stored)
+        => string.Equals(stored, "offline", StringComparison.OrdinalIgnoreCase) ? RunMode.Offline : RunMode.Ai;
+
+    /// <summary>
+    /// 运行模式（第 30 棒）：**AI 模式 = 导入后不先绑定**，先交 AI 读懂整张表、由它给出绑定方案，人逐条确认；
+    /// **离线模式 = 现有五步人工程**，自动连线 + 人工连线照旧，全程不碰网络。
+    /// <para>用户 2026-09-10 定的默认是 AI 模式（明确不要"首次问一次"），所以状态文件里没记过就是 AI。</para>
+    /// <para>切模式只改「导入之后怎么走」，**两边的人工口子一个都不少**（手工连线、<c>col:</c> 直引、方案存/取照旧）——
+    /// 没配密钥、断网、模型超时，人随时能切回离线接着干，不会被堵在"等 AI"上。</para>
+    /// </summary>
+    public RunMode Mode
+    {
+        get => _mode;
+        set
+        {
+            if (_mode == value) return;
+            _mode = value;
+            RememberMode(value);
+            Raise(nameof(Mode));
+            Raise(nameof(IsAiMode));
+            Raise(nameof(ModeText));
+            Raise(nameof(SelectedMode));
+            StatusMessage = value == RunMode.Ai
+                ? "已切到 AI 模式：下次导入表格后先不绑定，由 AI 读懂整张表再给绑定方案，逐条确认。"
+                : "已切到离线模式：导入后照旧按表头自动连线、人工逐项可调；这一路不联网。";
+        }
+    }
+
+    /// <summary>界面用：现在是不是 AI 模式（提示语与人工口子的显隐都看它）。</summary>
+    public bool IsAiMode => _mode == RunMode.Ai;
+
+    public string ModeText => _mode == RunMode.Ai ? "AI 模式" : "离线模式";
+
+    public IReadOnlyList<ChoiceOption<RunMode>> ModeOptions { get; } = new[]
+    {
+        new ChoiceOption<RunMode>(RunMode.Ai, "AI 模式（推荐）"),
+        new ChoiceOption<RunMode>(RunMode.Offline, "离线模式"),
+    };
+
+    public ChoiceOption<RunMode>? SelectedMode
+    {
+        get => ModeOptions.FirstOrDefault(o => o.Value == _mode);
+        set
+        {
+            if (value is null || value.Value == _mode) return;
+            Mode = value.Value;
+        }
+    }
+
+    private void RememberMode(RunMode mode)
+    {
+        var name = mode == RunMode.Offline ? "offline" : "ai";
+        var state = _uiState.Load();
+        if (string.Equals(state.RunMode, name, StringComparison.OrdinalIgnoreCase)) return;
+        state.RunMode = name;
+        _uiState.Save(state);
+    }
+
+    /// <summary>
+    /// AI 模式导入完表之后，请主窗口去让 AI 读这张表（第 30 棒）。
+    /// <para>为什么用事件而不是让 VM 直接喊面板：面板是主窗口那一侧的物件（<c>WireAi</c> 里接线），
+    /// VM 不该认识它——这条与"状态窗只存在这里、面板拿不到 UiStateStore"是同一条边界纪律。</para>
+    /// </summary>
+    public event Action? AiReadRequested;
+
+    private void RequestAiRead() => AiReadRequested?.Invoke();
+
     /// <summary>
     /// 拆出来的 AI 浮动窗口上次摆在哪、多大（全 0 = 没记过，<see cref="Services.DetachablePanel"/> 会退回默认摆位）。
     /// <para>状态窗只存在这里：面板与搬移器都不该拿到整个 <see cref="UiStateStore"/>，那等于开后门改别的字段。</para>
@@ -1187,22 +1262,40 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
                 .Select(x => x.Profile!)
                 .ToList();
 
-            var matched = MappingSuggester.FindBestMatch(data.Headers, known);
-            if (matched is not null)
+            if (_mode == RunMode.Ai)
             {
-                _working = matched;
-                StatusMessage = $"已套用保存过的映射方案「{matched.Name}」，请检查有没有连错。";
+                // 第 30 棒：AI 模式下**先不绑定**。用户 2026-09-10 的原话是「导入表格后不应该直接绑定数据，
+                // 先把表格给 AI 理解后由 AI 绑定」——程序按表头猜出来的那套绑定，正是他要换掉的东西。
+                // 所以这里给一份空白方案（谁都不连），等 AI 读完表再逐条给方案让人确认。
+                _working = MappingProfile.CreateFor(data.Headers, ProfileName);
             }
             else
             {
-                _working = MappingSuggester.Suggest(data.Headers, ProfileName);
-                StatusMessage = "已按表头自动连接字段，请检查后点「应用映射」。";
+                var matched = MappingSuggester.FindBestMatch(data.Headers, known);
+                if (matched is not null)
+                {
+                    _working = matched;
+                    StatusMessage = $"已套用保存过的映射方案「{matched.Name}」，请检查有没有连错。";
+                }
+                else
+                {
+                    _working = MappingSuggester.Suggest(data.Headers, ProfileName);
+                    StatusMessage = "已按表头自动连接字段，请检查后点「应用映射」。";
+                }
             }
             AutoNumberCartons = _working.AutoNumberCartons;
             RebuildFieldRows();
             ApplyMapping();
             PickTemplateFittingData();
             AdvanceAfterImport();
+            if (_mode == RunMode.Ai)
+            {
+                // 状态那句必须放在最后：ApplyMapping / AdvanceAfterImport 都会改写状态栏，
+                // 早设一句会被它们盖掉（第一版就是这么写的，单测当场抓出来了）。
+                StatusMessage = "表已导入（AI 模式）：先不绑定字段，正在让 AI 读懂这张表…";
+                // 导入完自己就去读（用户 2026-09-10 选的是"导入后自动读"，不用再点一下）。
+                RequestAiRead();
+            }
         }
         catch (Exception ex)
         {
@@ -1540,6 +1633,30 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         => key is MarkFieldKey.CartonNo or MarkFieldKey.CartonTotal
         || FieldRows.Any(r => r.Definition.Key == key && r.ColumnIndex >= 0)
         || !string.IsNullOrWhiteSpace(profile.FixedValueFor(key));
+
+    /// <summary>
+    /// 落地一条 AI 给的字段绑定（第 30 棒）：把某个字段连到某一列，**只动这一个字段**。
+    /// <para>走的仍是界面那条唯一的路——改 <see cref="FieldRowVm.ColumnIndex"/> 再 <c>ApplyMapping()</c>
+    /// （<c>CollectProfile</c> 是从字段行收方案的，所以不存在"第二套落地口径"）。</para>
+    /// <para>列下标越界、或这个字段本来就连在这一列，都如实回一句，不装作办了事。</para>
+    /// </summary>
+    public (bool Ok, string Message) BindField(LabelGou.Core.Marks.MarkFieldKey field, int columnIndex)
+    {
+        var data = _data;
+        if (data is null) return (false, "还没导入表格。");
+        if (columnIndex < 0 || columnIndex >= data.Headers.Count)
+            return (false, $"这一列（第 {columnIndex + 1} 列）不在表里，没动。");
+        var row = FieldRows.FirstOrDefault(r => r.FieldKey == field.ToString());
+        if (row is null) return (false, "字段清单里没有这一项，没动。");
+        var header = data.Headers[columnIndex];
+        if (row.ColumnIndex == columnIndex)
+            return (true, $"「{row.DisplayName}」本来就连在「{header}」这一列，不用改。");
+
+        row.ColumnIndex = columnIndex;
+        ApplyMapping();
+        return (true, $"「{row.DisplayName}」已连到「{header}」"
+            + $"（{LabelGou.Core.Data.HeaderRowDetector.ColumnLetter(columnIndex)}列），预览已跟着重算。");
+    }
 
     private void ApplyMapping()
     {

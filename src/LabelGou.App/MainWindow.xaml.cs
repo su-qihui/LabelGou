@@ -41,6 +41,14 @@ public partial class MainWindow : Window
         // 面板自己不知道模板库与打印在哪，三件事由这里递给它。
         WireAi(ai);
 
+        // 第 30 棒：AI 模式下导入完表，由 VM 喊一声让**主面板**去读（VM 不认识面板，走事件）。
+        // 只在这里订阅一次：浮动窗用的是同一个面板类，跟着 WireAi 一起订阅就会两个面板同时发请求
+        // （用户要付两次模型钱、还会看到两份卡片）。
+        _viewModel.AiReadRequested += () =>
+        {
+            if (_viewModel.IsAiMode) _ = AiPanel.AskProposalAsync();
+        };
+
         // 只拆 AI 这一块（用户 2026-09-08 的第二版要求：「我把 AI 窗口拆下来和排版拿来对照」）：
         // 预览留在主窗，AI 在窗外，两边同时看得见——上一版把整块（预览 + AI）一起搬走是理解错了。
         _aiPanel = new Services.DetachablePanel(AiHost, ai, "LabelGou · AI 助手")
@@ -569,6 +577,15 @@ public partial class MainWindow : Window
             var excluded = (choice.ExcludedRawRows ?? Array.Empty<int>())
                 .OrderBy(i => i).Select(i => i + 1).ToList();     // 卡上给人看的是 Excel 口径（1 起）
             var template = _viewModel.SelectedTemplate?.Template;
+            // 字段绑定（第 30 棒）：每个字段此刻连在哪一列。值给**列标题**——卡上"原值"那一格就是它。
+            var bindings = new Dictionary<LabelGou.Core.Marks.MarkFieldKey, string>();
+            foreach (var row in _viewModel.FieldRows)
+            {
+                if (!row.Mapped) continue;
+                if (!Enum.TryParse<LabelGou.Core.Marks.MarkFieldKey>(row.FieldKey, out var key)) continue;
+                var label = row.Columns.FirstOrDefault(c => c.Index == row.ColumnIndex)?.Label;
+                if (!string.IsNullOrWhiteSpace(label)) bindings[key] = label;
+            }
             return new LabelGou.Core.Recognition.AiChangeContext(
                 _viewModel.RawRowCount,
                 _viewModel.DetectedHeaderRow > 0 ? _viewModel.DetectedHeaderRow : null,
@@ -577,7 +594,8 @@ public partial class MainWindow : Window
                 _viewModel.SelectedTemplate?.Name,
                 template?.WidthMm,
                 template?.HeightMm,
-                _viewModel.Sheet.SelectedSheetOption?.Spec.Name);
+                _viewModel.Sheet.SelectedSheetOption?.Spec.Name,
+                bindings.Count == 0 ? null : bindings);
         };
         panel.ApplyChange = ApplyAiChange;
         // 「预览:31个模板,155张」那一句的数由软件自己数（按 AI 点的那一列逐行加），不信模型报的总数。
@@ -701,6 +719,14 @@ public partial class MainWindow : Window
                     return (false, "它这次没给出模板内容，这一条改不了——再点一次「读这张表并提案」，"
                         + "或直接点「让 AI 出一版排版」；附上更清楚的样张图最稳。");
                 return ApplyAiLayout(spec);
+
+            case LabelGou.Core.Recognition.AiChangeKind.FieldMapping:
+            {
+                // 第 30 棒：把"哪一列是哪个字段"落到 ② 步那张表上。只动这一个字段，其余不碰。
+                if (change.Binding is not { } binding)
+                    return (false, "这条绑定没带上列信息，没法落地——再点一次「读这张表并提案」。");
+                return _viewModel.BindField(binding.Field, binding.ColumnIndex);
+            }
 
             default:   // SheetSpec
             {

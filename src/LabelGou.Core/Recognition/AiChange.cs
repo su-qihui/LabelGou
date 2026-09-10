@@ -1,7 +1,7 @@
 namespace LabelGou.Core.Recognition;
 
 /// <summary>
-/// AI 一次改动落在哪一类上（阶段 29 第 1 棒）。
+/// AI 一次改动落在哪一类上（阶段 29 第 1 棒；<see cref="FieldMapping"/> 是第 30 棒加的）。
 /// <para>有类别，才谈得上「只落地被 ✅ 的那几条」。用户 2026-09-10 要的正是逐条确认/取消，
 /// 而不是整份点一次了事（旧路只有 <c>这些全都要（一次落地）</c> 一颗按钮）。</para>
 /// </summary>
@@ -18,6 +18,13 @@ public enum AiChangeKind
 
     /// <summary>用哪一张纸规。</summary>
     SheetSpec = 3,
+
+    /// <summary>
+    /// 字段绑定：哪一列是哪个唛头字段（第 30 棒）。
+    /// <para>这一类是「AI 主导」真正开始的地方——用户 2026-09-10 的核心诉求就是
+    /// 「导入后别先绑定，让 AI 读完再给绑定」，一处一卡、逐条放行。</para>
+    /// </summary>
+    FieldMapping = 4,
 }
 
 /// <summary>
@@ -35,6 +42,7 @@ public enum AiChangeKind
 /// <param name="LabelWidthMm">软件此刻标签宽（毫米）。</param>
 /// <param name="LabelHeightMm">软件此刻标签高（毫米）。</param>
 /// <param name="SheetSpecName">软件此刻用的纸规名；null = 没选中任何一张。</param>
+/// <param name="Bindings">软件此刻每个字段绑在哪一列（值 = 列标题；列没标题时给列字母）。缺席的字段 = 还没绑。</param>
 public sealed record AiChangeContext(
     int RawRowCount = 0,
     int? HeaderRow = null,
@@ -43,7 +51,8 @@ public sealed record AiChangeContext(
     string? TemplateName = null,
     double? LabelWidthMm = null,
     double? LabelHeightMm = null,
-    string? SheetSpecName = null)
+    string? SheetSpecName = null,
+    IReadOnlyDictionary<LabelGou.Core.Marks.MarkFieldKey, string>? Bindings = null)
 {
     /// <summary>什么都不知道的那一份（面板没接上上下文时用；显示成「还没定」而不是编一个数）。</summary>
     public static readonly AiChangeContext Empty = new();
@@ -59,7 +68,17 @@ public sealed record AiChangeContext(
 /// <param name="Target">改哪里，一句大白话（如「列名在第几行」）——不出现字段英文名。</param>
 /// <param name="Before">软件此刻是什么（原值）。</param>
 /// <param name="After">它会改成什么（新值）。</param>
-public sealed record AiChange(AiChangeKind Kind, string Target, string Before, string After)
+/// <param name="Binding">
+/// <see cref="AiChangeKind.FieldMapping"/> 那一类才有的落地料（哪个字段、连哪一列）。
+/// <para>为什么不靠 <paramref name="Target"/> 那串字反查：卡片上的话是**给人看的**，
+/// 拿它当键去查表就是"两处各写一套"，改一句文案就静默失效（§五-62 那类换路复发）。</para>
+/// </param>
+public sealed record AiChange(
+    AiChangeKind Kind,
+    string Target,
+    string Before,
+    string After,
+    AiFieldBinding? Binding = null)
 {
     /// <summary>
     /// 两边一样就是没变化。**没变化的项不许出卡**——卡上出现"改成一样的东西"等于逼人白审一条

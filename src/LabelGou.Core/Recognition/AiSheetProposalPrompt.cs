@@ -39,7 +39,7 @@ public static class AiSheetProposalPrompt
         int imageCount)
     {
         var sb = new StringBuilder();
-        sb.Append("任务：看下面这张表，给出「这张表该怎么切、这张纸该怎么摆」的提案。\n\n");
+        sb.Append("任务：看下面这张表，给出「每一列是什么字段、这张表该怎么切、这张纸该怎么摆」的提案。\n\n");
         sb.Append(portrait).Append('\n');
         sb.Append("\n原表一共 ").Append(rawRowCount).Append(" 行；软件目前把表头猜在第 ")
           .Append(detectedHeaderRow > 0 ? detectedHeaderRow.ToString() : "？").Append(" 行；当前标签尺寸 ")
@@ -53,9 +53,20 @@ public static class AiSheetProposalPrompt
               + "就算这一块有几行被截断或看不清，也照你看见的那几行给出 rows，在 reason 里说哪几行没看清——不要因为它看不全就省略 rows。\n"
               + "表里确实没有这一块 → rows 省略，只报你在表里看到的事实，不要凭列名编设计。\n");
 
+        // 第 30 棒：AI 模式下"由 AI 绑定"是**主动作**（用户的原话：导入后不该先绑定，先让 AI 理解再绑），
+        // 所以这一段要写得比版式那段更硬：按列里的真实内容判，拿不准宁可少报。
+        sb.Append("\n最重要的一件事：**指出每一列是什么字段**（mappings）。\n")
+          .Append("  列名常常写成「货号 ITEM NO:」「毛重G.W.(kg)」这种中英混排，也可能是纯英文、缩写，或者根本不着调——\n")
+          .Append("  要按列里的**真实内容**判断它是什么，别只看列名。\n")
+          .Append("  field 只能从下面「字段清单」里选。拿不准的列**不要硬塞**：软件宁可少一个绑定，也不要错一个——\n")
+          .Append("  错一列就是数错张数、印错货，老板要按这一列出纸。\n");
+
         sb.Append("\n只回这样一个 JSON 对象（字段可省略，行号一律用**原表行号、从 1 起**，与人看 Excel 的口径一致）：\n");
         sb.Append("{\n");
         sb.Append("  \"dataCols\": 4,                        // 真正有用的数据几列（不算空白列、不算抄模板那一块）\n");
+        sb.Append("  \"mappings\": [                        // 哪一列是哪个字段：column 写列字母/列号/表头原样都行，field 只能写字段清单里的键\n");
+        sb.Append("    { \"column\": \"B\", \"field\": \"CartonTotal\" },\n");
+        sb.Append("    { \"column\": \"毛重G.W.(kg)\", \"field\": \"GrossWeight\" } ],\n");
         sb.Append("  \"paperText\": \"一开四--28*20--2*2--14*10\", // 纸那一句怎么写给人看：名字--纸厘米--每行*每页--标签厘米\n");
         sb.Append("  \"templateSource\": \"F列\",             // 模板抄在哪一列/哪一块\n");
         sb.Append("  \"qtyColumn\": \"B\",                   // 每个货出几张纸按哪一列数（写列字母、列号或表头原样都行）\n");
@@ -81,8 +92,8 @@ public static class AiSheetProposalPrompt
             sb.Append("\n纸规清单（只能选这些名字，写别的会被拒）：\n");
             foreach (var name in sheetSpecNames.Take(20)) sb.Append("  - ").Append(name).Append('\n');
         }
-        sb.Append("\n字段清单（rows 里能用的 {{键}}）：\n  ");
-        sb.Append(string.Join(" ", MarkFieldCatalog.Mappable.Select(d => d.Key))).Append('\n');
+        sb.Append("\n字段清单（mappings 的 field 与 rows 里的 {{键}} 都只能用这些）：\n  ");
+        sb.Append(string.Join(" ", MarkFieldCatalog.Mappable.Select(d => d.Key + "(" + d.ChineseName + ")"))).Append('\n');
         sb.Append("硬性约束：行号必须在 1~").Append(rawRowCount).Append(" 之间；列名那一行不能同时被列进 totalRows；")
           .Append("不要输出毫米坐标、不要改纸张几何（只点名用哪张纸）；看不清就说看不清，宁可省略字段。\n");
         sb.Append("说话要求：reason 用中文大白话、一句说完；不要出现 rows、JSON、字段英文名这些词（软件自己会把你回的话写成五行：")

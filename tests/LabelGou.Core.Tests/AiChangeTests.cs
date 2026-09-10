@@ -1,4 +1,5 @@
 using LabelGou.Core.Data;
+using LabelGou.Core.Marks;
 using LabelGou.Core.Recognition;
 using Xunit;
 
@@ -137,5 +138,94 @@ public class AiChangeTests
         Assert.Equal(0, choice.HeaderRowIndex);               // 第 24 棒定的口径：0 = 第一行也当数据
         // 首行当货时没有哪一行需要被保护：它说第 1 行是合计行，那就真剔第 1 行（下标 0）。
         Assert.Equal(new[] { 0 }, choice.ExcludedRawRows);
+    }
+
+    // ───────────────────── 字段绑定（第 30 棒：AI 模式下由 AI 绑定） ─────────────────────
+
+    /// <summary>三列真表（列序与"已绑了谁"都按真表的样子给）。</summary>
+    private static readonly IReadOnlyList<ColumnPortrait> ThreeColumns = new[]
+    {
+        new ColumnPortrait(0, "流水号", "流水号", null, null, new[] { "AJ1" }, 2),
+        new ColumnPortrait(1, "货号 ITEM NO:", "货号 ITEM NO:", "ItemNo", "货号/款号", new[] { "olu830-35" }, 2),
+        new ColumnPortrait(2, "毛重G.W.(kg)", "毛重G.W.(kg)", null, null, new[] { "5" }, 2),
+    };
+
+    private const string OneMapping = """
+        { "mappings": [ { "column": "毛重G.W.(kg)", "field": "GrossWeight" } ] }
+        """;
+
+    [Fact]
+    public void 字段绑定也出卡_没绑的原值就写没绑()
+    {
+        var p = AiSheetProposal.Parse(OneMapping, ThreeColumns, 13, null);
+
+        var binding = Assert.Single(p.Mappings);              // 列对回了真表头
+        Assert.Equal(MarkFieldKey.GrossWeight, binding.Field);
+        Assert.Equal(2, binding.ColumnIndex);
+
+        var card = Assert.Single(p.DescribeChanges(new AiChangeContext(RawRowCount: 13)));
+        Assert.Equal(AiChangeKind.FieldMapping, card.Kind);
+        Assert.Equal("字段绑定：毛重", card.Target);
+        Assert.Equal("没绑", card.Before);
+        Assert.Equal("毛重G.W.(kg)（C列）", card.After);
+        Assert.NotNull(card.Binding);                         // 落地料跟着卡片走，不靠文案反查
+    }
+
+    [Fact]
+    public void 已经绑在同一列就不出卡_绑在别列时原值写那一列()
+    {
+        var p = AiSheetProposal.Parse(OneMapping, ThreeColumns, 13, null);
+
+        var same = new AiChangeContext(RawRowCount: 13,
+            Bindings: new Dictionary<MarkFieldKey, string> { [MarkFieldKey.GrossWeight] = "毛重G.W.(kg)" });
+        Assert.Empty(p.DescribeChanges(same));                // 无变化不出卡
+
+        var other = new AiChangeContext(RawRowCount: 13,
+            Bindings: new Dictionary<MarkFieldKey, string> { [MarkFieldKey.GrossWeight] = "净重" });
+        var card = Assert.Single(p.DescribeChanges(other));
+        Assert.Equal("净重", card.Before);                     // 原值 = 此刻真绑的那一列
+    }
+
+    [Fact]
+    public void 字段名写中文别名也认_认不出的字段与列一律丢并记明原因()
+    {
+        const string json = """
+            { "mappings": [
+              { "column": "毛重G.W.(kg)", "field": "毛重" },
+              { "column": "流水号", "field": "不存在的字段" },
+              { "column": "Z", "field": "ItemNo" } ] }
+            """;
+
+        var p = AiSheetProposal.Parse(json, ThreeColumns, 13, null);
+
+        var only = Assert.Single(p.Mappings);                 // 只活下来中文别名那一条
+        Assert.Equal(MarkFieldKey.GrossWeight, only.Field);
+        Assert.Contains(p.Notes, n => n.Contains("不存在的字段"));   // 字段不在白名单
+        Assert.Contains(p.Notes, n => n.Contains("没对上这一列"));   // 列 Z 不在表里
+    }
+
+    [Fact]
+    public void 同一个字段报了两列只留第一条()
+    {
+        const string json = """
+            { "mappings": [
+              { "column": "毛重G.W.(kg)", "field": "GrossWeight" },
+              { "column": "流水号", "field": "GrossWeight" } ] }
+            """;
+
+        var p = AiSheetProposal.Parse(json, ThreeColumns, 13, null);
+
+        var only = Assert.Single(p.Mappings);
+        Assert.Equal(2, only.ColumnIndex);                    // 留着的是第一条（C 列），不是后一条
+        Assert.Contains(p.Notes, n => n.Contains("不止一列"));
+    }
+
+    [Fact]
+    public void 没有列画像时一条绑定都不采纳_不许拿列字母瞎对()
+    {
+        var p = AiSheetProposal.Parse(OneMapping, null, 13, null);
+
+        Assert.Empty(p.Mappings);
+        Assert.Contains(p.Notes, n => n.Contains("列清单"));
     }
 }

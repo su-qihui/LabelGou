@@ -1,7 +1,9 @@
 using System.IO;
 using System.Text;
 using LabelGou.App.Export;
+using LabelGou.App.Services;
 using LabelGou.App.ViewModels;
+using LabelGou.Core;
 using LabelGou.Core.Editing;
 using Xunit;
 
@@ -14,6 +16,13 @@ namespace LabelGou.App.Tests;
 /// </summary>
 public sealed class B24ManualSlicingTests : IDisposable
 {
+    /// <summary>
+    /// 第 30 棒：默认运行模式已改成 **AI 模式**（导入后先不绑定，交 AI 读完整张表再由它绑）。
+    /// 这一类测的是**离线模式**那条路（导入即自动连线，模板告警才有"这批是谁的货"可比），
+    /// 所以模式显式写死，别让它跟着默认值漂。
+    /// </summary>
+    private static MainViewModel OfflineVm() => new(TestEnvironment.NewTempUiStateStore()) { Mode = RunMode.Offline };
+
     private readonly string _dir = TestEnvironment.NewTempDir("labelgou-b24");
 
     private static T OnSta<T>(Func<T> work)
@@ -38,7 +47,7 @@ public sealed class B24ManualSlicingTests : IDisposable
     {
         var (recordsOff, recordsOn, info) = OnSta(() =>
         {
-            var vm = new MainViewModel(TestEnvironment.NewTempUiStateStore());
+            var vm = OfflineVm();
             vm.LoadSource(WriteCsv("tail.csv", WithSummaryTail), null);
             vm.ApplyMappingCommand.Execute(null);
             var on = vm.RecordTotal;
@@ -59,7 +68,7 @@ public sealed class B24ManualSlicingTests : IDisposable
     {
         var (backOn, msg) = OnSta(() =>
         {
-            var vm = new MainViewModel(TestEnvironment.NewTempUiStateStore());
+            var vm = OfflineVm();
             vm.LoadSource(WriteCsv("tail.csv", WithSummaryTail), null);
             vm.SkipSummaryRowsChecked = false;
             vm.SkipSummaryRowsChecked = true;
@@ -75,7 +84,7 @@ public sealed class B24ManualSlicingTests : IDisposable
     {
         var (flaggedWhileOn, flaggedWhileOff) = OnSta(() =>
         {
-            var vm = new MainViewModel(TestEnvironment.NewTempUiStateStore());
+            var vm = OfflineVm();
             vm.LoadSource(WriteCsv("tail.csv", WithSummaryTail), null);
             var on = vm.RowAutoSkippedByHeuristic(3);     // 原表第 4 行（0 起 = 3）
             vm.SkipSummaryRowsChecked = false;
@@ -91,7 +100,7 @@ public sealed class B24ManualSlicingTests : IDisposable
     {
         var (hasHeaderAfter, info) = OnSta(() =>
         {
-            var vm = new MainViewModel(TestEnvironment.NewTempUiStateStore());
+            var vm = OfflineVm();
             vm.LoadSource(WriteCsv("nohead.csv", "AJ7,3\nAJ8,5\n"), null);
             var noHeader = vm.HeaderRowOptions.First(o => !o.HasHeader);
             vm.SelectedHeaderRowOption = noHeader;
@@ -107,7 +116,7 @@ public sealed class B24ManualSlicingTests : IDisposable
     {
         var (count, autoLabel, hasRow3) = OnSta(() =>
         {
-            var vm = new MainViewModel(TestEnvironment.NewTempUiStateStore());
+            var vm = OfflineVm();
             vm.LoadSource(WriteCsv("tail.csv", WithSummaryTail), null);
             var opts = vm.HeaderRowOptions;
             return (opts.Count, opts[0].Label, opts.Any(o => o.HeaderIndex == 2));
@@ -123,7 +132,7 @@ public sealed class B24ManualSlicingTests : IDisposable
     {
         var (cautions, inIssues) = OnSta(() =>
         {
-            var vm = new MainViewModel(TestEnvironment.NewTempUiStateStore());
+            var vm = OfflineVm();
             var t = TemplateFactory.Blank("别家留下的模板");
             t.Elements.Add(TemplateFactory.NewText("BOLAROM", 6, 60, 88, 12, 20));
             Assert.True(vm.Templates.Save(t).Saved);
@@ -146,7 +155,7 @@ public sealed class B24ManualSlicingTests : IDisposable
     {
         var cautions = OnSta(() =>
         {
-            var vm = new MainViewModel(TestEnvironment.NewTempUiStateStore());
+            var vm = OfflineVm();
             vm.LoadSource(WriteCsv("kimu.csv", "客户 CONSIGNEE,货号 ITEM NO\n金沐,olu830-35\n"), null);
             vm.ApplyMappingCommand.Execute(null);
             return vm.TemplateCautions;

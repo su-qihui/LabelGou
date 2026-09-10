@@ -164,6 +164,22 @@
                                 <ComboBox Grid.Column="1" ItemsSource="{Binding Sheets}" SelectedItem="{Binding SelectedSheet}" />
                             </Grid>
 
+                            <!-- 第 30 棒：运行模式。放在 ① 步，因为它决定的正是"导入之后怎么走"：
+                                 用户 2026-09-10 的原话是「AI 模式导入表格后不应该直接绑定数据，
+                                 先把表格给 AI 理解后由 AI 绑定」。默认 AI 模式，随时能切回离线。 -->
+                            <Grid Margin="0,6,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="运行模式：" VerticalAlignment="Center" />
+                                <ComboBox Grid.Column="1" ItemsSource="{Binding ModeOptions}"
+                                          SelectedItem="{Binding SelectedMode, Mode=TwoWay}"
+                                          ToolTip="AI 模式：导入后先不绑定，让 AI 读懂整张表再给绑定方案，你逐条确认才生效。&#x0a;离线模式：导入后照旧按表头自动连线、人工可调，全程不联网。" />
+                            </Grid>
+                            <TextBlock Style="{StaticResource Hint}" TextWrapping="Wrap" Margin="0,4,0,4"
+                                       Text="AI 模式：导入后先不绑定字段，由 AI 读完整张表后给绑定方案，你逐条确认才生效；离线模式照旧自动连线，随时可切。" />
+
                             <TextBlock Text="{Binding HeaderInfoText}" Style="{StaticResource Hint}" Margin="0,6,0,4" />
 
                             <!-- 第 24 棒：切法不再只能靠 AI 提案或菜单——① 步直接能选；改的都是重读一遍源文件，失败自动退回原样 -->

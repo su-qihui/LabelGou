@@ -7,6 +7,7 @@ using System.Threading;
 using LabelGou.App.Export;
 using LabelGou.App.Services;
 using LabelGou.App.ViewModels;
+using LabelGou.Core;
 using LabelGou.Core.Marks;
 using LabelGou.Core.Templates;
 using Xunit;
@@ -21,6 +22,12 @@ namespace LabelGou.App.Tests;
 /// </summary>
 public sealed class TemplatePickAndReminderTests : IDisposable
 {
+    /// <summary>
+    /// 第 30 棒：默认运行模式已改成 **AI 模式**（导入后先不绑定，交 AI 读完整张表再由它绑）。
+    /// 这一类测的是**离线模式**那条路——「导入即自动连线」是模板自动接手按命中率挑的前提，
+    /// 所以模式在这里显式写死，别让它跟着默认值漂（不写的话测的就不是自己要测的东西）。
+    /// </summary>
+    private static MainViewModel OfflineVm(UiStateStore store) => new(store) { Mode = RunMode.Offline };
     private readonly string _dir = TestEnvironment.NewTempDir("labelgou-pick");
 
     /// <summary>MainViewModel 会碰 WPF 类型，必须在 STA 线程上造。</summary>
@@ -53,7 +60,7 @@ public sealed class TemplatePickAndReminderTests : IDisposable
 
         var picked = OnSta(() =>
         {
-            var vm = new MainViewModel(store);
+            var vm = OfflineVm(store);
             Assert.Equal(BuiltInTemplates.IdStandard, vm.SelectedTemplate?.Id);   // 起点是用户记的那套九字段
             vm.LoadSource(csv, null);
             return vm.SelectedTemplate?.Id;
@@ -73,7 +80,7 @@ public sealed class TemplatePickAndReminderTests : IDisposable
 
         var status = OnSta(() =>
         {
-            var vm = new MainViewModel(store);
+            var vm = OfflineVm(store);
             vm.LoadSource(csv, null);
             vm.AutoSuggestCommand.Execute(null);
             return vm.StatusMessage;
@@ -92,7 +99,7 @@ public sealed class TemplatePickAndReminderTests : IDisposable
 
         var status = OnSta(() =>
         {
-            var vm = new MainViewModel(store);
+            var vm = OfflineVm(store);
             vm.LoadSource(csv, null);
             vm.AutoSuggestCommand.Execute(null);
             return vm.StatusMessage;
@@ -111,7 +118,7 @@ public sealed class TemplatePickAndReminderTests : IDisposable
 
         var after = OnSta(() =>
         {
-            var vm = new MainViewModel(store);
+            var vm = OfflineVm(store);
             vm.LoadSource(csv, null);                       // 自动接手换成行式四行
             var autoSwitched = vm.SelectedTemplate?.Id;
             vm.SelectedTemplate = vm.TemplateOptions.First(t => t.Id == BuiltInTemplates.IdRowsBigTwo);
@@ -133,7 +140,7 @@ public sealed class TemplatePickAndReminderTests : IDisposable
 
         var after = OnSta(() =>
         {
-            var vm = new MainViewModel(store);                           // 兜底选中内置行式四行
+            var vm = OfflineVm(store);                           // 兜底选中内置行式四行
             return vm.SelectedTemplate?.Id;
         });
 
@@ -151,7 +158,7 @@ public sealed class TemplatePickAndReminderTests : IDisposable
 
         var gens = OnSta(() =>
         {
-            var vm = new MainViewModel(store);
+            var vm = OfflineVm(store);
             var atStart = vm.DataGeneration;
             vm.LoadSource(csv, null);
             var afterLoad = vm.DataGeneration;
@@ -178,7 +185,7 @@ public sealed class TemplatePickAndReminderTests : IDisposable
 
         var status = OnSta<string>(() =>
         {
-            var vm = new MainViewModel(store);
+            var vm = OfflineVm(store);
             vm.LoadSource(csv, null);
             return vm.StatusMessage;
         });
@@ -194,7 +201,7 @@ public sealed class TemplatePickAndReminderTests : IDisposable
 
         OnSta(() =>
         {
-            var vm = new MainViewModel(TestEnvironment.NewTempUiStateStore());
+            var vm = OfflineVm(TestEnvironment.NewTempUiStateStore());
             vm.LoadSource(csv, null);
             Assert.Equal(BuiltInTemplates.IdRowsFour, vm.SelectedTemplate?.Id);
 
@@ -219,7 +226,7 @@ public sealed class TemplatePickAndReminderTests : IDisposable
 
         OnSta(() =>
         {
-            var vm = new MainViewModel(TestEnvironment.NewTempUiStateStore());
+            var vm = OfflineVm(TestEnvironment.NewTempUiStateStore());
             vm.LoadSource(csv, null);
             vm.SelectedTemplate = vm.TemplateOptions.First(t => t.Id == BuiltInTemplates.IdStandard);
 
@@ -238,7 +245,7 @@ public sealed class TemplatePickAndReminderTests : IDisposable
 
         OnSta(() =>
         {
-            var vm = new MainViewModel(TestEnvironment.NewTempUiStateStore());
+            var vm = OfflineVm(TestEnvironment.NewTempUiStateStore());
             vm.LoadSource(csv, null);
             vm.SelectedTemplate = vm.TemplateOptions.First(t => t.Id == BuiltInTemplates.IdRowsFour);
 
@@ -255,7 +262,7 @@ public sealed class TemplatePickAndReminderTests : IDisposable
         var rows = new List<MainViewModel.FixedValueRow>();
         OnSta(() =>
         {
-            var vm = new MainViewModel(TestEnvironment.NewTempUiStateStore());
+            var vm = OfflineVm(TestEnvironment.NewTempUiStateStore());
             vm.LoadSource(WriteCsv("三列表.csv", "货号 ITEM NO:", "件数 CTN", "数量 QTY"), null);
             rows.AddRange(vm.BuildFixedValueRows());
             return true;

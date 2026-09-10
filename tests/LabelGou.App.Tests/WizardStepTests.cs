@@ -8,6 +8,7 @@ using System.Windows;
 using LabelGou.App.Export;
 using LabelGou.App.Mvvm;
 using LabelGou.App.ViewModels;
+using LabelGou.Core;
 using Xunit;
 
 namespace LabelGou.App.Tests;
@@ -107,6 +108,10 @@ public sealed class WizardStepTests : IDisposable
         OnSta(() =>
         {
             var vm = NewVm();
+            // 第 30 棒：默认运行模式已改成 **AI 模式**（导入后先不绑定，交 AI 读完整张表再由它绑）。
+            // 这条测的是**离线模式**那条路——「自动连接已经在跑，结果必须露在眼前」，
+            // 所以模式必须显式写出来，别让它跟着默认值漂（不写的话这条测的就不是自己要测的东西了）。
+            vm.Mode = RunMode.Offline;
             Assert.Equal(0, vm.StepIndex);
 
             vm.LoadSource(csv, null);

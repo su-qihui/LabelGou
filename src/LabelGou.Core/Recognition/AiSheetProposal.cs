@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using LabelGou.Core.Data;
+using LabelGou.Core.Marks;
 using LabelGou.Core.Templates;
 
 namespace LabelGou.Core.Recognition;
@@ -31,6 +32,11 @@ namespace LabelGou.Core.Recognition;
 /// <param name="Errors">这条提案不能用的原因。非空时确认窗只准看不准「用这个」。</param>
 /// <param name="Readout">这份读表结果里「给人看的那五行」的料（几列、模板抄在哪一列、按哪列数张数）。</param>
 /// <param name="Questions">拿不准、要人二选一的那几条（第 22 棒：用户要的「⚠️ 一条问题 + ❌/✅ 两个按钮」）。</param>
+/// <param name="Mappings">
+/// 它报的**字段绑定**（第 30 棒）：哪一列是哪个唛头字段。
+/// <para>用户 2026-09-10 的诉求是「AI 模式导入表格后不应该直接绑定，先把表格给 AI 理解后由 AI 绑定」，
+/// 这一份就是"由 AI 绑定"的载体——经白名单与列回查校验后，逐条变成改动卡等人 ✅。</para>
+/// </param>
 public sealed record AiSheetProposal(
     int? HeaderRow,
     bool? HasHeader,
@@ -47,7 +53,8 @@ public sealed record AiSheetProposal(
     IReadOnlyList<string> Notes,
     IReadOnlyList<string> Errors,
     SheetReadout Readout,
-    IReadOnlyList<AiSheetQuestion> Questions)
+    IReadOnlyList<AiSheetQuestion> Questions,
+    IReadOnlyList<AiFieldBinding> Mappings)
 {
     /// <summary>能用才允许落地（与行式版式那份 <c>RowLayoutProposal.HasSpec</c> 同一条纪律）。</summary>
     public bool IsUsable => Errors.Count == 0;
@@ -57,7 +64,7 @@ public sealed record AiSheetProposal(
         HeaderRow is null && HasHeader is null && TotalValueRows.Count == 0 && Layout is null &&
         SheetSpecName is null && PaperWidthMm is null && PaperHeightMm is null &&
         Columns is null && Rows is null && FollowsLabel is null && Readout.QtyColumn is null &&
-        Questions.Count == 0;
+        Questions.Count == 0 && Mappings.Count == 0;
 
     /// <summary>
     /// 折成切表指令。<paramref name="rawRowCount"/> 是原表总行数（用来把 1 起的行号换成 0 起并挡住越界）。
@@ -186,6 +193,19 @@ public sealed record AiSheetProposal(
         {
             list.Add(new AiChange(AiChangeKind.SheetSpec, "用哪张纸",
                 c.SheetSpecName is { Length: > 0 } old ? old : "（软件自动挑一张）", specName));
+        }
+
+        // ── 字段绑定（第 30 棒）：一条卡一个字段 ──
+        // 现在绑在哪一列由"原值"说清；已经绑在这一列的不出卡（无变化不出卡，同一条纪律）。
+        foreach (var m in Mappings)
+        {
+            var bound = c.Bindings is { } known && known.TryGetValue(m.Field, out var old) ? old : null;
+            if (bound is { Length: > 0 }
+                && string.Equals(bound.Trim(), m.ColumnHeader.Trim(), StringComparison.OrdinalIgnoreCase))
+                continue;
+            var after = m.ColumnHeader + "（" + HeaderRowDetector.ColumnLetter(m.ColumnIndex) + "列）";
+            list.Add(new AiChange(AiChangeKind.FieldMapping, "字段绑定：" + m.FieldName,
+                bound is { Length: > 0 } ? bound : "没绑", after, m));
         }
 
         return list;
@@ -342,6 +362,10 @@ public sealed record AiSheetProposal(
         ["qtyColumn"] = "qtyColumn", ["张数列"] = "qtyColumn", ["数量列"] = "qtyColumn", ["按列数张数"] = "qtyColumn",
         ["paperText"] = "paperText", ["纸张"] = "paperText",
         ["questions"] = "questions", ["问题"] = "questions", ["待确认"] = "questions",
+        // 第 30 棒：字段绑定那一段。模型会写成 bindings / fields / 字段绑定，都收。
+        ["mappings"] = "mappings", ["mapping"] = "mappings", ["bindings"] = "mappings",
+        ["binding"] = "mappings", ["fields"] = "mappings", ["columnMapping"] = "mappings",
+        ["字段绑定"] = "mappings", ["绑定"] = "mappings", ["列绑定"] = "mappings", ["字段"] = "mappings",
     };
 
     /// <summary>
@@ -475,12 +499,98 @@ public sealed record AiSheetProposal(
                 new SheetReadout(dataCols, TextField(fields, "templateSource", 20),
                     layout?.Spec is { } spec ? FriendlyTemplateLines(spec, columns) : Array.Empty<string>(),
                     qtyHeader, qtyIndex, TextField(fields, "paperText", 60)),
-                ParseQuestions(fields, rawRowCount, notes));
+                ParseQuestions(fields, rawRowCount, notes),
+                ParseMappings(fields, columns, notes));
         }
 
         AiSheetProposal Bad(string why) => new(null, null, Array.Empty<int>(), null, null,
             null, null, null, null, null, Array.Empty<string>(), null, Array.Empty<string>(),
-            new[] { why }, SheetReadout.Empty, Array.Empty<AiSheetQuestion>());
+            new[] { why }, SheetReadout.Empty, Array.Empty<AiSheetQuestion>(),
+            Array.Empty<AiFieldBinding>());
+    }
+
+    /// <summary>
+    /// 解它报的**字段绑定**（第 30 棒）。两道校验缺一不可：**字段必须命中 19 个标准字段白名单、列必须能对回这张表真有的列**。
+    /// <para>认不出的一律只留一句 Note 并丢掉那一条——<strong>猜错一列就是数错张数、印错货</strong>，
+    /// 与 <see cref="ResolveColumn"/>「宁可不写那一句」是同一条口径。同一个字段报了两列只留第一条。</para>
+    /// <para>没有列画像时一条都不采纳：拿列字母瞎对等于替用户把错误的绑定签了字。</para>
+    /// </summary>
+    private static IReadOnlyList<AiFieldBinding> ParseMappings(
+        Dictionary<string, JsonElement> fields,
+        IReadOnlyList<ColumnPortrait>? columns,
+        List<string> notes)
+    {
+        var list = new List<AiFieldBinding>();
+        if (!fields.TryGetValue("mappings", out var el) || el.ValueKind != JsonValueKind.Array) return list;
+        if (columns is null || columns.Count == 0)
+        {
+            notes.Add("它报了字段绑定，但这次没拿到这张表的列清单，没法核对 —— 一条都没采纳");
+            return list;
+        }
+        var taken = new HashSet<MarkFieldKey>();
+        foreach (var item in el.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.Object) continue;
+            var f = new Dictionary<string, JsonElement>(StringComparer.OrdinalIgnoreCase);
+            foreach (var prop in item.EnumerateObject()) f[prop.Name] = prop.Value;
+            string? Get(params string[] keys) => keys
+                .Select(k => f.TryGetValue(k, out var v) ? ReadText(v)?.Trim() : null)
+                .FirstOrDefault(t => !string.IsNullOrEmpty(t));
+
+            var columnWanted = Get("column", "col", "列", "列名", "列字母");
+            var fieldWanted = Get("field", "key", "字段", "字段名");
+            if (columnWanted is null || fieldWanted is null) continue;
+
+            var field = ResolveField(fieldWanted);
+            if (field is null)
+            {
+                notes.Add($"它说「{Shrink(columnWanted, 12)}」这一列是「{Shrink(fieldWanted, 16)}」，"
+                          + "可这不是个标准唛头字段 —— 这条没采纳");
+                continue;
+            }
+            if (!taken.Add(field.Value))
+            {
+                notes.Add($"「{MarkFieldCatalog.Get(field.Value).ChineseName}」它说了不止一列，只按第一条算");
+                continue;
+            }
+            var (header, index) = ResolveColumn(columnWanted, columns);
+            if (header is null || index is null)
+            {
+                notes.Add($"它说「{MarkFieldCatalog.Get(field.Value).ChineseName}」读「{Shrink(columnWanted, 16)}」，"
+                          + "可表里没对上这一列 —— 这条没采纳");
+                taken.Remove(field.Value);      // 没采纳就把名额放回去，后面那条还有机会
+                continue;
+            }
+            list.Add(new AiFieldBinding(field.Value, index.Value, header, Get("reason", "理由", "why")));
+        }
+        return list;
+    }
+
+    /// <summary>
+    /// 把模型口里的字段名解析成 <see cref="MarkFieldKey"/>：**只认白名单里的那 19 个**。
+    /// <para>先按枚举名（<c>ItemNo</c>，走 <see cref="MarkFieldCatalog.TryParseKey"/>），
+    /// 再按中文名 / 英文标记 / 别名——用户看 Excel 就说"货号"，模型也常这么写；中文名还常写成
+    /// 「货号/款号」这种两说，所以拆开逐段再比一轮。</para>
+    /// <para>认不出就返回 null：<strong>宁可丢一条，也不猜一个"意思相近"的字段</strong>。</para>
+    /// </summary>
+    internal static MarkFieldKey? ResolveField(string? wanted)
+    {
+        if (MarkFieldCatalog.TryParseKey(wanted, out var direct)) return direct;
+        var text = wanted?.Trim();
+        if (string.IsNullOrEmpty(text)) return null;
+        var squeezed = text.Replace(" ", string.Empty);
+        foreach (var d in MarkFieldCatalog.Mappable)
+        {
+            if (string.Equals(d.ChineseName, text, StringComparison.OrdinalIgnoreCase)) return d.Key;
+            if (string.Equals(d.ChineseName.Replace(" ", string.Empty), squeezed, StringComparison.OrdinalIgnoreCase)) return d.Key;
+            if (string.Equals(d.EnglishLabel, text, StringComparison.OrdinalIgnoreCase)) return d.Key;
+            foreach (var alias in d.Aliases)
+                if (string.Equals(alias.Replace(" ", string.Empty), squeezed, StringComparison.OrdinalIgnoreCase)) return d.Key;
+        }
+        foreach (var d in MarkFieldCatalog.Mappable)
+            foreach (var part in d.ChineseName.Split('/', '|', '｜', '、'))
+                if (string.Equals(part.Trim(), squeezed, StringComparison.OrdinalIgnoreCase)) return d.Key;
+        return null;
     }
 
     /// <summary>同义词→四个认得的动作（模型会写 keepRow、也会写「重排」）。</summary>
