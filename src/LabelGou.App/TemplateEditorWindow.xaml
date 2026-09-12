@@ -64,6 +64,10 @@
                 <Button Content="贴底" Command="{Binding AlignCommand}" CommandParameter="Bottom" />
                 <Separator Width="14" Background="Transparent" />
 
+                <Button Content="缩回纸内" Command="{Binding ShrinkIntoLabelCommand}"
+                        ToolTip="选中的文字排到纸外时，按内容区能容下的比例把字号与盒高一起缩小并挪回纸内（撤销可退）" />
+                <Separator Width="14" Background="Transparent" />
+
                 <TextBlock Text="内边距：" Style="{StaticResource Caption}" />
                 <Button Content="左" Command="{Binding PaddingCommand}" CommandParameter="Left" ToolTip="贴到内边距线（黄虚线）" />
                 <Button Content="中" Command="{Binding PaddingCommand}" CommandParameter="Center" />
@@ -71,6 +75,8 @@
                 <Button Content="底" Command="{Binding PaddingCommand}" CommandParameter="Bottom" />
                 <Separator Width="14" Background="Transparent" />
 
+                <Button Content="上移一层" Command="{Binding MoveUpCommand}" ToolTip="往上一层层挪；原来只有「置最上/置最下」一步到顶，想微调一层只能整个弹到头，看着像图层动不了" />
+                <Button Content="下移一层" Command="{Binding MoveDownCommand}" ToolTip="往下一层层挪" />
                 <Button Content="置最上" Command="{Binding BringToFrontCommand}" ToolTip="压在别的元素上面" />
                 <Button Content="置最下" Command="{Binding SendToBackCommand}" ToolTip="垫到别的元素下面" />
                 <Button Content="撤销" Command="{Binding UndoCommand}" ToolTip="Ctrl+Z" />
@@ -234,6 +240,9 @@
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
                                 </Grid.RowDefinitions>
 
                                 <TextBlock Grid.Row="0" Text="类型" Style="{StaticResource Caption}" />
@@ -284,7 +293,33 @@
                                     <ComboBoxItem Tag="{x:Static tm:HorizontalAlign.Right}">右对齐</ComboBoxItem>
                                 </ComboBox>
 
-                                <CheckBox Content="显示这个元素" IsChecked="{Binding Editing.Visible}" Grid.Row="10" Grid.Column="1" Margin="0,6,0,0" />
+                                <TextBlock Grid.Row="10" Text="字体" Style="{StaticResource Caption}" Visibility="{Binding Editing.CanSetFont, Converter={StaticResource BoolVis}}" />
+                                <ComboBox Grid.Row="10" Grid.Column="1" Margin="0,0,0,4" IsEditable="True"
+                                          ItemsSource="{Binding SystemFonts}" Text="{Binding Editing.FontFamily, UpdateSourceTrigger=PropertyChanged}"
+                                          ToolTip="下拉选本机已装的系统字体，也可直接打字；缺的字体出片时会自动回退到默认字体"
+                                          Visibility="{Binding Editing.CanSetFont, Converter={StaticResource BoolVis}}" />
+
+                                <TextBlock Grid.Row="11" Text="旋转(°)" Style="{StaticResource Caption}" Visibility="{Binding Editing.CanRotate, Converter={StaticResource BoolVis}}" />
+                                <TextBox Grid.Row="11" Grid.Column="1" Margin="0,0,0,4" Text="{Binding Editing.RotationDeg, StringFormat={}{0:0.##}}"
+                                         ToolTip="绕元素中心顺时针旋转；条码不许转（歪了扫描枪认不出）"
+                                         Visibility="{Binding Editing.CanRotate, Converter={StaticResource BoolVis}}" />
+
+                                <TextBlock Grid.Row="12" Text="字面拉伸" Style="{StaticResource Caption}" Visibility="{Binding Editing.CanStretchText, Converter={StaticResource BoolVis}}" />
+                                <StackPanel Grid.Row="12" Grid.Column="1" Orientation="Horizontal" Margin="0,0,0,4"
+                                            ToolTip="把字身抻宽/压扁（1=原样）；不等比，只改字面不改折行。也可直接拖文字四边的手柄"
+                                            Visibility="{Binding Editing.CanStretchText, Converter={StaticResource BoolVis}}">
+                                    <TextBlock Text="横" VerticalAlignment="Center" FontSize="11" />
+                                    <TextBox Width="46" Margin="3,0,0,0" Text="{Binding Editing.TextScaleX, StringFormat={}{0:0.###}}" />
+                                    <TextBlock Text="纵" VerticalAlignment="Center" FontSize="11" Margin="10,0,0,0" />
+                                    <TextBox Width="46" Margin="3,0,0,0" Text="{Binding Editing.TextScaleY, StringFormat={}{0:0.###}}" />
+                                </StackPanel>
+
+                                <CheckBox Content="显示这个元素" IsChecked="{Binding Editing.Visible}" Grid.Row="13" Grid.Column="1" Margin="0,6,0,0" />
+
+                                <TextBlock Grid.Row="14" Text="折行宽度" Style="{StaticResource Caption}" Visibility="{Binding Editing.HasText, Converter={StaticResource BoolVis}}" />
+                                <TextBox Grid.Row="14" Grid.Column="1" Margin="0,4,0,4" Text="{Binding Editing.WrapWidthMm, StringFormat={}{0:0.##}}"
+                                         ToolTip="0 = 永不折行：内容多长排多长，排到纸外就看得见地超出去，用工具栏「缩回纸内」收回。填一个正值（例如与宽相同）就恢复按这个宽度折行与缩字号。"
+                                         Visibility="{Binding Editing.HasText, Converter={StaticResource BoolVis}}" />
                             </Grid>
 
                             <TextBlock Text="校验提示" Style="{StaticResource StepTitle}" Margin="0,12,0,4" />

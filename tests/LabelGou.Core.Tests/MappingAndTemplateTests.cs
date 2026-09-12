@@ -344,12 +344,14 @@ public class TemplateValidatorTests
             Width = 60,        // 60+60 > 100
             Height = 6,
             FontSizePt = 9,
+            WrapWidthMm = 60,  // 第 46 棒：越界这道安全网只对「按折行宽度排版」的文本成立，前提写显式
         });
 
         var issues = TemplateValidator.Validate(template);
 
         Assert.True(issues.HasError());
-        Assert.Contains(issues, i => i.Message.Contains("右侧越界"));
+        // 第 43 棒：越界判据统一走 OccupiedBoundsOf（含拉伸/旋转），文案随之改为"探出标签"。
+        Assert.Contains(issues, i => i.Message.Contains("探出标签"));
     }
 
     [Fact]
@@ -426,7 +428,7 @@ public class TemplateStoreTests : IDisposable
         var bad = BuiltInTemplates.Standard100x80();
         bad.BuiltIn = false;
         bad.Name = "越界模板";
-        bad.Elements.Add(new TemplateElement { Kind = ElementKind.Text, Text = "x", X = 50, Y = 50, Width = 90, Height = 60, FontSizePt = 9 });
+        bad.Elements.Add(new TemplateElement { Kind = ElementKind.Text, Text = "x", X = 50, Y = 50, Width = 90, Height = 60, FontSizePt = 9, WrapWidthMm = 90 });
 
         var (saved, _, issues) = store.Save(bad);
 

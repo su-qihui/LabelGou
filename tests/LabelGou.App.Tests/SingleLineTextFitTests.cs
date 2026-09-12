@@ -22,10 +22,14 @@ public class SingleLineTextFitTests
         => StaWorker.RunAsync((progress, token) => work(), null, CancellationToken.None)
             .GetAwaiter().GetResult();
 
+    /// <summary>
+    /// 本族测的都是「按宽度缩字/截断」那条路——第 46 棒起它要求显式给了折行宽度
+    /// （默认 0 = 永不折行，宽度就不再参与缩字），所以这里把折行宽度摆成与盒宽相同，把前提写显式。
+    /// </summary>
     private static TextItem Row(
         string content, double widthMm, double heightMm, double sizePt, int maxLines, bool bold = true) => new(
         content, 5, 5, widthMm, heightMm, "Microsoft YaHei", sizePt,
-        bold, HorizontalAlign.Left, ShrinkToFit: true, MaxLines: maxLines);
+        bold, HorizontalAlign.Left, ShrinkToFit: true, MaxLines: maxLines, WrapWidthMm: widthMm);
 
     [Fact]
     public void SingleLineShrinksToFitWidthInsteadOfEllipsising() => OnSta(() =>

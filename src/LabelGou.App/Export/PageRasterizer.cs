@@ -154,6 +154,31 @@ public sealed class PageContentSource
     /// </summary>
     public int UnconfirmedLabelCount => _unconfirmedCount ??= CountUnconfirmed();
 
+    /// <summary>
+    /// 墨迹越界最多量多少张：每量一张要为它的文本建 <c>FormattedText</c>，
+    /// 几万套标签会把出纸前那一刻冻住，所以设上限，超出的部分由闸门如实说"只抽查了前 N 张"。
+    /// </summary>
+    public const int InkScanCap = 2000;
+
+    private int? _inkOverflowCount;
+
+    /// <summary>有几张标签的<strong>文字墨迹探出纸边</strong>（第 46 棒：永不折行后接手行带那份保护）。算一次就缓存。</summary>
+    public int InkOverflowLabelCount => _inkOverflowCount ??= CountInkOverflow();
+
+    /// <summary>这批是否被抽查上限截过（截过就不能说"全部量过"）。</summary>
+    public bool InkScanTruncated => _records.Count > InkScanCap;
+
+    private int CountInkOverflow()
+    {
+        var count = 0;
+        for (var i = 1; i <= Math.Min(InkScanCap, _records.Count); i++)
+        {
+            var layout = BuildAt(i);
+            if (layout is not null && Rendering.TextInkBox.OverflowMm(layout) > Core.Templates.TemplateValidator.ToleranceMm) count++;
+        }
+        return count;
+    }
+
     private int CountUnconfirmed()
     {
         var count = 0;

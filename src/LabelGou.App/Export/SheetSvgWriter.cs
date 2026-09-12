@@ -234,8 +234,23 @@ public static class SheetSvgWriter
                     break;
 
                 case ImageItem image:
-                    WriteImage(builder, image, options, notes);
-                    break;
+                    // 第 43 棒：图片的"拉伸"就是宽高本身，这里只有旋转一个自由度；
+                    // 与 LabelRenderer.DrawImage 的 PushGeometry 同一锚点（元素中心）、同一判据。
+                    {
+                        var rotated = Math.Abs(image.RotationDeg) > 1e-6;
+                        if (rotated)
+                            builder.StartGroup(SvgBuilder.GeometryTransform(
+                                image.X + image.Width / 2, image.Y + image.Height / 2, image.RotationDeg, 1, 1));
+                        try
+                        {
+                            WriteImage(builder, image, options, notes);
+                        }
+                        finally
+                        {
+                            if (rotated) builder.EndLayer();
+                        }
+                        break;
+                    }
 
                 case VectorItem vector:
                     WriteVectorAsset(builder, vector, ++assetIndex, notes);
@@ -249,6 +264,27 @@ public static class SheetSvgWriter
     }
 
     private static void WriteText(SvgBuilder builder, TextItem text, SvgExportOptions options, List<string> notes)
+    {
+        // 第 43 棒：带旋转/拉伸的文字整段包进一个带 transform 的 <g>——变换在 TextFit 决定之后
+        // （与 LabelRenderer.DrawText 的 PushGeometry 严格同一顺序同一锚点），五出口才是同一张纸。
+        var wrapped = text.HasGeometry;
+        if (wrapped)
+        {
+            var cx = text.X + text.Width / 2;
+            var cy = text.Y + text.Height / 2;
+            builder.StartGroup(SvgBuilder.GeometryTransform(cx, cy, text.RotationDeg, text.TextScaleX, text.TextScaleY));
+        }
+        try
+        {
+            WriteTextInner(builder, text, options, notes);
+        }
+        finally
+        {
+            if (wrapped) builder.EndLayer();
+        }
+    }
+
+    private static void WriteTextInner(SvgBuilder builder, TextItem text, SvgExportOptions options, List<string> notes)
     {
         // 字号、居中偏移、换行与省略号一律问 TextFit：与预览/打印同一个决定（定案 D10）
         var fit = TextFit.Solve(text, scale: 1.0, TextFit.CanonicalPixelsPerDip);
@@ -274,6 +310,21 @@ public static class SheetSvgWriter
             var lines = fit.LineCount;
             if (lines == 1)
             {
+                // 永不折行的行：墨迹左缘已由 TextFit 按对齐算好（第 46 棒），这里只照抄，不再二次推导——
+                // 两处各推一遍迟早长歪（§五-62 那族）。折行的行仍按盒宽与对齐推锚点。
+                if (text.NoWrap)
+                {
+                    builder.Text(
+                        text.Content,
+                        fit.InkLeftDiu * UnitToMm,
+                        (fit.TextTopDiu + fit.Formatted.Baseline) * UnitToMm,
+                        fit.EmSizeDiu * 72.0 / 96.0,
+                        text.FontFamily,
+                        text.Bold,
+                        SvgTextAnchor.Start,
+                        fill);
+                    return;
+                }
                 var anchorX = text.Align switch
                 {
                     HorizontalAlign.Center => fit.BoxDiu.Left + fit.BoxDiu.Width / 2,
@@ -299,7 +350,7 @@ public static class SheetSvgWriter
             notes.Add($"「{Shrink(text.Content)}」排成了 {fit.LineCount} 行，未转曲的 <text> 表达不了多行，这一段仍按轮廓写出。");
         }
 
-        var geometry = fit.Formatted.BuildGeometry(new Point(fit.BoxDiu.Left, fit.TextTopDiu));
+        var geometry = fit.Formatted.BuildGeometry(new Point(fit.InkLeftDiu, fit.TextTopDiu));
         var commands = SvgGeometryConverter.ToCommands(geometry, UnitToMm, out var evenOdd, notes);
         builder.Path(commands, fill, null, evenOdd);
     }
@@ -322,10 +373,22 @@ public static class SheetSvgWriter
         }
 
         foreach (var bar in barcode.Bars)
-            builder.Rect(bar.X, barcode.BarsY, bar.Width, barcode.BarsHeight, BlackFill, null);
+            // 每根条按自己的高写：UPC/EAN 的保护条比数据条高一截（第 41 棒）。
+            builder.Rect(bar.X, barcode.BarsY, bar.Width, barcode.HeightOf(bar), BlackFill, null);
 
         if (barcode.ShowText)
-            WriteText(builder, LabelRenderer.ReadableLine(barcode), options, notes);
+        {
+            if (barcode.Hri is { Count: > 0 })
+            {
+                // UPC/EAN：一字一格，坐标由 Core 算好（首位骑静区、每位压自己那 7 个模块）。
+                foreach (var glyph in LabelRenderer.ReadableGlyphs(barcode))
+                    WriteText(builder, glyph, options, notes);
+            }
+            else
+            {
+                WriteText(builder, LabelRenderer.ReadableLine(barcode), options, notes);
+            }
+        }
 
         if (barcode.Warning is { Length: > 0 } warn) notes.Add("条码能画但可能扫不出：" + warn);
     }
@@ -391,8 +454,13 @@ public static class SheetSvgWriter
         var sx = vector.Width / docWidth;
         var sy = vector.Height / docHeight;
 
+        // 第 43 棒：可绕元素中心旋转。SVG 的 transform 从右往左作用，rotate 写在最左 = 最后施加，
+        // 与 LabelRenderer.DrawVector（先平移到框、外层套旋转）同一结果。旋转 0 度时前缀为空、逐字节不变。
+        var rotatePrefix = Math.Abs(vector.RotationDeg) > 1e-6
+            ? $"rotate({Num(vector.RotationDeg)},{Num(vector.X + vector.Width / 2)},{Num(vector.Y + vector.Height / 2)}) "
+            : string.Empty;
         builder.StartLayer($"background-{assetIndex}", "矢量底图",
-            $"translate({Num(vector.X)},{Num(vector.Y)}) scale({Num(sx)},{Num(sy)})");
+            rotatePrefix + $"translate({Num(vector.X)},{Num(vector.Y)}) scale({Num(sx)},{Num(sy)})");
 
         foreach (var path in document.Paths)
         {

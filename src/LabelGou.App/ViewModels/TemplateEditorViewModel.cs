@@ -3,11 +3,13 @@ using System.Globalization;
 using System.IO;
 using System.Windows.Input;
 using LabelGou.App.Mvvm;
+using LabelGou.App.Rendering;
 using LabelGou.App.Services;
 using LabelGou.Core.Editing;
 using LabelGou.Core.Layout;
 using LabelGou.Core.Marks;
 using LabelGou.Core.Templates;
+using LabelGou.Core.Units;
 
 namespace LabelGou.App.ViewModels;
 
@@ -92,6 +94,9 @@ public sealed class TemplateEditorViewModel : ObservableObject
 
     public IReadOnlyList<FieldOption> FieldOptions { get; } = BuildFieldOptions();
 
+    /// <summary>本机已安装的系统字体名，属性面板「字体」下拉用。枚举一次即可（字体不会中途变）。</summary>
+    public IReadOnlyList<string> SystemFonts { get; } = BuildSystemFonts();
+
     private FieldOption? _selectedFieldOption;
 
     /// <summary>「插入字段」下拉的当前项。</summary>
@@ -114,6 +119,8 @@ public sealed class TemplateEditorViewModel : ObservableObject
     public ICommand DuplicateCommand { get; private set; } = null!;
     public ICommand BringToFrontCommand { get; private set; } = null!;
     public ICommand SendToBackCommand { get; private set; } = null!;
+    public ICommand MoveUpCommand { get; private set; } = null!;
+    public ICommand MoveDownCommand { get; private set; } = null!;
     public ICommand UndoCommand { get; private set; } = null!;
     public ICommand RedoCommand { get; private set; } = null!;
     public ICommand SaveCommand { get; private set; } = null!;
@@ -121,6 +128,9 @@ public sealed class TemplateEditorViewModel : ObservableObject
     public ICommand RevertCommand { get; private set; } = null!;
     public ICommand InsertFieldCommand { get; private set; } = null!;
     public RelayCommand AlignCommand { get; private set; } = null!;
+
+    /// <summary>第 46 棒：永不折行的文字可能排到纸外，一键把字号与位置收回内容区。</summary>
+    public RelayCommand ShrinkIntoLabelCommand { get; private set; } = null!;
     public RelayCommand PaddingCommand { get; private set; } = null!;
 
     // ---------- 模板级属性 ----------
@@ -294,8 +304,11 @@ public sealed class TemplateEditorViewModel : ObservableObject
         AddImageCommand = new RelayCommand(AddImage);
         RemoveCommand = new RelayCommand(RemoveSelected, () => SelectedRow is not null);
         DuplicateCommand = new RelayCommand(DuplicateSelected, () => SelectedRow is not null);
-        BringToFrontCommand = new RelayCommand(() => ChangeLayer(1), () => SelectedRow is not null);
-        SendToBackCommand = new RelayCommand(() => ChangeLayer(-1), () => SelectedRow is not null);
+        BringToFrontCommand = new RelayCommand(() => ChangeLayer(999), () => SelectedRow is not null);
+        SendToBackCommand = new RelayCommand(() => ChangeLayer(-999), () => SelectedRow is not null);
+        // 逐层档：原来只有「置最上/置最下」两个极端，想微调一层只能一步到顶，看着就像"图层动不了"。
+        MoveUpCommand = new RelayCommand(() => ChangeLayer(1), () => SelectedRow is not null);
+        MoveDownCommand = new RelayCommand(() => ChangeLayer(-1), () => SelectedRow is not null);
         UndoCommand = new RelayCommand(Undo, () => _history.CanUndo);
         RedoCommand = new RelayCommand(Redo, () => _history.CanRedo);
         SaveCommand = new RelayCommand(Save);
@@ -303,6 +316,7 @@ public sealed class TemplateEditorViewModel : ObservableObject
         RevertCommand = new RelayCommand(Revert, () => IsDirty);
         InsertFieldCommand = new RelayCommand(parameter => InsertField(parameter as string));
         AlignCommand = new RelayCommand(parameter => AlignSelected(parameter as string));
+        ShrinkIntoLabelCommand = new RelayCommand(_ => ShrinkIntoLabel());
         PaddingCommand = new RelayCommand(parameter => PadSelected(parameter as string));
     }
 
@@ -313,13 +327,21 @@ public sealed class TemplateEditorViewModel : ObservableObject
         if (added is null)
         {
             ReleaseCapture();
-            Report($"加不下了：一张标签最多 {TemplateValidator.MaxElements} 个元素，且纸面已无空位。");
+            // 这句只在真撞上限时才出现。第 42 棒之前「纸面没空位」也报这一句，
+            // 于是用户对着只有 4 个元素的模板看到「最多 80 个元素」——两种失败混成一句谎话。
+            Report($"加不下了：这张标签已经有 {_template.Elements.Count} 个元素，上限是 {TemplateValidator.MaxElements} 个。先删掉不用的再加。");
             return;
         }
         RefreshElements();
-        SelectedRow = Elements[Math.Min(added.Value, Elements.Count - 1)];
+        SelectedRow = Elements[Math.Min(added.Index, Elements.Count - 1)];
         Touch();
-        StatusText = $"已添加{kindText}（第 {added.Value + 1} 个），拖动即可摆位置。";
+        // 第 42 棒补：原来这里漏了 RebuildSample —— 元素框画出来了，但画布上"印出来长什么样"那一层
+        // 仍取自旧的 SampleLayout，于是刚加的文字看不见，要等下一次别的操作才冒出来。
+        RebuildSample();
+        // 叠放是正常结局不是失败：AI 的行式模板每行都是全宽行带，纸面上本来就没有"空位"可言。
+        StatusText = added.Overlapped
+            ? $"已添加{kindText}（第 {added.Index + 1} 个），它叠在现有内容上，拖到想要的位置即可。"
+            : $"已添加{kindText}（第 {added.Index + 1} 个），拖动即可摆位置。";
     }
 
     private void AddImage()
@@ -379,13 +401,15 @@ public sealed class TemplateEditorViewModel : ObservableObject
         if (added is null)
         {
             ReleaseCapture();
-            Report("元素数量已达上限，复制不了。");
+            Report($"复制不了：这张标签已经有 {_template.Elements.Count} 个元素，上限是 {TemplateValidator.MaxElements} 个。");
             return;
         }
         RefreshElements();
-        SelectedRow = Elements[added.Value];
+        SelectedRow = Elements[added.Index];
         Touch();
         RebuildSample();
+        // 复制的东西故意偏移 2mm 落在原件旁边，纸面满了就会压在原件上 —— 那是叠放不是失败，说清楚就行。
+        if (added.Overlapped) StatusText = "已复制一份，它叠在原件上，拖开即可。";
     }
 
     private void ChangeLayer(int delta)
@@ -395,15 +419,25 @@ public sealed class TemplateEditorViewModel : ObservableObject
         var index = _template.Elements.IndexOf(row.Element);
         if (index < 0) return;
 
+        // 到顶/到底的极值档用 ±元素数（MoveLayer 内部夹到边界），逐层档用 ±1。
+        // 原来只有极值档，用户想「往上挪一层」只能一下子弹到最顶，看着就像图层"被固定"了。
+        var step = Math.Abs(delta) >= 999 ? delta : Math.Sign(delta);
         Capture();
-        var target = delta > 0
-            ? EditGeometry.BringToFront(_template, index)
-            : EditGeometry.SendToBack(_template, index);
+        var before = index;
+        var target = EditGeometry.MoveLayer(_template, index, step);
         RefreshElements();
         SelectedRow = target < Elements.Count ? Elements[target] : null;
         Touch();
         RebuildSample();
-        StatusText = delta > 0 ? "已移到最上层。" : "已移到最下层。";
+        StatusText = LayerStatus(delta, before, target);
+    }
+
+    private static string LayerStatus(int delta, int from, int to)
+    {
+        var up = delta > 0;
+        if (to == from) return up ? "已经在最上层了，再点也不会动。" : "已经在最下层了，再点也不会动。";
+        if (Math.Abs(delta) >= 999) return up ? "已移到最上层。" : "已移到最下层。";
+        return up ? $"已上移一层（现在第 {to + 1} 层）。" : $"已下移一层（现在第 {to + 1} 层）。";
     }
 
     private void AlignSelected(string? mode)
@@ -433,7 +467,7 @@ public sealed class TemplateEditorViewModel : ObservableObject
             ReleaseCapture();
             return;
         }
-        EditGeometry.AlignToLabel(_template, index, h, v);
+        EditGeometry.AlignToLabel(_template, index, h, v, OccupancyOf(_template.Elements[index]));
         Touch();
         RebuildSample();
         StatusText = "已按标签对齐（" + mode + "）。";
@@ -462,10 +496,81 @@ public sealed class TemplateEditorViewModel : ObservableObject
             ReleaseCapture();
             return;
         }
-        EditGeometry.SnapToPadding(_template, index, h.Value, v.Value);
+        EditGeometry.SnapToPadding(_template, index, h.Value, v.Value, OccupancyOf(_template.Elements[index]));
         Touch();
         RebuildSample();
         StatusText = "已贴到内边距线（" + mode + "）。";
+    }
+
+    /// <summary>
+    /// 「缩回纸内」（第 46 棒配套）：把选中文字的墨迹收回到内容区——字号与盒高按能容下的最大倍率一起缩，
+    /// 再按缩完的新墨迹做最小平移归位。
+    /// <para>为什么要有这颗键：折行边界从隐形行带手里交出去之后，长值会照实排到纸外（这是用户要的"看得见超出去"），
+    /// 收回来这件事得有人办。缩到多少算在软件里，不让人手挑字号试。</para>
+    /// <para>它只按屏幕上这份样例量（编辑器手上没有真表）——真数据更长时出纸前那道闸还会再拦一次，
+    /// 状态栏把这件事说明白，不假装包办。</para>
+    /// </summary>
+    private void ShrinkIntoLabel()
+    {
+        var row = SelectedRow;
+        if (row is null) return;
+        var element = row.Element;
+        var index = _template.Elements.IndexOf(element);
+        if (index < 0) return;
+        if (element.Kind != ElementKind.Text)
+        {
+            StatusText = "只有文字需要缩回纸内——图片、矩形和线条的框就是它自己，直接拖或拖角即可。";
+            return;
+        }
+        var ink = DisplayBoxOf(element);
+        if (ink is null)
+        {
+            StatusText = "这一行现在没有可见文字（被隐藏或变量都空），不需要缩回。";
+            return;
+        }
+        if (InkOverflowMm(element) <= TemplateValidator.ToleranceMm)
+        {
+            StatusText = "这一行已经在纸内，不用缩。";
+            return;
+        }
+
+        var left = Math.Clamp(_template.PaddingMm, 0, _template.WidthMm);
+        var top = Math.Clamp(_template.PaddingMm, 0, _template.HeightMm);
+        var availW = Math.Max(1, _template.WidthMm - 2 * left);
+        var availH = Math.Max(1, _template.HeightMm - 2 * top);
+        var factor = Math.Min(1, Math.Min(
+            availW / Math.Max(0.1, ink.Value.Width),
+            availH / Math.Max(0.1, ink.Value.Height)));
+
+        Capture();
+        element.FontSizePt = Math.Max(TemplateValidator.MinFontPt, Math.Round(element.FontSizePt * factor, 2));
+        element.Height = Math.Max(EditGeometry.MinSideMm, Math.Round(element.Height * factor, 3));
+        RebuildSample();
+
+        var shrunk = DisplayBoxOf(element);
+        if (shrunk is not null)
+        {
+            var dx = shrunk.Value.X < left ? left - shrunk.Value.X
+                : _template.WidthMm - left - (shrunk.Value.X + shrunk.Value.Width) < 0
+                    ? _template.WidthMm - left - (shrunk.Value.X + shrunk.Value.Width) : 0;
+            var dy = shrunk.Value.Y < top ? top - shrunk.Value.Y
+                : _template.HeightMm - top - (shrunk.Value.Y + shrunk.Value.Height) < 0
+                    ? _template.HeightMm - top - (shrunk.Value.Y + shrunk.Value.Height) : 0;
+            if (dx != 0 || dy != 0)
+            {
+                EditGeometry.MoveBy(_template, index, dx, dy, shrunk);
+                RebuildSample();
+            }
+        }
+        Touch();
+        RecomputeIssues();
+        CanvasChanged?.Invoke();
+
+        var still = InkOverflowMm(element);
+        StatusText = still > TemplateValidator.ToleranceMm
+            ? $"已经缩到可印下限 {element.FontSizePt:0.#}pt，还是探出 {still:0.#} mm——这一行的内容比纸还宽，" +
+              "要么改数据，要么在右侧给它填一个「折行宽度(mm)」让它折行。"
+            : $"已按屏幕上这份样例缩回纸内（字号 {element.FontSizePt:0.#}pt）。真表里的值更长时，出纸前还会再拦你一次。";
     }
 
     private void InsertField(string? token)
@@ -477,6 +582,9 @@ public sealed class TemplateEditorViewModel : ObservableObject
             // 有选中的文本元素 → 把字段插到它内容末尾
             Capture();
             editing.Text = (editing.Text ?? string.Empty) + "{{" + token + "}}";
+            // 第 42 棒补：原来这一支直接 return，状态栏还停在上一次操作的话上 ——
+            // 用户点了「插入字段」，画布里的文字明明变了，底下却一个字没说。
+            StatusText = $"已把 {{{{{token}}}}} 接到选中的那行文字末尾。";
             return;
         }
 
@@ -485,14 +593,16 @@ public sealed class TemplateEditorViewModel : ObservableObject
         if (added is null)
         {
             ReleaseCapture();
-            Report($"字段 {token} 加不进去了：元素数量已达上限。");
+            Report($"字段 {token} 加不进去了：这张标签已经有 {_template.Elements.Count} 个元素，上限是 {TemplateValidator.MaxElements} 个。");
             return;
         }
         RefreshElements();
-        SelectedRow = Elements[added.Value];
+        SelectedRow = Elements[added.Index];
         Touch();
         RebuildSample();
-        StatusText = $"已插入字段 {{{{{token}}}}}，打印时会自动填对应列的值。";
+        StatusText = added.Overlapped
+            ? $"已插入字段 {{{{{token}}}}}，它叠在现有内容上，拖开即可；打印时会自动填对应列的值。"
+            : $"已插入字段 {{{{{token}}}}}，打印时会自动填对应列的值。";
     }
 
     // ---------- 画布交互（控件调用，坐标一律毫米） ----------
@@ -507,13 +617,21 @@ public sealed class TemplateEditorViewModel : ObservableObject
     /// <summary>
     /// 按下鼠标：<paramref name="handleRadiusMm"/> 由控件按当前缩放换算（屏幕上约 8 像素）。
     /// 命中元素即选中并准备拖动；点空白则取消选中。
+    /// <para><paramref name="anchor"/> = 按住 Shift 时的锚点（<see cref="ResizeAnchor.Center"/> = 绕中心向四周，
+    /// 与 CorelDRAW 同口径，第 45 棒实测）；<paramref name="lockAxis"/> = 按住 Ctrl，
+    /// 移动时锁到水平或垂直一根轴上。</para>
     /// </summary>
-    public DragMode BeginDrag(double xMm, double yMm, double handleRadiusMm)
+    public DragMode BeginDrag(double xMm, double yMm, double handleRadiusMm,
+        ResizeAnchor anchor = ResizeAnchor.Opposite, bool lockAxis = false)
     {
+        // 命中【不】用墨迹盒：AI 行式模板每行是一条全宽行带，只认墨迹会让"点文字旁边的空白选不中这一行"，
+        // 比改之前更难选。分工是刻意的：**点得中 = 行带（宽容）**，**看得见框、抓得到句柄 = 墨迹（精确）**。
         var index = EditGeometry.TopmostAt(_template, xMm, yMm);
         _dragMode = DragMode.None;
         _dragIndex = -1;
         _dragSnapshot = null;
+        _dragAnchor = anchor;
+        _dragLockAxis = lockAxis;
         _activeGuides = Array.Empty<GuideLine>();
 
         if (index < 0)
@@ -525,14 +643,52 @@ public sealed class TemplateEditorViewModel : ObservableObject
         var element = _template.Elements[index];
         SelectedRow = Elements.FirstOrDefault(r => ReferenceEquals(r.Element, element));
 
-        var handle = EditGeometry.HandleAt(element, xMm, yMm, handleRadiusMm);
+        var handle = EditGeometry.HandleAt(element, xMm, yMm, handleRadiusMm, DisplayBoxOf(element));
         Capture();
         _dragSnapshot = element.CloneTemplate();
+        // 墨迹盒"相对排版盒"的偏移与尺寸，按下这一刻量一次就够（此时缓存与版面都是新鲜的）。
+        // 拖动中若每帧再去读 DisplayBoxOf，拿到的是**上一帧位置**量出来的盒：RestoreGeometry 把元素
+        // 搬回快照后，那个盒还留在上一帧的地方，钳制基准逐帧错位 —— 用户看到的就是抖动 + 莫名被限制。
+        _dragInkRel = RelativeInkOf(element);
         _dragStart = (xMm, yMm);
         _dragIndex = index;
         _dragMode = handle == ResizeHandle.None ? DragMode.Move : DragMode.Resize;
         _dragHandle = handle;
         return _dragMode;
+    }
+
+    // ---------- 显示盒（第 44 棒：选中框贴文字墨迹，不再框整条行带） ----------
+
+    private readonly Dictionary<TemplateElement, (double X, double Y, double Width, double Height)?> _displayBoxes = new();
+    private ResizeAnchor _dragAnchor;
+    private bool _dragLockAxis;
+    private (double X, double Y, double Width, double Height)? _dragInkRel;
+
+    /// <summary>
+    /// 元素"看得见的那一块"（毫米、未旋转）：文本 = <see cref="TextFit"/> 实测的墨迹盒按字面拉伸
+    /// 绕排版盒中心放大（与渲染同一锚点同一顺序）；其余元素返回 null = 用默认 VisualBoxOf。
+    /// <para>结果随 <see cref="SampleLayout"/> 一起作废（RebuildSample 里清缓存）——量的是"这一版排出来
+    /// 什么样"，内容/字号/拉伸一变墨迹就变。命中、句柄、选择框三处共用它，不许各量各的。</para>
+    /// </summary>
+    public (double X, double Y, double Width, double Height)? DisplayBoxOf(TemplateElement element)
+    {
+        if (_displayBoxes.TryGetValue(element, out var cached)) return cached;
+        var box = ComputeDisplayBox(element);
+        _displayBoxes[element] = box;
+        return box;
+    }
+
+    private (double X, double Y, double Width, double Height)? ComputeDisplayBox(TemplateElement element)
+    {
+        if (element.Kind != ElementKind.Text) return null;
+
+        // 按引用找回这一元素排出来的那条文本项（被隐藏的文本行没有版面项 → 退回默认盒）。
+        var item = SampleLayout.Items.OfType<LabelGou.Core.Layout.TextItem>()
+            .FirstOrDefault(i => ReferenceEquals(i.Source, element));
+        if (item is null) return null;
+
+        // 量法只有一份（TextInkBox）：编辑器画框、摆位钳制、越界检查共用它，不许各推一遍。
+        return LabelGou.App.Rendering.TextInkBox.Measure(item);
     }
 
     /// <summary>拖动中：每次都从按下时的快照重算，保证不累积误差、也不会越界。</summary>
@@ -548,7 +704,13 @@ public sealed class TemplateEditorViewModel : ObservableObject
 
         if (_dragMode == DragMode.Move)
         {
+            if (_dragLockAxis)
+            {
+                // Ctrl = 只沿一根轴走（CorelDRAW 实测：Ctrl+移动锁水平或垂直），位移更大的那根说了算。
+                if (Math.Abs(dx) >= Math.Abs(dy)) dy = 0; else dx = 0;
+            }
             var proposed = (X: _dragSnapshot.X + dx, Y: _dragSnapshot.Y + dy);
+            var occupancy = DragInk(element);
             if (_snapEnabled)
             {
                 var snapped = EditGeometry.Snap(_template, _dragIndex, proposed.X, proposed.Y, new SnapOptions
@@ -557,23 +719,89 @@ public sealed class TemplateEditorViewModel : ObservableObject
                     SnapToGrid = _snapToGrid,
                     GridStepMm = _gridStepMm,
                     SnapNeighbors = true,
-                });
+                }, occupancy);
                 _activeGuides = snapped.Guides;
-                EditGeometry.MoveTo(_template, _dragIndex, snapped.X, snapped.Y);
+                EditGeometry.MoveTo(_template, _dragIndex, snapped.X, snapped.Y, occupancy);
             }
             else
             {
                 _activeGuides = Array.Empty<GuideLine>();
-                EditGeometry.MoveBy(_template, _dragIndex, dx, dy);
+                EditGeometry.MoveBy(_template, _dragIndex, dx, dy, occupancy);
             }
         }
         else
         {
-            EditGeometry.ResizeBy(_template, _dragIndex, _dragHandle, dx, dy);
+            // 第 45 棒的根治口：**锚点闭环**。Core 量不了字（不许碰 WPF），所以在这里用生产量具
+            // 量出拖前/拖后两块墨迹盒，把"该钉住的那个点"的残差用**纯平移**补掉。
+            // 不这么做，文本的拉伸就永远绕着排版盒中心长（中心 = X + Width/2 会随宽度自己搬走），
+            // 用户看到的永远是"每拖一次缩放，位置就偏一次"。
+            var before = DragInk(element) ?? MeasuredBox(element);
+            EditGeometry.ResizeBy(_template, _dragIndex, _dragHandle, dx, dy, _dragAnchor, before);
+            RebuildSample();
+            var after = MeasuredBox(element);
+            var (shiftX, shiftY) = EditGeometry.AnchorShift(before, after, _dragHandle, _dragAnchor);
+            if (Math.Abs(shiftX) > 0.002 || Math.Abs(shiftY) > 0.002)
+            {
+                element.X += shiftX;
+                element.Y += shiftY;
+                RebuildSample();
+            }
+            WarnWhenScalingCappedByBandWidth(element, before, after, dx, dy);
         }
 
         RebuildSample();
         CanvasChanged?.Invoke();
+    }
+
+    /// <summary>元素"看得见的那一块"：文本 = 实测墨迹盒，其余 = 视觉盒（含拉伸）。量不到就退回视觉盒，不猜。</summary>
+    private (double X, double Y, double Width, double Height) MeasuredBox(TemplateElement element)
+        => DisplayBoxOf(element) ?? EditGeometry.VisualBoxOf(element);
+
+    /// <summary>
+    /// 摆位/吸附/对齐该看哪个盒（第 46 棒）：文本 = 看得见的墨迹；其余返回 null = 沿用排版盒（两者本就相同）。
+    /// <para>不这么分，一行 20mm 的字会被一条 130mm 的隐形行带顶住——纸 140 时整行只有 5mm 活动量。</para>
+    /// </summary>
+    private (double X, double Y, double Width, double Height)? OccupancyOf(TemplateElement element)
+        => element.Kind == ElementKind.Text ? MeasuredBox(element) : null;
+
+    /// <summary>墨迹盒相对排版盒的偏移与尺寸（按下那一刻量一次；两者永远同幅，只差一个平移）。</summary>
+    private (double X, double Y, double Width, double Height)? RelativeInkOf(TemplateElement element)
+    {
+        var ink = OccupancyOf(element);
+        if (ink is null) return null;
+        var box = EditGeometry.BoxOf(element);
+        return (ink.Value.X - box.X, ink.Value.Y - box.Y, ink.Value.Width, ink.Value.Height);
+    }
+
+    /// <summary>这一帧该用的占位盒：排版盒当前位置 + 按下时记下的相对偏移。不读缓存，避免拿到上一帧的盒。</summary>
+    private (double X, double Y, double Width, double Height)? DragInk(TemplateElement element)
+    {
+        var rel = _dragInkRel;
+        if (rel is null) return null;
+        return (element.X + rel.Value.X, element.Y + rel.Value.Y, rel.Value.Width, rel.Value.Height);
+    }
+
+    /// <summary>
+    /// 文本角柄放大被行带宽度顶住时说一句人话（第 45 棒）。
+    /// <para>为什么需要：<c>ShrinkToFit</c>（自动缩字）在"字号撑到比盒宽还宽"时会把字号压回去，
+    /// 于是拖了角却不见得变大——那是设计（宁可缩字也不让字折出去印糊），不是坏了。
+    /// 不说清楚，用户只会以为手势失灵（同族：§十-A 的"点了没反应"那一类）。</para>
+    /// </summary>
+    private void WarnWhenScalingCappedByBandWidth(TemplateElement element,
+        (double X, double Y, double Width, double Height) before,
+        (double X, double Y, double Width, double Height) after, double dxMm, double dyMm)
+    {
+        if (element.Kind != ElementKind.Text) return;
+        var isCorner = (dxMm != 0 || dyMm != 0)
+            && (_dragHandle & (ResizeHandle.Left | ResizeHandle.Right)) != 0
+            && (_dragHandle & (ResizeHandle.Top | ResizeHandle.Bottom)) != 0;
+        if (!isCorner || before.Width <= 0) return;
+
+        var (ldx, ldy) = EditGeometry.ToLocalDelta(element, dxMm, dyMm);
+        var wanted = EditGeometry.UniformRatio(before, _dragHandle, _dragAnchor, ldx, ldy);
+        var got = after.Width / before.Width;
+        if (wanted - got > 0.02)
+            StatusText = $"这行已经撑满行带宽度，只能到 {got:0.##} 倍——要再大，先在右侧把「宽(mm)」加宽（加宽会改折行判定，所以不代你动）。";
     }
 
     public void EndDrag()
@@ -614,7 +842,7 @@ public sealed class TemplateEditorViewModel : ObservableObject
         if (index < 0) return;
 
         Capture();
-        EditGeometry.MoveBy(_template, index, dxMm, dyMm);
+        EditGeometry.MoveBy(_template, index, dxMm, dyMm, OccupancyOf(row.Element));
         Touch();
         RebuildSample();
         RecomputeIssues();
@@ -667,9 +895,24 @@ public sealed class TemplateEditorViewModel : ObservableObject
         }
     }
 
+    /// <summary>
+    /// 存盘前的闸门：Core 的校验器量不到墨迹（不许碰 WPF），所以"字排到纸外"这一条只能由编辑器把。
+    /// <para>第 46 棒：不加这道闸，永不折行的文字就能带着出纸的版面存进模板库——正是"会印错且看不见"那一类。</para>
+    /// </summary>
+    private bool BlocksSave()
+    {
+        RecomputeIssues();
+        if (!HasError) return false;
+        var first = Issues.FirstOrDefault(m => m.Contains("探出标签")) ?? Issues.FirstOrDefault();
+        Report("模板还有问题，先解决再存：" + Environment.NewLine + string.Join(Environment.NewLine, Issues));
+        AppLog.Warning($"编辑器拒绝存盘：{first}");
+        return true;
+    }
+
     public void Save()
     {
         SyncIntoTemplate();
+        if (BlocksSave()) return;
         var stale = _savedFileName is null ? null : Path.Combine(_store.UserDirectory, _savedFileName);
         var (saved, fileName, issues) = _store.Save(_template);
         if (!saved)
@@ -704,6 +947,7 @@ public sealed class TemplateEditorViewModel : ObservableObject
     public void SaveAsCopy()
     {
         SyncIntoTemplate();
+        if (BlocksSave()) return;
         var copy = TemplateFactory.CopyOf(_template, string.IsNullOrWhiteSpace(Name) ? _template.Name + " 副本" : Name.Trim() + " 副本");
         var (saved, fileName, issues) = _store.Save(copy);
         if (!saved)
@@ -806,6 +1050,12 @@ public sealed class TemplateEditorViewModel : ObservableObject
         target.Height = snapshot.Height;
         target.X2 = snapshot.X2;
         target.Y2 = snapshot.Y2;
+        // 第 42 棒补：拖角柄时字号会跟着等比缩放，而 DragTo 是「每帧从快照重算」的写法 ——
+        // 不把字号一起恢复，缩放就会逐帧累积（拖一下字大得离谱，撤销也只能退回拖动前）。
+        target.FontSizePt = snapshot.FontSizePt;
+        // 第 43 棒同因：文本边柄拖的是字面拉伸倍率（RotationDeg 由面板改、拖动不碰，一并带上以防别的改动漏恢复）。
+        target.TextScaleX = snapshot.TextScaleX;
+        target.TextScaleY = snapshot.TextScaleY;
     }
 
     /// <summary>改动之前录一步快照（同一属性的连续输入只录第一次，避免打字打出一个栈）。</summary>
@@ -863,20 +1113,64 @@ public sealed class TemplateEditorViewModel : ObservableObject
 
     public void RebuildSample()
     {
+        // 显示盒量的是"这一版排出来什么样"，版面一变缓存必须作废（命中/句柄/选择框三处共用它）。
+        _displayBoxes.Clear();
         try
         {
-            // 编辑器的职责就是“照参考图对齐”，所以画布里得看得见那张不上纸的底图
-            SampleLayout = LayoutEngine.BuildSample(_template, includeReference: true);
+            // 编辑器的职责就是”照参考图对齐”，所以画布里得看得见那张不上纸的底图（includeReference:true）。
+            // 第 42 棒：样例记录改用 TemplateSample.ForTemplate —— 按这份模板实际引用的列补样例值，
+            // 否则 AI 行式模板里那些 {{col:列名}} 全取不到值、整行被隐藏，画布就成了”框在字没了”
+            // （用户报的第三条）。这条只服务”给人看版面”，出纸闸那条路一律不用它（见 TemplateSample 注释）。
+            SampleLayout = LayoutEngine.Build(_template, TemplateSample.ForTemplate(_template),
+                new LayoutContext(1, 1, "样例数据.xlsx", IncludeReference: true));
         }
         catch (Exception ex)
         {
             AppLog.Warning("样例版面构建失败，画布退回空白：" + ex.Message);
             SampleLayout = new LabelLayout();
+            // 第 42 棒补：原来异常被悄悄吞成空白，用户分不清”模板本来就是空的”还是”画布坏了”。
+            // 状态栏说一句人话，让人知道该去看日志、而不是以为模板丢了。
+            StatusText = "画布渲染出了问题，这一版显示为空白（详见诊断日志）。";
         }
         CanvasChanged?.Invoke();
     }
 
-    public void RecomputeIssues() => RecomputeIssues(TemplateValidator.Validate(_template));
+    public void RecomputeIssues() => RecomputeIssues(WithInkOverflow(TemplateValidator.Validate(_template)));
+
+    /// <summary>
+    /// 永不折行的文本，越界只能按<strong>看得见的墨迹</strong>判（Core 量不了字，这里用屏幕上那份样例版面量）。
+    /// <para>第 46 棒：折行边界从行带手里交出去之后，"内容别出纸"这份保护由这里接手；出纸前还有一道
+    /// 按真数据量的闸门（<c>PageContentSource</c>），两处共用 <see cref="Rendering.TextInkBox"/> 同一份量法。</para>
+    /// </summary>
+    private IReadOnlyList<TemplateIssue> WithInkOverflow(IReadOnlyList<TemplateIssue> issues)
+    {
+        var list = issues.ToList();
+        for (var i = 0; i < _template.Elements.Count; i++)
+        {
+            var element = _template.Elements[i];
+            if (element.Kind != ElementKind.Text || !element.NoWrap || !element.Visible) continue;
+            var over = InkOverflowMm(element);
+            if (over <= TemplateValidator.ToleranceMm) continue;
+            list.Add(new TemplateIssue(IssueLevel.Error,
+                $"第 {i + 1} 个元素的字排出来探出标签约 {over:0.#} mm。这一行是「永不折行」，不会被行带默默收回去——" +
+                "请挪回纸内、改小字号，或点工具栏「缩回纸内」。", i));
+        }
+        return list;
+    }
+
+    /// <summary>这一元素看得见墨迹（含旋转外接）探出纸边几毫米；量不到就返回 0（不猜）。</summary>
+    private double InkOverflowMm(TemplateElement element)
+    {
+        var ink = DisplayBoxOf(element);
+        if (ink is null) return 0;
+        var item = SampleLayout.Items.OfType<LabelGou.Core.Layout.TextItem>()
+            .FirstOrDefault(t => ReferenceEquals(t.Source, element));
+        if (item is null) return 0;
+        var occ = Rendering.TextInkBox.RotatedOf(item, ink.Value);
+        return Math.Max(
+            Math.Max(occ.Right - _template.WidthMm, occ.Bottom - _template.HeightMm),
+            Math.Max(-occ.X, -occ.Y));
+    }
 
     private void RecomputeIssues(IReadOnlyList<TemplateIssue> issues)
     {
@@ -909,6 +1203,22 @@ public sealed class TemplateEditorViewModel : ObservableObject
             list.Add(new FieldOption(token, $"内置计算量 {token}（{description}）"));
         }
         return list;
+    }
+
+    /// <summary>
+    /// 枚举本机系统字体名（WPF <c>Fonts.SystemFontFamilies</c>，含用户字体目录），按名字排序。
+    /// <para>模板默认字体（微软雅黑）无论枚举结果如何都保证在列——缺字体的机器上让用户仍能看到
+    /// "当前用的是谁"，渲染端 <c>RenderRules.SafeFontFamily</c> 本来就有回退兜底。</para>
+    /// </summary>
+    private static IReadOnlyList<string> BuildSystemFonts()
+    {
+        var names = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var family in System.Windows.Media.Fonts.SystemFontFamilies)
+        {
+            if (!string.IsNullOrWhiteSpace(family.Source)) names.Add(family.Source);
+        }
+        names.Add(TemplateElement.DefaultFont);
+        return names.ToList();
     }
 }
 
@@ -1000,6 +1310,27 @@ public sealed class EditableElement : ObservableObject
 
     public bool HasBox => _element.Kind != ElementKind.Line;
 
+    /// <summary>只有文本才有「折行宽度」这一格（第 46 棒）。</summary>
+    public bool HasText => _element.Kind == ElementKind.Text;
+
+    /// <summary>
+    /// 折行宽度（毫米）。<strong>0 = 永不折行</strong>：内容多长排多长，排到纸外由「缩回纸内」收回。
+    /// <para>填一个正值（例如与「宽(mm)」相同）就恢复老行为：按这个宽度折行、按它缩字号。
+    /// 这条字段是第 46 棒把折行边界从隐形行带手里交出来的产物，别与「宽(mm)」混为一谈——
+    /// 后者只管字在哪对齐。</para>
+    /// </summary>
+    public double WrapWidthMm
+    {
+        get => _element.WrapWidthMm;
+        set
+        {
+            if (Near(value, _element.WrapWidthMm)) return;
+            Prepare(nameof(WrapWidthMm));
+            _element.WrapWidthMm = Math.Max(0, Math.Round(value, 2));
+            Done();
+        }
+    }
+
     public string KindText => _element.Kind switch
     {
         ElementKind.Text => "文本",
@@ -1052,6 +1383,54 @@ public sealed class EditableElement : ObservableObject
         }
     }
 
+    /// <summary>绕元素中心旋转角度（度，顺时针）。第 43 棒：变换叠在 TextFit 决定之后，五出口共用。</summary>
+    public double RotationDeg
+    {
+        get => _element.RotationDeg;
+        set
+        {
+            if (Near(value, _element.RotationDeg)) return;
+            Prepare(nameof(RotationDeg));
+            _element.RotationDeg = value;
+            Done();
+        }
+    }
+
+    /// <summary>字面横向放大倍率（1=原样，把字身抻宽/压扁）。仅文本用。</summary>
+    public double TextScaleX
+    {
+        get => _element.TextScaleX;
+        set
+        {
+            if (Near(value, _element.TextScaleX)) return;
+            Prepare(nameof(TextScaleX));
+            _element.TextScaleX = Math.Max(0.05, value);
+            Done();
+        }
+    }
+
+    /// <summary>字面纵向放大倍率（1=原样）。仅文本用。</summary>
+    public double TextScaleY
+    {
+        get => _element.TextScaleY;
+        set
+        {
+            if (Near(value, _element.TextScaleY)) return;
+            Prepare(nameof(TextScaleY));
+            _element.TextScaleY = Math.Max(0.05, value);
+            Done();
+        }
+    }
+
+    /// <summary>当前元素能否旋转（条码不许转，线段由两端点决定）。面板按它显隐旋转框。</summary>
+    public bool CanRotate => _element.Kind is ElementKind.Text or ElementKind.Rect or ElementKind.Image or ElementKind.Vector;
+
+    /// <summary>当前元素能否用"字面拉伸"（只文本有；图片的拉伸就是它的宽高，不设倍率字段）。</summary>
+    public bool CanStretchText => _element.Kind == ElementKind.Text;
+
+    /// <summary>字体行只对带文字的元素有意义（文本 + 条码的可读数字）。</summary>
+    public bool CanSetFont => _element.Kind is ElementKind.Text or ElementKind.Barcode;
+
     private bool Near(double value, double current)
         => Math.Abs(value - current) < 1e-6 || double.IsNaN(value);
 
@@ -1087,6 +1466,7 @@ public sealed class EditableElement : ObservableObject
             nameof(X), nameof(Y), nameof(Width), nameof(Height), nameof(X2), nameof(Y2), nameof(Text), nameof(ImagePath),
             nameof(FontFamily), nameof(FontSizePt), nameof(Bold), nameof(ThicknessMm), nameof(MaxLines),
             nameof(ShrinkToFit), nameof(Visible), nameof(Align),
+            nameof(RotationDeg), nameof(TextScaleX), nameof(TextScaleY), nameof(CanRotate), nameof(CanStretchText), nameof(CanSetFont),
         })
         {
             Raise(name);

@@ -109,20 +109,33 @@ public static class TemplateFactory
         };
 
     /// <summary>
-    /// 加一个元素：<strong>默认位置与已有元素重叠时自动往下找空位</strong>，
-    /// 免得新建的东西正好压在客户名上、用户以为没加上。找不到空位就返回 null（模板已满）。
+    /// 加一个元素：<strong>默认位置与已有元素重叠时自动找空位，找不到空位就叠放上去</strong>。
+    /// <para>
+    /// 第 42 棒翻掉的老规矩是「纸面没有空位就返回 null（不给加）」，它在 AI 行式模板上必然触发：
+    /// <see cref="RowLayoutSpec.Build"/> 出的每一行文字都是<strong>全宽行带</strong>（X=留白、宽=可用宽、高=整条行带），
+    /// 四行铺满 140×100 之后行与行之间只剩 2mm 缝，而新建文本默认 6mm 高、判重叠还要外加
+    /// <see cref="MinGapMm"/> 呼吸间距 —— 于是「加个文字/加张图」永远失败，用户看到的却是一大片空白。
+    /// 界面还把这个失败报成「一张标签最多 80 个元素」，而那份模板只有 4~6 个元素：
+    /// 两种失败（真撞上限 / 找不到空位）被混进同一句话，数字纯属误导。
+    /// </para>
+    /// <para>
+    /// 现在的口径与 CorelDRAW / PPT 一致：<strong>加东西这个动作只有「真到 80 个上限」一种失败</strong>，
+    /// 其余一律加上去，叠在现有内容上也加，由 <see cref="AddElementOutcome.Overlapped"/> 告知界面提醒用户拖开。
+    /// 叠放位置仍夹紧到纸内 —— 越界会让 <see cref="TemplateValidator"/> 报 Error 而存不了盘，那不是提醒是死路。
+    /// </para>
     /// </summary>
-    public static int? AddElement(LabelTemplate template, TemplateElement element, double xPreferred, double yPreferred)
+    /// <returns>落位结果；<c>null</c> 只表示元素数量已达 <see cref="TemplateValidator.MaxElements"/>。</returns>
+    public static AddElementOutcome? AddElement(LabelTemplate template, TemplateElement element, double xPreferred, double yPreferred)
     {
         if (template is null) throw new ArgumentNullException(nameof(template));
         if (element is null) throw new ArgumentNullException(nameof(element));
         if (template.Elements.Count >= TemplateValidator.MaxElements) return null;
 
-        var spot = FindFreeSpot(template, element, xPreferred, yPreferred);
-        if (spot is null) return null;
+        var spot = FindFreeSpot(template, element, xPreferred, yPreferred)
+                   ?? ClampedSpot(template, element, xPreferred, yPreferred);
 
-        element.X = Math.Max(0, Math.Min(spot.Value.X, Math.Max(0, template.WidthMm - EditGeometry.BoxOf(element).Width)));
-        element.Y = Math.Max(0, Math.Min(spot.Value.Y, Math.Max(0, template.HeightMm - EditGeometry.BoxOf(element).Height)));
+        element.X = Math.Max(0, Math.Min(spot.X, Math.Max(0, template.WidthMm - EditGeometry.BoxOf(element).Width)));
+        element.Y = Math.Max(0, Math.Min(spot.Y, Math.Max(0, template.HeightMm - EditGeometry.BoxOf(element).Height)));
         if (element.Kind == ElementKind.Line)
         {
             var lengthX = element.X2 - element.X;
@@ -131,16 +144,32 @@ public static class TemplateFactory
             element.Y2 = element.Y + lengthY;
         }
 
+        // 必须在 Add 之前判：加进去之后再判会拿自己跟自己比，永远"重叠"。
+        var overlapped = OverlapsAny(template, element, element.X, element.Y);
+
         template.Elements.Add(element);
-        return template.Elements.Count - 1;
+        return new AddElementOutcome(template.Elements.Count - 1, overlapped);
     }
 
     /// <summary>加一个绑定字段的文本元素（编辑器「插入字段」按钮走这里）。</summary>
-    public static int? AddFieldText(LabelTemplate template, string token, double widthMm = 40, double heightMm = 6, double fontPt = 8)
+    public static AddElementOutcome? AddFieldText(LabelTemplate template, string token, double widthMm = 40, double heightMm = 6, double fontPt = 8)
     {
         var field = $"{{{{{token}}}}}";
         return AddElement(template, NewText(field, template.PaddingMm, template.PaddingMm, widthMm, heightMm, fontPt),
             template.PaddingMm, template.PaddingMm);
+    }
+
+    /// <summary>
+    /// 找不到空位时的兜底落点：把偏好位置夹进纸内，<strong>不拒绝、不丢弃</strong>。
+    /// <para>元素本身比标签还大时夹到 (0,0) 并交给校验器报越界 —— 那种情况看得见、说得清，
+    /// 比"点了没反应"强（§五-80：判据写好了没人读等于没有判据）。</para>
+    /// </summary>
+    private static (double X, double Y) ClampedSpot(LabelTemplate template, TemplateElement element, double preferredX, double preferredY)
+    {
+        var box = EditGeometry.BoxOf(element);
+        var maxX = Math.Max(0, template.WidthMm - box.Width);
+        var maxY = Math.Max(0, template.HeightMm - box.Height);
+        return (Math.Clamp(preferredX, 0, maxX), Math.Clamp(preferredY, 0, maxY));
     }
 
     /// <summary>复制元素（含属性），偏移若干毫米，不加入列表。</summary>
@@ -215,3 +244,12 @@ public static class TemplateFactory
         return false;
     }
 }
+
+/// <summary>
+/// 一次「加元素」的落位结果：<strong>加成功了一定有下标</strong>，另带一句"是不是叠在别人身上了"。
+/// <para>第 42 棒：原来是 <c>int?</c>，null 同时表示"到 80 个上限"与"纸面没空位"两种完全不同的事，
+/// 界面分不清就一律报「最多 80 个元素」，用户对着只有 4 个元素的模板看到 80，只会以为软件坏了。</para>
+/// </summary>
+/// <param name="Index">新元素在 <c>Elements</c> 里的下标。</param>
+/// <param name="Overlapped">true = 落点与已有可见元素重叠（叠放上去了，提示用户拖开）。</param>
+public sealed record AddElementOutcome(int Index, bool Overlapped);

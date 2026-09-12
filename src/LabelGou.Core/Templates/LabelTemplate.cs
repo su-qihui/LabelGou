@@ -113,6 +113,44 @@ public sealed class TemplateElement
     /// </summary>
     public bool ShowBarcodeText { get; set; } = true;
 
+    /// <summary>
+    /// 旋转角度（<strong>度，绕元素中心，正值顺时针</strong>）。默认 0 = 不转，第 43 棒新增。
+    /// <para>CDR 式任意角度。可转的只有 Text / Rect / Image / Vector；
+    /// 条码直接 Error（歪码扫描枪认不出，宁可别转），线段转不转由两端点说话、不设此字段。</para>
+    /// <para>校验器量的是<strong>转完之后的外接矩形</strong>——斜放的宽行带四角可能探出标签，
+    /// 那是会被刀模裁掉的（"会印错且看不见"那一类），必须拦。</para>
+    /// </summary>
+    public double RotationDeg { get; set; }
+
+    /// <summary>
+    /// 字面横向放大倍率（1 = 原样），<strong>把字身抻宽/压扁的那种"拉伸"</strong>（第 43 棒，CDR 变换docker 手感）。
+    /// <para>与两个近亲分清：字号缩放（拖角，第 42 棒）是等比把字变大；<c>RowSpec.Stretch</c>（行式骨架）
+    /// 是"字号撑满行带"；这里是<strong>非等比抻字身</strong>，只管文本元素。</para>
+    /// <para><strong>模型分工</strong>：Width/Height 从此是<em>画出来的视觉尺寸</em>（选择框、句柄、
+    /// 越界校验都按它）；<c>TextFit</c> 折行与缩字按 <c>宽÷倍率</c> 的未拉伸盒做，字面再整体乘回倍率——
+    /// 变换在排版决定之后、五出口共用同一份，不会出现"预览拉伸了导出没拉伸"。
+    /// 所以拉一行让它变宽，<em>不会</em>让本来折行的长值摊平成一行——要改折行去改"宽"（面板）或先复位倍率再拉框。</para>
+    /// </summary>
+    public double TextScaleX { get; set; } = 1;
+
+    /// <summary>字面纵向放大倍率（1 = 原样）。见 <see cref="TextScaleX"/>。</summary>
+    public double TextScaleY { get; set; } = 1;
+
+    /// <summary>
+    /// 折行宽度（毫米）。<strong>0 = 永不折行</strong>（默认）：内容多长就排多长，超出纸就超出——
+    /// 超没超由"看得见的墨迹"说话，不再由一条比字宽得多的隐形行带替他折回去。
+    /// <para>第 46 棒：这条字段是把「折行边界」从 <see cref="Width"/> 里拆出来的产物。此前 <c>Width</c>
+    /// 一人兼三职——对齐基准、垂直居中参照、折行与缩字边界；而 AI 行式骨架给的是整幅纸的行带
+    /// （实测 11 份模板全是 130mm 带 / 140mm 纸），于是"摆位被顶住"和"长值默默折回"两根症状同出一处。
+    /// 现在 <c>Width</c> 只管<strong>对齐基准与垂直居中</strong>（视觉位置一寸不动），折行只在显式给了宽度时发生。</para>
+    /// <para>想要旧行为（按行带折行）：把这一格填成与「宽(mm)」相同的数。</para>
+    /// </summary>
+    public double WrapWidthMm { get; set; }
+
+    /// <summary>这一行是不是"永不折行"。五处消费方共用这一个判据，别各写一遍 <c>&lt;= 0</c>。</summary>
+    [JsonIgnore]
+    public bool NoWrap => Kind != ElementKind.Text || WrapWidthMm <= 0;
+
     public bool Visible { get; set; } = true;
 
     /// <summary>默认字体：微软雅黑，Win10/11 自带，中英混排都不会掉字。</summary>
@@ -135,8 +173,14 @@ public sealed class LabelTemplate
     /// <summary>当前 schema 版本。改结构必须递增，并让 <see cref="TemplateValidator"/> 兼容旧版。</summary>
     /// <remarks>v2 = M5 新增 <see cref="ElementKind.Vector"/> 与 <see cref="TemplateElement.ReferenceOnly"/>；v1 文件仍能读。
     /// v3 = 第 17 棒新增 <see cref="ElementKind.Barcode"/> 与 <see cref="TemplateElement.Symbology"/> /
-    /// <see cref="TemplateElement.ShowBarcodeText"/>；新字段都有默认值，所以 v2 文件照旧能读，只是里面不会出现条码。</remarks>
-    public const int CurrentSchemaVersion = 3;
+    /// <see cref="TemplateElement.ShowBarcodeText"/>；同前例，v2 文件照旧能读，只是里面不会出现条码。
+    /// v4 = 第 43 棒新增 <see cref="TemplateElement.RotationDeg"/> / <see cref="TemplateElement.TextScaleX"/> /
+    /// <see cref="TemplateElement.TextScaleY"/>；同前例，v3 文件照旧能读（缺字段 = 0 度不转、1 倍不拉伸）。
+    /// v5 = 第 46 棒新增 <see cref="TemplateElement.WrapWidthMm"/>。<strong>缺字段 = 0 = 永不折行，这是刻意的
+    /// 行为变更</strong>（用户 2026-09-12 拍板"排版层盒子拆掉，按墨迹层算"）：旧模板里长值不再被那条隐形行带
+    /// 折回纸内，可能横着伸出纸边——接手这份保护的是"墨迹越界"那道检查（编辑器按样例拦、④⑤ 步按真数据进
+    /// 复核闸门）与「缩回纸内」一键，不再是排版盒。想恢复旧行为，把「折行宽度(mm)」填成与「宽(mm)」同值。</remarks>
+    public const int CurrentSchemaVersion = 5;
 
     /// <summary>稳定标识，如 <c>builtin.standard-100x80</c>。用户模板用 <c>user.xxx</c>。</summary>
     public string Id { get; set; } = "user." + Guid.NewGuid().ToString("N")[..8];
@@ -227,6 +271,13 @@ public static class TemplateValidator
     /// <summary>元素数量上限，防呆也防 AI 无限堆。</summary>
     public const int MaxElements = 80;
 
+    /// <summary>横/纵拉伸倍率的合理区间（第 43 棒）。0.2 倍已压成一条线，5 倍基本是误填。</summary>
+    public const double MinStretch = 0.2;
+    public const double MaxStretch = 5;
+
+    /// <summary>旋转角的合理区间（度）。绕中心转，超过 ±360 无新意义，多半是填错。</summary>
+    public const double MaxRotationDeg = 360;
+
     /// <summary>坐标比对容差（毫米），0.05mm 以内不算越界。</summary>
     public const double ToleranceMm = 0.05;
 
@@ -279,12 +330,26 @@ public static class TemplateValidator
             {
                 if (e.Width <= 0 || e.Height <= 0)
                     issues.Add(new TemplateIssue(IssueLevel.Error, $"{tag} 宽高必须大于 0。", i));
-                if (e.X + e.Width > template.WidthMm + ToleranceMm)
-                    issues.Add(new TemplateIssue(IssueLevel.Error,
-                        $"{tag} 右侧越界 {e.X + e.Width - template.WidthMm:0.##} mm（标签宽 {template.WidthMm:0.#} mm）。", i));
-                if (e.Y + e.Height > template.HeightMm + ToleranceMm)
-                    issues.Add(new TemplateIssue(IssueLevel.Error,
-                        $"{tag} 下方越界 {e.Y + e.Height - template.HeightMm:0.##} mm（标签高 {template.HeightMm:0.#} mm）。", i));
+                // 第 43 棒：越界一律按 OccupiedBoundsOf 判——它已把文字拉伸与旋转都算进去，
+                // 拉出纸/转出纸都等于会被刀模裁掉，与"越界"同一性质，必须在这拦（"会印错且看不见"那一类）。
+                // 第 46 棒改口：**永不折行的文本不拿排版盒当占物**。那时那条带子只是"字在哪对齐"的虚拟基准，
+                // 它自己不出纸（出纸的是墨迹），Core 又量不了字 → 判它探出纸只会把"能拖到右边"变成"存不了盘"。
+                // 这一格改由两处能量墨迹的地方接手：编辑器按样例墨迹拦、④⑤ 步按真数据墨迹进复核闸门。
+                if (!(e.Kind == ElementKind.Text && e.NoWrap))
+                {
+                    var occ = Editing.EditGeometry.OccupiedBoundsOf(e);
+                    if (occ.X < -ToleranceMm || occ.Y < -ToleranceMm
+                        || occ.Right > template.WidthMm + ToleranceMm || occ.Bottom > template.HeightMm + ToleranceMm)
+                    {
+                        var howFar = Math.Max(
+                            Math.Max(occ.Right - template.WidthMm, occ.Bottom - template.HeightMm),
+                            Math.Max(-occ.X, -occ.Y));
+                        issues.Add(new TemplateIssue(IssueLevel.Error,
+                            $"{tag} 占了 X {occ.X:0.#}~{occ.Right:0.#}、Y {occ.Y:0.#}~{occ.Bottom:0.#} mm，" +
+                            $"探出标签（{template.WidthMm:0.#} × {template.HeightMm:0.#} mm）约 {howFar:0.##} mm——" +
+                            "会被裁掉，请挪回纸内或减小尺寸/角度。", i));
+                    }
+                }
             }
             else
             {
@@ -331,6 +396,19 @@ public static class TemplateValidator
             if (e.Kind is ElementKind.Image or ElementKind.Vector && string.IsNullOrWhiteSpace(e.ImagePath))
                 issues.Add(new TemplateIssue(IssueLevel.Warning,
                     $"{tag} 是{(e.Kind == ElementKind.Vector ? "矢量底图" : "图片")}元素但没有指定文件，它会画不出来。", i));
+
+            // —— 第 43 棒：旋转与文字拉伸 ——
+            if (Math.Abs(e.RotationDeg) > MaxRotationDeg)
+                issues.Add(new TemplateIssue(IssueLevel.Error,
+                    $"{tag} 旋转角 {e.RotationDeg:0.#}° 超出 ±{MaxRotationDeg:0}°（绕中心转，超过一整圈多半是填错）。", i));
+            if (e.Kind == ElementKind.Barcode && (Math.Abs(e.RotationDeg) > ToleranceMm
+                    || Math.Abs(e.TextScaleX - 1) > ToleranceMm || Math.Abs(e.TextScaleY - 1) > ToleranceMm))
+                issues.Add(new TemplateIssue(IssueLevel.Error,
+                    $"{tag} 是条码：条码不许旋转或拉伸，歪一点斜一点扫描枪就认不出（宁可别转）。", i));
+            if (e.Kind == ElementKind.Text && (e.TextScaleX is < MinStretch or > MaxStretch || e.TextScaleY is < MinStretch or > MaxStretch))
+                issues.Add(new TemplateIssue(IssueLevel.Error,
+                    $"{tag} 的文字拉伸 {e.TextScaleX:0.##} × {e.TextScaleY:0.##} 不在 {MinStretch:0.#}~{MaxStretch:0.#} 之间。", i));
+            // 旋转/拉伸探出纸的越界，上面 OccupiedBoundsOf 那条已经一并拦了（不在这重复判）。
 
             if (e.ThicknessMm <= 0)
                 issues.Add(new TemplateIssue(IssueLevel.Warning, $"{tag} 线宽为 0，打印时不会显示。", i));

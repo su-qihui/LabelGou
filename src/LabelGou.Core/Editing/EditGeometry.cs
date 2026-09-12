@@ -19,6 +19,18 @@ public enum ResizeHandle
     LineEnd = 32,
 }
 
+/// <summary>
+/// 缩放时"钉住哪个点"。<strong>口径来自本机 CorelDRAW X4 实测</strong>（2026-09-12，第 45 棒）：
+/// 拖角 = 等比 + 对角固定（不需要按键）；按住 Shift = 绕元素中心向四周。
+/// </summary>
+public enum ResizeAnchor
+{
+    /// <summary>没被拖的那组边（角柄则是对角）保持不动——CDR 默认。</summary>
+    Opposite = 0,
+    /// <summary>元素中心不动，四周对称伸缩——CDR 按住 Shift。</summary>
+    Center = 1,
+}
+
 public enum GuideSource
 {
     /// <summary>网格线。</summary>
@@ -106,6 +118,73 @@ public static class EditGeometry
         return (element.X, element.Y, Math.Max(0, element.Width), Math.Max(0, element.Height));
     }
 
+    /// <summary>
+    /// 元素<strong>旋转之前</strong>的视觉包围盒（毫米）：对文本，把字面拉伸倍率乘进排版盒、
+    /// 且以盒中心为锚点向外扩（拉伸是"绕中心抻"，不是"贴左上角长"）；其余元素与 <see cref="BoxOf"/> 相同。
+    /// <para>第 43 棒：编辑器的选择框/句柄、以及越界校验都改用它，才能保证"屏幕上框多大、印出来占多大"，
+    /// 拉伸到探出纸时越界校验抓得到（不抓就是"会印错且看不见"那一类）。Line 不参与拉伸，原样返回。</para>
+    /// </summary>
+    public static (double X, double Y, double Width, double Height) VisualBoxOf(TemplateElement element)
+    {
+        var box = BoxOf(element);
+        if (element.Kind != ElementKind.Text) return box;
+        if (element.TextScaleX == 1 && element.TextScaleY == 1) return box;
+
+        var cx = box.X + box.Width / 2;
+        var cy = box.Y + box.Height / 2;
+        var w = box.Width * element.TextScaleX;
+        var h = box.Height * element.TextScaleY;
+        return (cx - w / 2, cy - h / 2, w, h);
+    }
+
+    /// <summary>
+    /// 元素"实际会占掉的纸面范围"（毫米，轴对齐外接矩形）：先算视觉盒（含文字拉伸），
+    /// 旋转非零时再绕中心转一圈取四角 min/max。<strong>越界校验与编辑器都只认这一个出口</strong>，
+    /// 别处不许再各算一遍拉伸/旋转（§五-62：两套算术各自长歪）。
+    /// </summary>
+    public static (double X, double Y, double Right, double Bottom) OccupiedBoundsOf(TemplateElement element)
+    {
+        var box = VisualBoxOf(element);
+        return RotatedBoundsOf(box, element.RotationDeg,
+            BoxOf(element).X + Math.Max(0, element.Width) / 2,
+            BoxOf(element).Y + Math.Max(0, element.Height) / 2);
+    }
+
+    /// <summary>
+    /// 把一个毫米盒绕 (<paramref name="cx"/>, <paramref name="cy"/>) 转 <paramref name="angleDeg"/> 度后的
+    /// <strong>轴对外接矩形</strong>（纸面坐标）。角度为 0 时原样返回。
+    /// <para>抽成公开纯函数是给 App 层用的：墨迹盒（Core 量不出来）转过的角度要算同一份外接算术，
+    /// 复制一遍迟早长歪（§五-62）。渲染端的变换锚点 = 排版盒中心，这里就按同一个中心转。</para>
+    /// </summary>
+    public static (double X, double Y, double Right, double Bottom) RotatedBoundsOf(
+        (double X, double Y, double Width, double Height) box, double angleDeg, double cx, double cy)
+    {
+        if (Math.Abs(angleDeg) <= 1e-9)
+            return (box.X, box.Y, box.X + box.Width, box.Y + box.Height);
+
+        var rad = angleDeg * Math.PI / 180;
+        var cos = Math.Cos(rad);
+        var sin = Math.Sin(rad);
+
+        double minX = double.MaxValue, minY = double.MaxValue, maxX = double.MinValue, maxY = double.MinValue;
+        foreach (var (px, py) in new[]
+        {
+            (box.X, box.Y), (box.X + box.Width, box.Y),
+            (box.X + box.Width, box.Y + box.Height), (box.X, box.Y + box.Height),
+        })
+        {
+            var dx = px - cx;
+            var dy = py - cy;
+            var rx = cx + dx * cos - dy * sin;
+            var ry = cy + dx * sin + dy * cos;
+            minX = Math.Min(minX, rx);
+            minY = Math.Min(minY, ry);
+            maxX = Math.Max(maxX, rx);
+            maxY = Math.Max(maxY, ry);
+        }
+        return (minX, minY, maxX, maxY);
+    }
+
     public static bool HitTest(TemplateElement element, double xMm, double yMm, double toleranceMm = HitToleranceMm)
     {
         if (element is null) throw new ArgumentNullException(nameof(element));
@@ -115,12 +194,50 @@ public static class EditGeometry
             return DistanceToSegment(xMm, yMm, element.X, element.Y, element.X2, element.Y2) <= tol;
         }
 
-        var box = BoxOf(element);
-        return xMm >= box.X - toleranceMm && xMm <= box.X + box.Width + toleranceMm
-            && yMm >= box.Y - toleranceMm && yMm <= box.Y + box.Height + toleranceMm;
+        // 转过的元素按"转回去"判：把纸面坐标绕元素中心反向旋转回本地域，再对轴对齐盒测。
+        var box = VisualBoxOf(element);
+        var (px, py) = ToLocal(element, xMm, yMm);
+        return px >= box.X - toleranceMm && px <= box.X + box.Width + toleranceMm
+            && py >= box.Y - toleranceMm && py <= box.Y + box.Height + toleranceMm;
     }
 
-    /// <summary>命中最上层元素的下标（列表末尾=画在最上面）；没命中返回 -1。</summary>
+    /// <summary>
+    /// 纸面坐标 → 元素本地坐标（绕元素中心反向旋转 <see cref="TemplateElement.RotationDeg"/>）。
+    /// 未旋转时原样返回；Line 不参与旋转（两端点已是纸面坐标）。
+    /// </summary>
+    public static (double X, double Y) ToLocal(TemplateElement element, double xMm, double yMm)
+    {
+        if (element.RotationDeg == 0 || element.Kind == ElementKind.Line) return (xMm, yMm);
+        var (lx, ly) = RotateAboutCenter(element, xMm, yMm, -element.RotationDeg);
+        return (lx, ly);
+    }
+
+    /// <summary>纸面位移向量 → 本地位移向量（只转方向不转位置；未旋转时原样）。</summary>
+    public static (double Dx, double Dy) ToLocalDelta(TemplateElement element, double dxMm, double dyMm)
+    {
+        if (element.RotationDeg == 0) return (dxMm, dyMm);
+        var rad = -element.RotationDeg * Math.PI / 180;
+        var cos = Math.Cos(rad);
+        var sin = Math.Sin(rad);
+        return (dxMm * cos - dyMm * sin, dxMm * sin + dyMm * cos);
+    }
+
+    private static (double X, double Y) RotateAboutCenter(TemplateElement element, double xMm, double yMm, double degrees)
+    {
+        var box = BoxOf(element);
+        var cx = box.X + box.Width / 2;
+        var cy = box.Y + box.Height / 2;
+        var rad = degrees * Math.PI / 180;
+        var cos = Math.Cos(rad);
+        var sin = Math.Sin(rad);
+        var dx = xMm - cx;
+        var dy = yMm - cy;
+        return (cx + dx * cos - dy * sin, cy + dx * sin + dy * cos);
+    }
+
+    /// <summary>命中最上层元素的下标（列表末尾=画在最上面）；没命中返回 -1。
+    /// <para>第 44 棒定口径：<strong>点选按宽容盒（文本=含拉伸的 VisualBoxOf，即整条行带）</strong>——
+    /// 只认墨迹会让"点文字旁边的空白选不中这一行"；精确的墨迹盒只用于画框与句柄（HandleAt 的 displayBox）。</para></summary>
     public static int TopmostAt(LabelTemplate template, double xMm, double yMm, double toleranceMm = HitToleranceMm)
     {
         for (var i = template.Elements.Count - 1; i >= 0; i--)
@@ -135,7 +252,8 @@ public static class EditGeometry
     /// 指针落在哪个缩放手柄上。<paramref name="radiusMm"/> 由 UI 按当前缩放换算
     /// （屏幕上约 8 像素对应的毫米数），所以放大后句柄更容易抓。
     /// </summary>
-    public static ResizeHandle HandleAt(TemplateElement element, double xMm, double yMm, double radiusMm)
+    public static ResizeHandle HandleAt(TemplateElement element, double xMm, double yMm, double radiusMm,
+        (double X, double Y, double Width, double Height)? displayBox = null)
     {
         var r = Math.Max(0.1, radiusMm);
         if (element.Kind == ElementKind.Line)
@@ -145,19 +263,22 @@ public static class EditGeometry
             return ResizeHandle.None;
         }
 
-        var box = BoxOf(element);
+        var box = displayBox ?? VisualBoxOf(element);
         var left = box.X;
         var right = box.X + box.Width;
         var top = box.Y;
         var bottom = box.Y + box.Height;
 
-        var horizontal = Near(xMm, left, r) ? ResizeHandle.Left
-            : Near(xMm, right, r) ? ResizeHandle.Right : ResizeHandle.None;
-        var vertical = Near(yMm, top, r) ? ResizeHandle.Top
-            : Near(yMm, bottom, r) ? ResizeHandle.Bottom : ResizeHandle.None;
+        // 转过的元素：句柄也长在"转过的边"上——先把指针反变换回本地域再对轴对齐盒判。
+        var (px, py) = ToLocal(element, xMm, yMm);
 
-        var insideY = yMm >= top - r && yMm <= bottom + r;
-        var insideX = xMm >= left - r && xMm <= right + r;
+        var horizontal = Near(px, left, r) ? ResizeHandle.Left
+            : Near(px, right, r) ? ResizeHandle.Right : ResizeHandle.None;
+        var vertical = Near(py, top, r) ? ResizeHandle.Top
+            : Near(py, bottom, r) ? ResizeHandle.Bottom : ResizeHandle.None;
+
+        var insideY = py >= top - r && py <= bottom + r;
+        var insideX = px >= left - r && px <= right + r;
 
         // 角上两个方向都给；只在某条边的延伸范围内才是单向缩放
         if (horizontal != ResizeHandle.None && vertical != ResizeHandle.None) return horizontal | vertical;
@@ -188,26 +309,36 @@ public static class EditGeometry
     /// <summary>
     /// 位移一个元素，<strong>越界时贴边而不是拒绝</strong>：拖到标签外应当停在边上，
     /// 而不是"按下去了却没动"让人以为卡住。返回真正被接受的位移量。
+    /// <para>
+    /// <strong>第 46 棒：边界按 <paramref name="occupancy"/> 算，不按排版盒。</strong>文本的排版盒是一条
+    /// 130mm 的隐形行带，纸只有 140mm 时它整行只剩 5mm 活动量——用户看到的"短字怎么拖都到不了右边"
+    /// 就是这条带子顶的。占位盒 = 屏幕上看得见的那一块（文本 = 编辑器量出的墨迹盒）；不传则退回排版盒，
+    /// 非文本元素两者相同，行为逐字不变。位移对两轴都是纯平移，所以"墨迹贴边"与"排版盒跟着走同样距离"不矛盾。
+    /// </para>
     /// </summary>
-    public static (double Dx, double Dy) MoveBy(LabelTemplate template, int index, double dxMm, double dyMm)
+    public static (double Dx, double Dy) MoveBy(LabelTemplate template, int index, double dxMm, double dyMm,
+        (double X, double Y, double Width, double Height)? occupancy = null)
     {
         var element = ElementAt(template, index);
-        var box = BoxOf(element);
-        var maxX = Math.Max(0, template.WidthMm - box.Width);
-        var maxY = Math.Max(0, template.HeightMm - box.Height);
-        var targetX = Math.Clamp(box.X + dxMm, 0, maxX);
-        var targetY = Math.Clamp(box.Y + dyMm, 0, maxY);
-        var appliedX = targetX - box.X;
-        var appliedY = targetY - box.Y;
+        var occ = occupancy ?? BoxOf(element);
+        // 占物比标签还宽的那根轴没有"贴边"可言：夹住等于把元素钉死在 0，用户一往右拖就弹回来，
+        // 看着既是"被限制"又是"卡顿"。那一轴放开，越界由墨迹那道闸与「缩回纸内」负责说。
+        var targetX = occ.Width > template.WidthMm ? occ.X + dxMm
+            : Math.Clamp(occ.X + dxMm, 0, template.WidthMm - occ.Width);
+        var targetY = occ.Height > template.HeightMm ? occ.Y + dyMm
+            : Math.Clamp(occ.Y + dyMm, 0, template.HeightMm - occ.Height);
+        var appliedX = targetX - occ.X;
+        var appliedY = targetY - occ.Y;
         ApplyShift(element, appliedX, appliedY);
         return (appliedX, appliedY);
     }
 
-    /// <summary>把元素左上角放到指定毫米位置（同样越界贴边），返回实际落点。</summary>
-    public static (double X, double Y) MoveTo(LabelTemplate template, int index, double xMm, double yMm)
+    /// <summary>把元素左上角放到指定毫米位置（同样越界贴边），返回实际落点。<paramref name="occupancy"/> 见 <see cref="MoveBy"/>。</summary>
+    public static (double X, double Y) MoveTo(LabelTemplate template, int index, double xMm, double yMm,
+        (double X, double Y, double Width, double Height)? occupancy = null)
     {
         var box = BoxOf(ElementAt(template, index));
-        var shift = MoveBy(template, index, xMm - box.X, yMm - box.Y);
+        var shift = MoveBy(template, index, xMm - box.X, yMm - box.Y, occupancy);
         return (box.X + shift.Dx, box.Y + shift.Dy);
     }
 
@@ -254,10 +385,37 @@ public static class EditGeometry
     // ---------- 缩放 ----------
 
     /// <summary>
-    /// 按句柄拖动缩放。线段只有两个端点句柄；矩形/文本/图片按四边与四角八向，
-    /// 最小边长 <see cref="MinSideMm"/>，并且不允许拖出标签范围。
+    /// 角柄拖动时字号跟着等比放大的最小有效比率：宽高几何平均偏离不足 0.2% 就不动字号。
+    /// <para>防止亚像素级抖动（0.02mm）把字号算成 12.0000001pt，界面上显示出一串小数还污染撤销栈。
+    /// 阈值是比率口径，同一拖幅在小元素上占比更大——这是刻意的：小框对拖动本来就更敏感。</para>
     /// </summary>
-    public static void ResizeBy(LabelTemplate template, int index, ResizeHandle handle, double dxMm, double dyMm)
+    public const double FontScaleEpsilon = 1.002;
+
+    /// <summary>
+    /// 按句柄拖动缩放。<strong>语义照 CorelDRAW X4 实测口径</strong>（第 45 棒，别再改回"Shift=等比"）：
+    /// <list type="bullet">
+    /// <item><description>拖<strong>角</strong>柄 = 等比（两轴同倍率），倍率由拖拽量在「锚点 → 被拖的那个角」方向上的投影算出；</description></item>
+    /// <item><description>拖<strong>边</strong>柄 = 单轴，另一轴一个字不动；</description></item>
+    /// <item><description><paramref name="anchor"/> = <see cref="ResizeAnchor.Center"/>（按住 Shift）时锚点从"对角/对边"换成"元素中心"。</description></item>
+    /// </list>
+    /// <para>
+    /// <strong>文本走方案 B：排版盒的宽绝不动</strong>。折行、缩字号、截断全部按盒宽判（<c>TextFit.DoesNotFit</c>），
+    /// 那是出纸侧的行为，不该被编辑器里的一个拖动手势顺手动掉——所以文本角柄只把<strong>字号</strong>乘上倍率，
+    /// 并把<strong>盒高</strong>等比放大（不放大盒高，<c>ShrinkToFit</c> 会因为"装不下"把字号又原地压回去，
+    /// 拖了等于没拖）。要改盒宽去属性面板改"宽(mm)"，那里改的是折行判定，改完看得见。
+    /// </para>
+    /// <para>
+    /// <paramref name="displayBox"/> = 用户实际看见并抓住的那块（文本 = 44 棒量出的墨迹盒）。
+    /// 倍率必须按它算，否则"手柄在墨迹角上、算的却是排版盒对角"，手感与数字两头不对。
+    /// 位置校正不在这里做：Core 量不了字，由 App 量完两侧墨迹盒后用 <see cref="AnchorShift"/> 纯平移补回。
+    /// </para>
+    /// <para>字号夹在 <see cref="TemplateValidator.MinFontPt"/>~<see cref="TemplateValidator.MaxFontPt"/>：
+    /// 放太大或缩太小都会让模板存不进库（校验器报 Error），那不是"限制"而是"存不了"，与其让用户存盘时
+    /// 才发现，不如拖的时候就停在上限。</para>
+    /// </summary>
+    public static void ResizeBy(LabelTemplate template, int index, ResizeHandle handle, double dxMm, double dyMm,
+        ResizeAnchor anchor = ResizeAnchor.Opposite,
+        (double X, double Y, double Width, double Height)? displayBox = null)
     {
         var element = ElementAt(template, index);
         if (handle == ResizeHandle.None) return;
@@ -277,15 +435,82 @@ public static class EditGeometry
             return;
         }
 
+        var box = displayBox ?? VisualBoxOf(element);
+        var horizontal = handle.HasFlag(ResizeHandle.Left) || handle.HasFlag(ResizeHandle.Right);
+        var vertical = handle.HasFlag(ResizeHandle.Top) || handle.HasFlag(ResizeHandle.Bottom);
+
+        // 转过的元素：拖拽量先反变换回本地方向，否则"往纸面右拖"不等于"沿框的右边拖"。
+        var (ldx, ldy) = ToLocalDelta(element, dxMm, dyMm);
+
+        if (horizontal && vertical)
+        {
+            var ratio = UniformRatio(box, handle, anchor, ldx, ldy);
+            if (Math.Abs(ratio - 1) < FontScaleEpsilon - 1) return;
+
+            if (element.Kind == ElementKind.Text)
+            {
+                // 方案 B：字号 ×倍率、盒高等比跟上，盒宽一个字不动。位置交给 AnchorShift。
+                element.FontSizePt = Math.Clamp(Math.Round(element.FontSizePt * ratio, 2),
+                    TemplateValidator.MinFontPt, TemplateValidator.MaxFontPt);
+                element.Height = Math.Max(MinSideMm, Math.Round(element.Height * ratio, 3));
+                return;
+            }
+
+            var newWidth = Math.Clamp(Math.Round(box.Width * ratio, 3), MinSideMm, template.WidthMm);
+            var newHeight = Math.Clamp(Math.Round(box.Height * ratio, 3), MinSideMm, template.HeightMm);
+            var widthBefore = Math.Max(1e-9, box.Width);
+            var heightBefore = Math.Max(1e-9, box.Height);
+            var (heldX, heldY) = HeldPoint(box, handle, anchor);
+            // 非文本元素：盒 == 视觉盒，锚点在 Core 里就能算准，一次到位。
+            // 锚点是盒上哪个点，就反推新左上角：中心 → 减一半；拖的是左边/上边（钉住右/下）→ 减一整条边长。
+            var newX = anchor == ResizeAnchor.Center ? heldX - newWidth / 2
+                : handle.HasFlag(ResizeHandle.Left) ? heldX - newWidth
+                : heldX;
+            var newY = anchor == ResizeAnchor.Center ? heldY - newHeight / 2
+                : handle.HasFlag(ResizeHandle.Top) ? heldY - newHeight
+                : heldY;
+            element.X = Math.Max(0, Math.Round(newX, 3));
+            element.Y = Math.Max(0, Math.Round(newY, 3));
+            element.Width = newWidth;
+            element.Height = newHeight;
+            ScaleFontWithBox(element, widthBefore, newWidth, heightBefore, newHeight);
+            return;
+        }
+
+        if (element.Kind == ElementKind.Text)
+        {
+            // 文本单边柄（第 43 棒）：抻字身，不改排版盒——折行/缩字仍按盒决定（口径见
+            // TemplateElement.TextScaleX 注释）。渲染是"绕盒中心等比抻"，所以 grabbed 边要 1:1 跟手，
+            // 对面边会对称让开：拖右边 m 毫米 → 视觉宽 +2m；对边该不该让开由 AnchorShift 校正说了算。
+            // 越界由校验器的 OccupiedBoundsOf 兜。
+            var visual = VisualBoxOf(element);
+            double? scaleX = null, scaleY = null;
+            if (horizontal)
+            {
+                var grow = handle.HasFlag(ResizeHandle.Right) ? ldx : -ldx;
+                var wanted = Math.Max(MinSideMm, visual.Width + 2 * grow);
+                scaleX = Math.Clamp(wanted / Math.Max(1e-9, element.Width), TemplateValidator.MinStretch, TemplateValidator.MaxStretch);
+            }
+            if (vertical)
+            {
+                var grow = handle.HasFlag(ResizeHandle.Bottom) ? ldy : -ldy;
+                var wanted = Math.Max(MinSideMm, visual.Height + 2 * grow);
+                scaleY = Math.Clamp(wanted / Math.Max(1e-9, element.Height), TemplateValidator.MinStretch, TemplateValidator.MaxStretch);
+            }
+            if (scaleX is not null) element.TextScaleX = scaleX.Value;
+            if (scaleY is not null) element.TextScaleY = scaleY.Value;
+            return;
+        }
+
+        // 其余元素（矩形/图片/矢量底图）单边柄：照旧只改框——它们的"拉伸"本来就是宽高。
         var left = element.X;
         var top = element.Y;
         var right = element.X + element.Width;
         var bottom = element.Y + element.Height;
-
-        if (handle.HasFlag(ResizeHandle.Left)) left = Math.Min(Clamp(left + dxMm, 0, template.WidthMm), right - MinSideMm);
-        if (handle.HasFlag(ResizeHandle.Right)) right = Math.Max(Clamp(right + dxMm, left + MinSideMm, template.WidthMm), left + MinSideMm);
-        if (handle.HasFlag(ResizeHandle.Top)) top = Math.Min(Clamp(top + dyMm, 0, template.HeightMm), bottom - MinSideMm);
-        if (handle.HasFlag(ResizeHandle.Bottom)) bottom = Math.Max(Clamp(bottom + dyMm, top + MinSideMm, template.HeightMm), top + MinSideMm);
+        if (handle.HasFlag(ResizeHandle.Left)) left = Math.Min(Clamp(left + ldx, 0, template.WidthMm), right - MinSideMm);
+        if (handle.HasFlag(ResizeHandle.Right)) right = Math.Max(Clamp(right + ldx, left + MinSideMm, template.WidthMm), left + MinSideMm);
+        if (handle.HasFlag(ResizeHandle.Top)) top = Math.Min(Clamp(top + ldy, 0, template.HeightMm), bottom - MinSideMm);
+        if (handle.HasFlag(ResizeHandle.Bottom)) bottom = Math.Max(Clamp(bottom + ldy, top + MinSideMm, template.HeightMm), top + MinSideMm);
 
         element.X = Math.Max(0, left);
         element.Y = Math.Max(0, top);
@@ -293,45 +518,125 @@ public static class EditGeometry
         element.Height = Math.Max(MinSideMm, bottom - element.Y);
     }
 
+    /// <summary>
+    /// 角柄拖拽的等比倍率：把"新的角位置"投影到「锚点 → 原来的角」这条对角线上，投影比就是倍率。
+    /// <para>与 CDR 同一算法：沿对角线拖多少就放大多少，垂直于对角线的抖动被投影吃掉（不会误放大）。</para>
+    /// </summary>
+    public static double UniformRatio((double X, double Y, double Width, double Height) box,
+        ResizeHandle handle, ResizeAnchor anchor, double dxMm, double dyMm)
+    {
+        var cornerX = handle.HasFlag(ResizeHandle.Left) ? box.X : box.X + box.Width;
+        var cornerY = handle.HasFlag(ResizeHandle.Top) ? box.Y : box.Y + box.Height;
+        var (anchorX, anchorY) = HeldPoint(box, handle, anchor);
+        var vx = cornerX - anchorX;
+        var vy = cornerY - anchorY;
+        var squared = vx * vx + vy * vy;
+        if (squared <= 1e-9) return 1;
+        var projected = ((cornerX + dxMm - anchorX) * vx + (cornerY + dyMm - anchorY) * vy) / squared;
+        return Math.Max(0.02, projected);
+    }
+
+    /// <summary>
+    /// 这次拖拽"应当钉住不动的那个点"（毫米）：<see cref="ResizeAnchor.Center"/> = 盒中心；
+    /// 否则 = 没被拖的那组边（拖左边钉右边，拖右边钉左边；该轴没拖就钉这条轴的起始边，位移本应为 0）。
+    /// </summary>
+    public static (double X, double Y) HeldPoint((double X, double Y, double Width, double Height) box,
+        ResizeHandle handle, ResizeAnchor anchor)
+        => anchor == ResizeAnchor.Center
+            ? (box.X + box.Width / 2, box.Y + box.Height / 2)
+            : (handle.HasFlag(ResizeHandle.Left) ? box.X + box.Width : box.X,
+               handle.HasFlag(ResizeHandle.Top) ? box.Y + box.Height : box.Y);
+
+    /// <summary>
+    /// 锚点残差 → 需要补的<strong>纯平移量</strong>：把"拖完之后量出来的那块"搬回"拖之前该钉住的那个点"。
+    /// <para>Core 量不了字（不许碰 WPF），所以由 App 层用生产量具 <c>TextFit</c> 量出拖前/拖后两块墨迹盒
+    /// 再喂进来。只平移、不改尺寸——尺寸是上面 <see cref="ResizeBy"/> 的决定，两处各算必长歪（§五-62 那族）。</para>
+    /// </summary>
+    public static (double Dx, double Dy) AnchorShift(
+        (double X, double Y, double Width, double Height) before,
+        (double X, double Y, double Width, double Height) after,
+        ResizeHandle handle, ResizeAnchor anchor)
+    {
+        var (bx, by) = HeldPoint(before, handle, anchor);
+        var (ax, ay) = HeldPoint(after, handle, anchor);
+        return (bx - ax, by - ay);
+    }
+
+    /// <summary>
+    /// 角柄等比缩放时把字号带上：取宽高两个比率的几何平均（正方形拖动时两者本就相等，
+    /// 拖成长条形时取平均比取单边更贴近"整体放大了一圈"的观感）。
+    /// <para>只对带字号的元素生效（文本与条码下方的可读数字）；图片、矩形、矢量底图没有字号这一说。
+    /// 文本的角柄不走这条路——它在 <see cref="ResizeBy"/> 里直接把字号乘上倍率（方案 B）。</para>
+    /// </summary>
+    private static void ScaleFontWithBox(TemplateElement element, double widthBefore, double widthAfter, double heightBefore, double heightAfter)
+    {
+        if (element.Kind is not (ElementKind.Text or ElementKind.Barcode)) return;
+        if (widthBefore <= 0 || heightBefore <= 0) return;
+
+        var widthRatio = widthAfter / widthBefore;
+        var heightRatio = heightAfter / heightBefore;
+        if (widthRatio <= 0 || heightRatio <= 0) return;
+
+        var ratio = Math.Sqrt(widthRatio * heightRatio);
+        if (Math.Abs(ratio - 1) < FontScaleEpsilon - 1) return;
+
+        element.FontSizePt = Math.Clamp(
+            Math.Round(element.FontSizePt * ratio, 2),
+            TemplateValidator.MinFontPt,
+            TemplateValidator.MaxFontPt);
+    }
+
     // ---------- 吸附 ----------
 
     /// <summary>
     /// 对"拖动中的位置"做吸附：先看标签边/中心/内边距/别的元素（<see cref="SnapOptions.ToleranceMm"/> 内），
     /// 没命中再退到网格取整。只修正左上角，不改尺寸。
+    /// <para>第 46 棒：给了 <paramref name="occupancy"/>（文本=墨迹盒）时，候选边、网格取整、夹紧
+    /// 全在占位盒坐标系里做，算完再换回排版盒原点——吸的是人看见的那条边。邻居辅助线仍按各元素排版盒取
+    /// （本棒不扩到那里，扩之前要先想清楚"吸到邻居的墨迹边"在行带模板里是不是用户想要的）。</para>
     /// </summary>
-    public static SnapResult Snap(LabelTemplate template, int index, double xMm, double yMm, SnapOptions options)
+    public static SnapResult Snap(LabelTemplate template, int index, double xMm, double yMm, SnapOptions options,
+        (double X, double Y, double Width, double Height)? occupancy = null)
     {
         options ??= SnapOptions.None;
         var element = ElementAt(template, index);
         var box = BoxOf(element);
+        var occ = occupancy ?? box;
+        var offX = occ.X - box.X;
+        var offY = occ.Y - box.Y;
+        var originX = xMm + offX;
+        var originY = yMm + offY;
         var guides = new List<GuideLine>();
 
         if (!options.Enabled)
             return new SnapResult(xMm, yMm, guides) { OriginalX = xMm, OriginalY = yMm };
 
-        var width = box.Width;
-        var height = box.Height;
+        var width = occ.Width;
+        var height = occ.Height;
         var tolerance = Math.Max(0.05, options.ToleranceMm);
 
         // 三个候选边（左边 / 水平中心 / 右边）各自去贴目标线，命中后换回新的左上角
-        var xHit = PickSnap(xMm, new[] { 0.0, width / 2, width }, CollectTargets(template, index, options, vertical: true), tolerance, out var xLine);
-        var snappedX = xHit.HasValue ? xHit.Value : xMm;
+        var xHit = PickSnap(originX, new[] { 0.0, width / 2, width }, CollectTargets(template, index, options, vertical: true), tolerance, out var xLine);
+        var snappedX = xHit.HasValue ? xHit.Value : originX;
         if (xHit.HasValue && xLine is not null)
             guides.Add(new GuideLine(xLine.Value.Source, Vertical: true, xLine.Value.Position, 0, template.HeightMm));
         if (!xHit.HasValue && options.SnapToGrid && options.GridStepMm > 0)
-            snappedX = Math.Round(xMm / options.GridStepMm) * options.GridStepMm;
+            snappedX = Math.Round(originX / options.GridStepMm) * options.GridStepMm;
 
-        var yHit = PickSnap(yMm, new[] { 0.0, height / 2, height }, CollectTargets(template, index, options, vertical: false), tolerance, out var yLine);
-        var snappedY = yHit.HasValue ? yHit.Value : yMm;
+        var yHit = PickSnap(originY, new[] { 0.0, height / 2, height }, CollectTargets(template, index, options, vertical: false), tolerance, out var yLine);
+        var snappedY = yHit.HasValue ? yHit.Value : originY;
         if (yHit.HasValue && yLine is not null)
             guides.Add(new GuideLine(yLine.Value.Source, Vertical: false, yLine.Value.Position, 0, template.WidthMm));
         if (!yHit.HasValue && options.SnapToGrid && options.GridStepMm > 0)
-            snappedY = Math.Round(yMm / options.GridStepMm) * options.GridStepMm;
+            snappedY = Math.Round(originY / options.GridStepMm) * options.GridStepMm;
 
-        // 吸附完仍要夹紧：贴住中心线却把元素推出边界是不能接受的
-        var maxX = Math.Max(0, template.WidthMm - width);
-        var maxY = Math.Max(0, template.HeightMm - height);
-        return new SnapResult(Math.Clamp(snappedX, 0, maxX), Math.Clamp(snappedY, 0, maxY), guides)
+        // 吸附完仍要夹紧：贴住中心线却把元素推出边界是不能接受的。
+        // 但占物比标签还宽的那根轴没有边可贴（夹了会把元素钉死在 0），与 MoveBy 同一口径放开。
+        var maxX = template.WidthMm - width;
+        var maxY = template.HeightMm - height;
+        var clampedX = maxX < 0 ? snappedX : Math.Clamp(snappedX, 0, maxX);
+        var clampedY = maxY < 0 ? snappedY : Math.Clamp(snappedY, 0, maxY);
+        return new SnapResult(clampedX - offX, clampedY - offY, guides)
         {
             OriginalX = xMm,
             OriginalY = yMm,
@@ -406,34 +711,38 @@ public static class EditGeometry
     /// <summary>
     /// 对齐到标签边。某个轴传 null 表示这个轴不动 —— 界面上那六个按钮各管一个轴，
     /// 上一版只能双轴一起给，点「顶对齐」会把水平位置也甩到最左。
+    /// <para>第 46 棒：给了 <paramref name="occupancy"/>（文本=墨迹盒）就按占位盒的边对齐——
+    /// 点「右对齐」要的是<strong>看得见的字</strong>贴右缘，而不是一条比字宽得多的隐形行带顶到右缘。</para>
     /// </summary>
-    public static void AlignToLabel(LabelTemplate template, int index, AlignHorizontal? horizontal, AlignVertical? vertical)
+    public static void AlignToLabel(LabelTemplate template, int index, AlignHorizontal? horizontal, AlignVertical? vertical,
+        (double X, double Y, double Width, double Height)? occupancy = null)
     {
         var element = ElementAt(template, index);
-        var box = BoxOf(element);
+        var occ = occupancy ?? BoxOf(element);
         var dx = horizontal switch
         {
-            AlignHorizontal.Center => (template.WidthMm - box.Width) / 2 - box.X,
-            AlignHorizontal.Right => template.WidthMm - box.Width - box.X,
-            AlignHorizontal.Left => -box.X,
+            AlignHorizontal.Center => (template.WidthMm - occ.Width) / 2 - occ.X,
+            AlignHorizontal.Right => template.WidthMm - occ.Width - occ.X,
+            AlignHorizontal.Left => -occ.X,
             _ => 0d,
         };
         var dy = vertical switch
         {
-            AlignVertical.Middle => (template.HeightMm - box.Height) / 2 - box.Y,
-            AlignVertical.Bottom => template.HeightMm - box.Height - box.Y,
-            AlignVertical.Top => -box.Y,
+            AlignVertical.Middle => (template.HeightMm - occ.Height) / 2 - occ.Y,
+            AlignVertical.Bottom => template.HeightMm - occ.Height - occ.Y,
+            AlignVertical.Top => -occ.Y,
             _ => 0d,
         };
         if (dx == 0 && dy == 0) return;
         ApplyShift(element, dx, dy);
     }
 
-    /// <summary>按内边距把元素推到内容区边上（常用：整行文本贴左内边距）。</summary>
-    public static void SnapToPadding(LabelTemplate template, int index, AlignHorizontal horizontal, AlignVertical vertical)
+    /// <summary>按内边距把元素推到内容区边上（常用：整行文本贴左内边距）。占位盒口径同 <see cref="AlignToLabel"/>。</summary>
+    public static void SnapToPadding(LabelTemplate template, int index, AlignHorizontal horizontal, AlignVertical vertical,
+        (double X, double Y, double Width, double Height)? occupancy = null)
     {
         var element = ElementAt(template, index);
-        var box = BoxOf(element);
+        var occ = occupancy ?? BoxOf(element);
         var left = Math.Clamp(template.PaddingMm, 0, template.WidthMm);
         var top = Math.Clamp(template.PaddingMm, 0, template.HeightMm);
         var right = Math.Max(left, template.WidthMm - template.PaddingMm);
@@ -441,18 +750,18 @@ public static class EditGeometry
 
         var targetX = horizontal switch
         {
-            AlignHorizontal.Center => left + (right - left - box.Width) / 2,
-            AlignHorizontal.Right => right - box.Width,
+            AlignHorizontal.Center => left + (right - left - occ.Width) / 2,
+            AlignHorizontal.Right => right - occ.Width,
             _ => left,
         };
         var targetY = vertical switch
         {
-            AlignVertical.Middle => top + (bottom - top - box.Height) / 2,
-            AlignVertical.Bottom => bottom - box.Height,
+            AlignVertical.Middle => top + (bottom - top - occ.Height) / 2,
+            AlignVertical.Bottom => bottom - occ.Height,
             _ => top,
         };
-        ApplyShift(element, Math.Clamp(targetX, 0, Math.Max(0, template.WidthMm - box.Width)) - box.X,
-            Math.Clamp(targetY, 0, Math.Max(0, template.HeightMm - box.Height)) - box.Y);
+        ApplyShift(element, Math.Clamp(targetX, 0, Math.Max(0, template.WidthMm - occ.Width)) - occ.X,
+            Math.Clamp(targetY, 0, Math.Max(0, template.HeightMm - occ.Height)) - occ.Y);
     }
 
     // ---------- 层级 ----------

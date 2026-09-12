@@ -55,6 +55,37 @@ public sealed class SvgBuilder
         return this;
     }
 
+    /// <summary>
+    /// 一个带 transform 的普通分组（第 43 棒：旋转/拉伸的文字与图片用它包住，几何变换只写这一层）。
+    /// <para>与 <see cref="StartLayer"/> 的区别只是不占图层语义：CDR 打开时它是"对象分组"，
+    /// 整组能一起选中，变换由组自己带着——与预览端 PushTransform 一一对应。</para>
+    /// </summary>
+    public SvgBuilder StartGroup(string transform)
+    {
+        _layers.Push("group");
+        _body.Append(Indent()).Append("<g transform=\"").Append(Attr(transform)).Append("\">\n");
+        return this;
+    }
+
+    /// <summary>转成 SVG 的 <c>transform</c> 串（毫米）。目标合成 = 先绕元素中心拉伸、再绕元素中心旋转，
+    /// 与 <c>LabelRenderer.PushGeometry</c> 逐条同序同锚点。
+    /// <para>SVG 的 <c>transform</c> 列表【最右先作用到点上】，所以"平移进中心"要写在最左、"平移回原点"写在最右：
+    /// <c>translate(c) [rotate] [scale] translate(-c)</c>。只转不拉 / 只拉不转 / 都无 三种退化情形由空段自动省掉。</para>
+    /// </summary>
+    public static string GeometryTransform(double centerXmm, double centerYmm, double rotationDeg, double scaleX, double scaleY)
+    {
+        var stretch = Math.Abs(scaleX - 1) > 1e-6 || Math.Abs(scaleY - 1) > 1e-6;
+        var rotate = Math.Abs(rotationDeg) > 1e-6;
+        if (!stretch && !rotate) return string.Empty;
+
+        var c = $"{N(centerXmm)},{N(centerYmm)}";
+        var sb = new StringBuilder($"translate({c})");
+        if (rotate) sb.Append($" rotate({N(rotationDeg)})");
+        if (stretch) sb.Append($" scale({N(scaleX)},{N(scaleY)})");
+        sb.Append($" translate(-{N(centerXmm)},-{N(centerYmm)})");
+        return sb.ToString();
+    }
+
     public SvgBuilder EndLayer()
     {
         if (_layers.Count == 0) throw new InvalidOperationException("没有可结束的图层。");

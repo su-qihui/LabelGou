@@ -194,36 +194,52 @@ public sealed class TemplateEditorControl : FrameworkElement
 
     private void DrawElementBox(DrawingContext dc, TemplateElement element, bool selected, double pixelsPerDip)
     {
-        var box = EditGeometry.BoxOf(element);
-        var rect = new Rect(ToDiuX(box.X), ToDiuY(box.Y), Math.Max(1, Mm.ToDiu(box.Width) * _zoom), Math.Max(1, Mm.ToDiu(box.Height) * _zoom));
-        var pen = selected ? SelectedPen : BoxPen;
-        dc.DrawRectangle(null, pen, rect);
-
-        if (!element.Visible)
+        // 第 44 棒：文本按 VM 量出的【墨迹盒】画（选中框贴着字走，不再框整条行带——用户圈的红框）；
+        // 其余元素退回 VisualBoxOf（含拉伸的视觉盒）。量不到版面项时（隐藏/异常）也退回默认盒。
+        // 转过的元素连框带句柄一起绕【排版盒中心】转——命中与句柄判据（ToLocal）锚的就是这个中心，
+        // 画成轴对齐会出现"看得见句柄、点不中"的错位（43 棒遗留，这条一并收掉）。
+        var box = _vm?.DisplayBoxOf(element) ?? EditGeometry.VisualBoxOf(element);
+        var anchor = EditGeometry.BoxOf(element);
+        var rotated = Math.Abs(element.RotationDeg) > 1e-6 && element.Kind != ElementKind.Line;
+        if (rotated)
+            dc.PushTransform(new RotateTransform(element.RotationDeg,
+                ToDiuX(anchor.X + anchor.Width / 2), ToDiuY(anchor.Y + anchor.Height / 2)));
+        try
         {
-            dc.DrawRectangle(DimBrush, null, rect);
-            dc.DrawText(new FormattedText("隐藏", System.Globalization.CultureInfo.CurrentCulture, FlowDirection.LeftToRight,
-                new Typeface(new FontFamily(TemplateElement.DefaultFont), FontStyles.Normal, FontWeights.Normal, FontStretches.Normal),
-                9, Brushes.Gray, pixelsPerDip), new Point(rect.Left + 2, rect.Top + 1));
-        }
+            var rect = new Rect(ToDiuX(box.X), ToDiuY(box.Y), Math.Max(1, Mm.ToDiu(box.Width) * _zoom), Math.Max(1, Mm.ToDiu(box.Height) * _zoom));
+            var pen = selected ? SelectedPen : BoxPen;
+            dc.DrawRectangle(null, pen, rect);
 
-        if (!selected) return;
-        if (element.Kind == ElementKind.Line)
-        {
-            DrawHandle(dc, new Point(ToDiuX(element.X), ToDiuY(element.Y)));
-            DrawHandle(dc, new Point(ToDiuX(element.X2), ToDiuY(element.Y2)));
-            return;
+            if (!element.Visible)
+            {
+                dc.DrawRectangle(DimBrush, null, rect);
+                dc.DrawText(new FormattedText("隐藏", System.Globalization.CultureInfo.CurrentCulture, FlowDirection.LeftToRight,
+                    new Typeface(new FontFamily(TemplateElement.DefaultFont), FontStyles.Normal, FontWeights.Normal, FontStretches.Normal),
+                    9, Brushes.Gray, pixelsPerDip), new Point(rect.Left + 2, rect.Top + 1));
+            }
+
+            if (!selected) return;
+            if (element.Kind == ElementKind.Line)
+            {
+                DrawHandle(dc, new Point(ToDiuX(element.X), ToDiuY(element.Y)));
+                DrawHandle(dc, new Point(ToDiuX(element.X2), ToDiuY(element.Y2)));
+                return;
+            }
+            var midX = rect.X + rect.Width / 2;
+            var midY = rect.Y + rect.Height / 2;
+            DrawHandle(dc, rect.TopLeft);
+            DrawHandle(dc, new Point(midX, rect.Top));
+            DrawHandle(dc, rect.TopRight);
+            DrawHandle(dc, new Point(rect.Right, midY));
+            DrawHandle(dc, rect.BottomRight);
+            DrawHandle(dc, new Point(midX, rect.Bottom));
+            DrawHandle(dc, rect.BottomLeft);
+            DrawHandle(dc, new Point(rect.Left, midY));
         }
-        var midX = rect.X + rect.Width / 2;
-        var midY = rect.Y + rect.Height / 2;
-        DrawHandle(dc, rect.TopLeft);
-        DrawHandle(dc, new Point(midX, rect.Top));
-        DrawHandle(dc, rect.TopRight);
-        DrawHandle(dc, new Point(rect.Right, midY));
-        DrawHandle(dc, rect.BottomRight);
-        DrawHandle(dc, new Point(midX, rect.Bottom));
-        DrawHandle(dc, rect.BottomLeft);
-        DrawHandle(dc, new Point(rect.Left, midY));
+        finally
+        {
+            if (rotated) dc.Pop();
+        }
     }
 
     private void DrawHandle(DrawingContext dc, Point center)
@@ -252,7 +268,12 @@ public sealed class TemplateEditorControl : FrameworkElement
 
         Focus();
         var point = e.GetPosition(this);
-        var mode = vm.BeginDrag(ToMmX(point.X), ToMmY(point.Y), HandleRadiusMm);
+        // 修饰键在按下那一刻抓一次，整次拖拽用同一个判定——拖到一半才松开 Shift 不该中途换规则。
+        // 口径 = 本机 CorelDRAW X4 实测（第 45 棒）：**Shift = 绕中心向四周**（角柄本来就等比，
+        // 不需要键）；**Ctrl = 移动时锁水平或垂直**。44 棒把 Shift 实现成"等比"是错的，已翻案。
+        var anchor = Keyboard.Modifiers.HasFlag(ModifierKeys.Shift) ? ResizeAnchor.Center : ResizeAnchor.Opposite;
+        var lockAxis = Keyboard.Modifiers.HasFlag(ModifierKeys.Control);
+        var mode = vm.BeginDrag(ToMmX(point.X), ToMmY(point.Y), HandleRadiusMm, anchor, lockAxis);
         if (mode == TemplateEditorViewModel.DragMode.None) return;
 
         _dragging = true;
@@ -273,13 +294,14 @@ public sealed class TemplateEditorControl : FrameworkElement
             return;
         }
 
+        // 悬停与按下同一口径：命中按行带（宽容），句柄按墨迹盒（与画出来的框对齐）。
         var index = EditGeometry.TopmostAt(vm.Template, ToMmX(point.X), ToMmY(point.Y));
-        Cursor = index < 0 ? Cursors.Arrow : CursorFor(vm.Template.Elements[index], ToMmX(point.X), ToMmY(point.Y));
+        Cursor = index < 0 ? Cursors.Arrow : CursorFor(vm, vm.Template.Elements[index], ToMmX(point.X), ToMmY(point.Y));
     }
 
-    private Cursor CursorFor(TemplateElement element, double xMm, double yMm)
+    private Cursor CursorFor(TemplateEditorViewModel vm, TemplateElement element, double xMm, double yMm)
     {
-        var handle = EditGeometry.HandleAt(element, xMm, yMm, HandleRadiusMm);
+        var handle = EditGeometry.HandleAt(element, xMm, yMm, HandleRadiusMm, vm.DisplayBoxOf(element));
         return handle switch
         {
             ResizeHandle.Left or ResizeHandle.Right => Cursors.SizeWE,

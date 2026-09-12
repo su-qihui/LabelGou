@@ -475,14 +475,17 @@ public sealed class ExportViewModel : ObservableObject
     /// </summary>
     private bool PassesReviewGate(PageContentSource source)
     {
+        var inkOverflow = source.InkOverflowLabelCount;
         var text = ComposeGateMessage(source.LabelCount, source.UnconfirmedLabelCount,
-            _owner.Sheet.Plan?.ErrorCount ?? 0, _owner.TemplateCautions);
+            _owner.Sheet.Plan?.ErrorCount ?? 0, _owner.TemplateCautions,
+            inkOverflow, source.InkScanTruncated ? PageContentSource.InkScanCap : 0);
         if (text is null) return true;
 
         var accepted = _owner.ConfirmGate?.Invoke(text) ?? true;
         if (!accepted)
         {
-            AppLog.Info($"出口闸门拦下任务：{source.UnconfirmedLabelCount}/{source.LabelCount} 张待核对，纸规错误 {_owner.Sheet.Plan?.ErrorCount ?? 0} 条");
+            AppLog.Info($"出口闸门拦下任务：{source.UnconfirmedLabelCount}/{source.LabelCount} 张待核对，" +
+                        $"纸规错误 {_owner.Sheet.Plan?.ErrorCount ?? 0} 条，墨迹出纸 {inkOverflow} 张");
         }
         return accepted;
     }
@@ -495,16 +498,25 @@ public sealed class ExportViewModel : ObservableObject
     /// 纯告警也能触发一次确认（只拦这一次，不自动改；与 §五-123 不冲突：它仍只在真出纸/出文件那一路跑）。</para>
     /// </summary>
     public static string? ComposeGateMessage(int labelCount, int flagged, int sheetErrors,
-        IReadOnlyList<string>? templateCautions = null)
+        IReadOnlyList<string>? templateCautions = null, int inkOverflow = 0, int inkScannedOf = 0)
     {
         var cautions = templateCautions ?? Array.Empty<string>();
-        if (flagged <= 0 && sheetErrors <= 0 && cautions.Count == 0) return null;
+        if (flagged <= 0 && sheetErrors <= 0 && cautions.Count == 0 && inkOverflow <= 0) return null;
 
         var lines = new List<string>();
         if (flagged > 0)
             lines.Add($"这批共 {labelCount} 张标签里，有 {flagged} 张含「需人工核对」的字段（红色标记）。");
         if (sheetErrors > 0)
             lines.Add($"整版方案上有 {sheetErrors} 条标成错误的纸规问题（列在第 ④ 步的提示里），件上可能缺线、缺角线或裁错位置。");
+        if (inkOverflow > 0)
+        {
+            // 第 46 棒：文本改成"永不折行"之后，长值会照实排到纸外——行带那份保护由这道闸接手。
+            var scanned = inkScannedOf > 0 && inkScannedOf < labelCount
+                ? $"（只抽查了前 {inkScannedOf} 张，这批共 {labelCount} 张）"
+                : string.Empty;
+            lines.Add($"有 {inkOverflow} 张标签的文字排到了纸边外，会被刀模裁掉{scanned}。" +
+                      "回第 ③ 步点「缩回纸内」，或在模板里给那一行填「折行宽度(mm)」让它折行。");
+        }
         if (cautions.Count > 0)
         {
             lines.Add($"模板里有 {cautions.Count} 处写死的文字与这批货对不上号：");

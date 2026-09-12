@@ -18,6 +18,10 @@ public sealed record LineItem(double X1, double Y1, double X2, double Y2, double
 /// <param name="Content">变量替换后的最终文本（非空）。</param>
 /// <param name="Flagged">含需要人工核对的字段值（M6 的 AI 结果未确认）——渲染时标红。</param>
 /// <param name="FlagReason">标红原因，界面状态栏/悬浮提示用。</param>
+/// <param name="RotationDeg">绕元素中心顺时针旋转的角度（第 43 棒，默认 0）。渲染端套变换，
+/// <see cref="LabelGou.App.Rendering.TextFit"/> 的缩字/折行决定<strong>不受它影响</strong>（先排版后变换）。</param>
+/// <param name="StretchX">字面横向拉伸倍率（1 = 原样，第 43 棒）。同上：变换在 TextFit 之后，五出口共用。</param>
+/// <param name="StretchY">字面纵向拉伸倍率（1 = 原样）。</param>
 public sealed record TextItem(
     string Content,
     double X,
@@ -31,28 +35,52 @@ public sealed record TextItem(
     bool ShrinkToFit,
     int MaxLines,
     bool Flagged = false,
-    string? FlagReason = null) : LayoutItem;
+    string? FlagReason = null,
+    double RotationDeg = 0,
+    double TextScaleX = 1,
+    double TextScaleY = 1,
+    double WrapWidthMm = 0) : LayoutItem
+{
+    /// <summary>这一项带不带几何变换（旋转或任一方向拉伸）。渲染端用它决定要不要 Push/Pop 变换组。</summary>
+    public bool HasGeometry => RotationDeg != 0 || TextScaleX != 1 || TextScaleY != 1;
+
+    /// <summary>永不折行（第 46 棒）：内容多长排多长，对齐偏移由 <c>TextFit</c> 自己算，不靠 <c>MaxTextWidth</c>。</summary>
+    public bool NoWrap => WrapWidthMm <= 0;
+
+    /// <summary>
+    /// 生成这一项的模板元素（不参与 JSON 序列化，只给运行时用）。
+    /// <para>第 44 棒：编辑器要"按元素找回它的版面项"来量文字墨迹（选中框贴墨迹画，不再框整条行带）。
+    /// 版面里文本可能被拆成多条（条码可读数字逐字一格），所以编辑器只认 <c>ReferenceEquals</c> 且
+    /// 内容非数字带的那条——用引用而不是"第 i 个元素对第 j 个项"的下标，隐藏元素不会把下标错开。</para>
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public Templates.TemplateElement? Source { get; init; }
+}
 
 /// <summary>图片项（M1 仅在 Logo 有值且文件存在时产出）。</summary>
 /// <param name="ReferenceOnly">true 表示只作对齐参考，不进打印与导出（M5：从 .cdr 抠出来的缩略图）。</param>
-public sealed record ImageItem(string AbsolutePath, double X, double Y, double Width, double Height, bool ReferenceOnly = false) : LayoutItem;
+/// <param name="RotationDeg">绕元素中心顺时针旋转的角度（第 43 棒，默认 0）。图片的"拉伸"就是宽高本身
+/// （画上去填满框），所以只有旋转走这个字段。</param>
+public sealed record ImageItem(string AbsolutePath, double X, double Y, double Width, double Height, bool ReferenceOnly = false, double RotationDeg = 0) : LayoutItem;
 
 /// <summary>
 /// 矢量底图项（M5 的 C 类模板）：一份从 CDR 导出的 SVG 底稿，坐标已是毫米。
 /// <para>渲染端负责把 <paramref name="AbsolutePath"/> 指向的 SVG 画成 WPF Drawing（App 层 <c>SvgDrawableBuilder</c>），
 /// 矢量出口则直接写回 SVG；Core 只负责落位，不认 SVG 内容。</para>
 /// </summary>
-public sealed record VectorItem(string AbsolutePath, double X, double Y, double Width, double Height, bool ReferenceOnly = false) : LayoutItem;
+public sealed record VectorItem(string AbsolutePath, double X, double Y, double Width, double Height, bool ReferenceOnly = false, double RotationDeg = 0) : LayoutItem;
 
 /// <summary>
 /// 条码项（第 17 棒）。<strong>矩形已经在 Core 算成毫米</strong>，渲染端只负责画，不重算条宽——
 /// 这是「预览能扫、印出来也能扫」的唯一保证。
 /// </summary>
-/// <param name="Bars">黑条（绝对毫米坐标）。<see cref="Error"/> 非空时为空表。</param>
+/// <param name="Bars">黑条（绝对毫米坐标）。<see cref="Error"/> 非空时为空表。每根自带「是不是保护条」。</param>
 /// <param name="Data">真正编进去的那一串（可能与表里的原值差一个自动补的校验位）。</param>
 /// <param name="SymbologyName">制式短名，给提示与 SVG 注记用。</param>
 /// <param name="Error">编不出来：数据里有这个制式装不下的字符、或校验位不对。
 /// 非空时这一项被标成待核，打印闸门拦得住它——<strong>宁可不出纸也不出一张错码</strong>。</param>
+/// <param name="GuardBarsHeight">保护条的高（UPC/EAN 专有，比 <see cref="BarsHeight"/> 高一截）；0 = 没有保护条。</param>
+/// <param name="Hri">可读数字的逐字格子（UPC/EAN 专有）。空 = 这一族整串居中即可。</param>
 public sealed record BarcodeItem(
     IReadOnlyList<BarStrip> Bars,
     double X,
@@ -70,7 +98,16 @@ public sealed record BarcodeItem(
     bool Flagged = false,
     string? FlagReason = null,
     string? Warning = null,
-    string? Error = null) : LayoutItem;
+    string? Error = null,
+    double GuardBarsHeight = 0,
+    IReadOnlyList<HriGlyph>? Hri = null) : LayoutItem
+{
+    /// <summary>保护条实际该画多高：没给（0）就与数据条等高，渲染端不必自己判空。</summary>
+    public double EffectiveGuardBarsHeight => GuardBarsHeight > 0 ? GuardBarsHeight : BarsHeight;
+
+    /// <summary>每一根条实际该画多高——保护条比数据条高，这是「和 BARCODE WIZARD 一样」的一半。</summary>
+    public double HeightOf(BarStrip bar) => bar.IsGuard ? EffectiveGuardBarsHeight : BarsHeight;
+}
 
 /// <summary>
 /// 一条记录套一个模板得到的<strong>最终版面</strong>（纯数据、毫米单位、与渲染技术无关）。
@@ -189,13 +226,13 @@ public static class LayoutEngine
 
                 case ElementKind.Vector:
                     var vectorPath = ResolveAsset(template, element);
-                    if (vectorPath is not null) items.Add(new VectorItem(vectorPath, element.X, element.Y, element.Width, element.Height, element.ReferenceOnly));
+                    if (vectorPath is not null) items.Add(new VectorItem(vectorPath, element.X, element.Y, element.Width, element.Height, element.ReferenceOnly, element.RotationDeg));
                     else hidden++;
                     break;
 
                 case ElementKind.Image:
                     var path = ResolveAsset(template, element);
-                    if (path is not null) items.Add(new ImageItem(path, element.X, element.Y, element.Width, element.Height, element.ReferenceOnly));
+                    if (path is not null) items.Add(new ImageItem(path, element.X, element.Y, element.Width, element.Height, element.ReferenceOnly, element.RotationDeg));
                     else hidden++;
                     break;
 
@@ -211,23 +248,42 @@ public static class LayoutEngine
                     }
 
                     var encoding = BarcodeEncoder.Encode(data, element.Symbology);
-                    // 可读数字那一条占底部 22%（最少 3 mm、最多一半高）：只在这里算一次。
-                    // 上限是第 23 棒补的——高 2mm 的小元素曾给 3mm 文字带,条顶在 Y、文字带压出元素底边。
-                    var textBand = element.ShowBarcodeText
-                        ? Math.Min(Math.Max(3, element.Height * 0.22), element.Height * 0.5)
+                    // 纵向分两段：上边距（框高的 1/81，照 CDR）+ 条区 + 可读数字带。
+                    // 数字带有 2.5 mm 的可读下限——CDR 的「5/81」只在框高等比时成立，
+                    // 用户画的框常常又宽又扁，5/81 压出来的 0.86 mm 连字都放不下（2026-09-11 的截图教训）。
+                    // 不开可读数字时两段都归零，条吃满整格——与「不印数字就不留空」的老口径一致。
+                    var topMargin = element.ShowBarcodeText
+                        ? element.Height * BarcodeBars.TopMarginUnits / BarcodeBars.HeightUnits
                         : 0;
-                    var barsHeight = Math.Max(1, element.Height - textBand);
-                    var geometry = BarcodeBars.Build(encoding, element.X, element.Y, element.Width, element.Y, barsHeight);
+                    var textBand = element.ShowBarcodeText
+                        ? Math.Max(BarcodeBars.MinTextBandMm,
+                            element.Height * BarcodeBars.TextBandUnits / BarcodeBars.HeightUnits)
+                        : 0;
+                    if (topMargin + textBand > element.Height * 0.6)
+                        textBand = Math.Max(0, element.Height * 0.6 - topMargin);   // 带再大也不能把条吃了
+                    // 这一格给的是「条区总高」：有保护条的 UPC/EAN 一族由保护条吃满，数据条自己矮一截（见 BarcodeBars）。
+                    var barsZoneHeight = Math.Max(1, element.Height - topMargin - textBand);
+                    var geometry = BarcodeBars.Build(encoding, element.X, element.Y, element.Width,
+                        element.Y + topMargin, barsZoneHeight);
+                    // 可读数字的逐字格子：只有 UPC/EAN 一族有。别的制式留空，渲染端按老规矩整串居中。
+                    var hri = element.ShowBarcodeText && encoding.Ok
+                        ? BarcodeBars.BuildHri(encoding, element.X, element.Width, geometry)
+                        : Array.Empty<HriGlyph>();
+                    // 字号用元素自己的（默认 8pt），装不下由 TextFit 兜底缩——
+                    // 「字号 = 7.215 个模块」那条 CDR 规则在扁框里会炸出 27pt 的巨字，同一天里栽过一次，不再犯。
+                    var fontSizePt = element.FontSizePt;
                     items.Add(new BarcodeItem(
                         geometry.Bars, element.X, element.Y, element.Width, element.Height,
                         geometry.BarsY, geometry.BarsHeight, geometry.ModuleMm,
                         encoding.Data, element.Symbology.ShortName(), element.ShowBarcodeText,
                         string.IsNullOrWhiteSpace(element.FontFamily) ? TemplateElement.DefaultFont : element.FontFamily,
-                        element.FontSizePt,
+                        fontSizePt,
                         Flagged: barFlag is not null || !encoding.Ok,
                         FlagReason: barFlag ?? (encoding.Ok ? null : encoding.Error),
                         Warning: encoding.Ok ? geometry.Warning : null,
-                        Error: encoding.Ok ? null : encoding.Error));
+                        Error: encoding.Ok ? null : encoding.Error,
+                        GuardBarsHeight: geometry.GuardBarsHeight,
+                        Hri: hri));
                     break;
                 }
 
@@ -252,7 +308,12 @@ public static class LayoutEngine
                         element.ShrinkToFit,
                         element.MaxLines,
                         Flagged: flagReason is not null,
-                        FlagReason: flagReason));
+                        FlagReason: flagReason,
+                        RotationDeg: element.RotationDeg,
+                        TextScaleX: element.TextScaleX,
+                        TextScaleY: element.TextScaleY,
+                        WrapWidthMm: element.WrapWidthMm)
+                    { Source = element });
                     break;
             }
         }

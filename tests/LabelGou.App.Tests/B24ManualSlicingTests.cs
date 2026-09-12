@@ -188,4 +188,19 @@ public sealed class B24ManualSlicingTests : IDisposable
         Assert.Contains("3 张含「需人工核对」", both!);
         Assert.Contains("告警一条", both);
     }
+
+    /// <summary>第 46 棒：文本改成永不折行后，"字排到纸外"由出纸前这道闸接手。</summary>
+    [Fact]
+    public void 墨迹出纸单独也能触发复核_并说清怎么修()
+    {
+        Assert.Null(ExportViewModel.ComposeGateMessage(10, 0, 0, null, 0));      // 没越界照旧放行
+
+        var text = ExportViewModel.ComposeGateMessage(10, 0, 0, null, 3);
+        Assert.NotNull(text);
+        Assert.Contains("3 张标签的文字排到了纸边外", text!);
+        Assert.Contains("缩回纸内", text);
+
+        var sampled = ExportViewModel.ComposeGateMessage(25731, 0, 0, null, 2, 2000);
+        Assert.Contains("只抽查了前 2000 张", sampled!);   // 被上限截过就不许说成"全量量过"
+    }
 }

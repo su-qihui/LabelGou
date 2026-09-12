@@ -25,6 +25,14 @@ public sealed class TextFitResult
     /// <summary>文字顶边的绝对 Y（DIU），可直接交给 <c>DrawText</c>。</summary>
     public required double TextTopDiu { get; init; }
 
+    /// <summary>
+    /// 墨迹左缘的绝对 X（DIU），与 <see cref="TextTopDiu"/> 一起交给 <c>DrawText</c>。
+    /// <para>折行的文本 = 盒左边（对齐由 <c>FormattedText.TextAlignment</c> 在盒宽内做掉，历史行为一字不变）；
+    /// <strong>永不折行</strong>（第 46 棒）时 <c>MaxTextWidth</c> 放到无限宽，WPF 的对齐就没了参照，
+    /// 所以偏移在这里自己算——两条出口（<c>LabelRenderer</c> 与 <c>SheetSvgWriter</c>）都读这一个值，不许各推一遍。</para>
+    /// </summary>
+    public required double InkLeftDiu { get; init; }
+
     /// <summary>请求字号与实际字号之比（1 = 没缩；小于 1 = 触发过缩字号收敛）。</summary>
     public required double ShrinkRatio { get; init; }
 
@@ -141,19 +149,24 @@ public static class TextFit
         // 所以行数不能靠它，只能拿同字号的单行样本反推一个比率，再按 em 线性缩放。
         var lineHeightRatio = SingleLineHeightRatio(typeface, requested);
 
+        // 第 46 棒：**折行边界与对齐基准分家**。永不折行时用"无限宽"做折行与宽度判据（宽度不再参与缩字），
+        // 盒宽只留给对齐与垂直居中当参照；折行的文本一切照旧。
+        var wrapCanonical = text.NoWrap ? UnboundedWidthDiu : canonicalBox.Width;
+        var wrapFinal = text.NoWrap ? UnboundedWidthDiu : box.Width;
+
         // —— 规范域（scale=1）里收敛字号，得到与缩放无关的唯一决定 ——
         var emSize = requested;
-        var need = Measure(text, typeface, foreground, emSize, canonicalBox.Width, lineHeightRatio);
+        var need = Measure(text, typeface, foreground, emSize, wrapCanonical, lineHeightRatio);
 
         // 缩字号的目标：装得下（高度按会显示的那几行算，单行还得多一道宽度）。
         bool DoesNotFit(TextNeed n) => n.ShownHeight > canonicalBox.Height + HeightSlackDiu
-            || (mustStayOnOneLine && n.FlatWidth > canonicalBox.Width + WidthSlackDiu);
+            || (mustStayOnOneLine && n.FlatWidth > wrapCanonical + WidthSlackDiu);
 
         // 内容真的被吃掉了：行被上限砍掉，或单行宽度不够被省略号替换。
         // 这里不能把"文字比框高"也算进来：那是几何越界（校验器报），不是截断，
         // 混在一起会让一堆行高刚好贴边的历史模板整片变红。
         bool ContentLost(TextNeed n) => n.NaturalLines > n.ShownLines
-            || (mustStayOnOneLine && n.FlatWidth > canonicalBox.Width + WidthSlackDiu);
+            || (mustStayOnOneLine && n.FlatWidth > wrapCanonical + WidthSlackDiu);
 
         if (text.ShrinkToFit)
         {
@@ -162,20 +175,33 @@ public static class TextFit
             while (guard++ < MaxShrinkSteps && DoesNotFit(need) && emSize * ShrinkStep >= minEmSize)
             {
                 emSize *= ShrinkStep;
-                need = Measure(text, typeface, foreground, emSize, canonicalBox.Width, lineHeightRatio);
+                need = Measure(text, typeface, foreground, emSize, wrapCanonical, lineHeightRatio);
             }
         }
 
         var truncated = ContentLost(need);
 
-        // —— 按调用方的 scale 出最终那一份（换行/省略号由 MaxTextWidth 驱动，这里必须用缩放后的宽度）——
+        // —— 按调用方的 scale 出最终那一份（换行/省略号由 MaxTextWidth 驱动，这里必须用缩放后的折行宽度）——
         // 截断与未解析字段同一个语义：这块印出来的东西必须有人看，所以用警示色画。
         var finalInk = truncated ? RenderRules.FlagInk : foreground;
         var centeredOffset = Math.Max(0, (canonicalBox.Height - need.ShownHeight) / 2);
 
         var finalEmSize = emSize * scale;
-        var formatted = Build(text, typeface, finalInk, finalEmSize, box.Width, pixelsPerDip);
+        var formatted = Build(text, typeface, finalInk, finalEmSize, wrapFinal, pixelsPerDip);
         var offsetY = box.Top + centeredOffset * scale;
+        var inkLeft = box.Left;
+        if (text.NoWrap)
+        {
+            // 对齐偏移自己算（Build 在这条路上强制左对齐）。墨迹比盒宽时偏移为负——
+            // 居中的长字会左右各伸出去一截，这正是"超出去看得见"要的，不夹。
+            var inkWidth = Math.Max(0, formatted.WidthIncludingTrailingWhitespace);
+            inkLeft = text.Align switch
+            {
+                HorizontalAlign.Center => box.Left + (box.Width - inkWidth) / 2,
+                HorizontalAlign.Right => box.Right - inkWidth,
+                _ => box.Left,
+            };
+        }
 
         return new TextFitResult
         {
@@ -183,6 +209,7 @@ public static class TextFit
             EmSizeDiu = finalEmSize,
             CanonicalEmSizeDiu = emSize,
             TextTopDiu = offsetY,
+            InkLeftDiu = inkLeft,
             ShrinkRatio = requested > 0 ? emSize / requested : 1,
             Formatted = formatted,
             LineCount = need.ShownLines,
@@ -235,7 +262,9 @@ public static class TextFit
             pixelsPerDip)
         {
             MaxTextWidth = Math.Max(1, maxWidth),
-            TextAlignment = text.Align switch
+            // 永不折行时 maxWidth 是无限宽，对齐若交给 WPF 会把字甩到无限宽的正中间；
+            // 这条路的偏移由 TextFitResult.InkLeftDiu 自己算（第 46 棒）。折行的路一切照旧。
+            TextAlignment = text.NoWrap ? TextAlignment.Left : text.Align switch
             {
                 HorizontalAlign.Center => TextAlignment.Center,
                 HorizontalAlign.Right => TextAlignment.Right,

@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using LabelGou.Core.Barcodes;
 using LabelGou.Core.Layout;
 using LabelGou.Core.Templates;
 using LabelGou.Core.Units;
@@ -158,17 +159,57 @@ public static class LabelRenderer
 
     private static void DrawText(DrawingContext dc, TextItem text, double scale, bool showGuides, double pixelsPerDip, RenderTarget target)
     {
-        // 缩字号、垂直居中、换行截断全在 TextFit 里定（定案 D10）：这里只负责把它画上去
+        // 缩字号、垂直居中、换行截断全在 TextFit 里定（定案 D10）：这里只负责把它画上去。
+        // 第 43 棒：字面拉伸（TextScaleX/Y）与旋转叠在 TextFit 决定【之后】——先按未拉伸盒排好版，
+        // 再整块绕中心做 scale→rotate。这样五出口共用同一决定，不会「预览拉伸了导出没拉伸」，
+        // 也让拉伸不会偷偷改变折行（折行是排版盒的事，见 TemplateElement.TextScaleX 注释）。
         var fit = TextFit.Solve(text, scale, pixelsPerDip);
         if (fit is null) return;
 
         var box = fit.BoxDiu;
-        // 需人工核对的字段与“缩到下限仍装不下、被省略号截断”共用同一套警示样式（文字颜色已在 TextFit 里换成警示色）
-        if (text.Flagged || fit.Truncated) dc.DrawRectangle(RenderRules.FlagBackground, null, box);
+        var pushed = PushGeometry(dc, box, text.RotationDeg, text.TextScaleX, text.TextScaleY);
+        try
+        {
+            // 需人工核对的字段与”缩到下限仍装不下、被省略号截断”共用同一套警示样式（文字颜色已在 TextFit 里换成警示色）
+            if (text.Flagged || fit.Truncated) dc.DrawRectangle(RenderRules.FlagBackground, null, box);
 
-        dc.DrawText(fit.Formatted, new Point(box.Left, fit.TextTopDiu));
+            dc.DrawText(fit.Formatted, new Point(fit.InkLeftDiu, fit.TextTopDiu));
 
-        if (showGuides) dc.DrawRectangle(null, GuidePen, box);
+            if (showGuides) dc.DrawRectangle(null, GuidePen, box);
+        }
+        finally
+        {
+            if (pushed) dc.Pop();
+        }
+    }
+
+    /// <summary>
+    /// 叠一层「先按中心拉伸、再按中心旋转」的变换（毫米盒已由调用方乘成 DIU）。<paramref name=”rotationDeg”/>
+    /// 为 0 且倍率为 1 时什么都不做（返回 false，调用方连 Pop 都省）。
+    /// <para>顺序是 scale 后 rotate（CDR 变换手感：抻完再转，转的是抻好的结果）。</para>
+    /// </summary>
+    private static bool PushGeometry(DrawingContext dc, Rect box, double rotationDeg, double scaleX, double scaleY)
+    {
+        var stretch = Math.Abs(scaleX - 1) > 1e-6 || Math.Abs(scaleY - 1) > 1e-6;
+        var rotate = Math.Abs(rotationDeg) > 1e-6;
+        if (!stretch && !rotate) return false;
+
+        var cx = box.X + box.Width / 2;
+        var cy = box.Y + box.Height / 2;
+        var group = new TransformGroup();
+        // 变换按【从先到后】作用到点上（WPF TransformGroup 子项就是这个顺序）。目标合成 =
+        // 先绕盒中心拉伸、再绕盒中心旋转（CDR 手感：抻完再转，转的是抻好的结果）。
+        // 中心缩放的三段式是 translate(-c) → scale → translate(+c)，顺序写反会把拉伸镜像到中心另一侧。
+        if (stretch) group.Children.Add(new TranslateTransform(-cx, -cy));
+        if (stretch) group.Children.Add(new ScaleTransform(scaleX, scaleY));
+        if (rotate)
+        {
+            // 拉伸时中心已被平移到原点，这里用"绕原点"旋转；没拉伸才用带圆心的 RotateTransform。
+            group.Children.Add(stretch ? new RotateTransform(rotationDeg) : new RotateTransform(rotationDeg, cx, cy));
+        }
+        if (stretch) group.Children.Add(new TranslateTransform(cx, cy));
+        dc.PushTransform(group);
+        return true;
     }
 
     private static void DrawImage(DrawingContext dc, ImageItem image, double scale)
@@ -176,25 +217,34 @@ public static class LabelRenderer
         var rect = new Rect(
             Mm.ToDiu(image.X) * scale, Mm.ToDiu(image.Y) * scale,
             Mm.ToDiu(image.Width) * scale, Mm.ToDiu(image.Height) * scale);
+        // 图片的"拉伸"就是宽高本身（画上去填满框），所以这里只有旋转一个自由度（第 43 棒）。
+        var pushed = PushGeometry(dc, rect, image.RotationDeg, 1, 1);
         try
         {
-            var bitmap = new BitmapImage(new Uri(image.AbsolutePath, UriKind.Absolute));
-            if (image.ReferenceOnly)
+            try
             {
-                var group = new DrawingGroup { Opacity = RenderRules.ReferenceOpacity };
-                using (var inner = group.Open()) inner.DrawImage(bitmap, rect);
-                dc.DrawDrawing(group);
-                DrawReferenceBadge(dc, rect);
+                var bitmap = new BitmapImage(new Uri(image.AbsolutePath, UriKind.Absolute));
+                if (image.ReferenceOnly)
+                {
+                    var group = new DrawingGroup { Opacity = RenderRules.ReferenceOpacity };
+                    using (var inner = group.Open()) inner.DrawImage(bitmap, rect);
+                    dc.DrawDrawing(group);
+                    DrawReferenceBadge(dc, rect);
+                }
+                else
+                {
+                    dc.DrawImage(bitmap, rect);
+                }
             }
-            else
+            catch (Exception)
             {
-                dc.DrawImage(bitmap, rect);
+                // 图片读不出不影响其余版面；缺图在 M7 的印前检查里单独告警
+                dc.DrawRectangle(null, ReferencePen, rect);
             }
         }
-        catch (Exception)
+        finally
         {
-            // 图片读不出不影响其余版面；缺图在 M7 的印前检查里单独告警
-            dc.DrawRectangle(null, ReferencePen, rect);
+            if (pushed) dc.Pop();
         }
     }
 
@@ -220,6 +270,9 @@ public static class LabelRenderer
             return;
         }
 
+        // 第 43 棒：底图也可旋转（绕中心）；先套旋转再平移到框左上角画整份底稿。
+        var rotPushed = Math.Abs(vector.RotationDeg) > 1e-6;
+        if (rotPushed) dc.PushTransform(new RotateTransform(vector.RotationDeg, box.X + box.Width / 2, box.Y + box.Height / 2));
         dc.PushTransform(new TranslateTransform(box.Left, box.Top));
         try
         {
@@ -228,6 +281,7 @@ public static class LabelRenderer
         finally
         {
             dc.Pop();
+            if (rotPushed) dc.Pop();
         }
 
         if (vector.ReferenceOnly) DrawReferenceBadge(dc, box, pixelsPerDip);
@@ -267,24 +321,36 @@ public static class LabelRenderer
 
         var ink = barcode.Flagged ? RenderRules.FlagInk : RenderRules.Ink;
         var barsTop = Mm.ToDiu(barcode.BarsY) * scale;
-        var barsHeight = Mm.ToDiu(barcode.BarsHeight) * scale;
         foreach (var bar in barcode.Bars)
         {
+            // 每根条按自己的高画：UPC/EAN 的保护条比数据条高一截（第 41 棒，照 CDR 样本实测的 6 个模块）。
             dc.DrawRectangle(ink, null, new Rect(
-                Mm.ToDiu(bar.X) * scale, barsTop, Mm.ToDiu(bar.Width) * scale, barsHeight));
+                Mm.ToDiu(bar.X) * scale, barsTop, Mm.ToDiu(bar.Width) * scale,
+                Mm.ToDiu(barcode.HeightOf(bar)) * scale));
         }
 
         if (barcode.ShowText)
         {
-            // 可读数字那一行走与文本完全同一条路（同一个 TextFit）：缩字号、居中、装不下就标红，
-            // 不在条码里再写一套“看着差不多”的画法。
-            DrawText(dc, ReadableLine(barcode), scale, showGuides, pixelsPerDip, target);
+            // UPC/EAN 的数字 Core 已经逐字分好格（首位骑静区、每位压自己那 7 个模块），照格子画；
+            // 其余制式（Code 128/39/ITF）仍整串居中。两条路都走同一个 DrawText，不另写画法。
+            if (barcode.Hri is { Count: > 0 })
+            {
+                foreach (var glyph in ReadableGlyphs(barcode))
+                    DrawText(dc, glyph, scale, showGuides, pixelsPerDip, target);
+            }
+            else
+            {
+                DrawText(dc, ReadableLine(barcode), scale, showGuides, pixelsPerDip, target);
+            }
         }
 
         if (showGuides) dc.DrawRectangle(null, GuidePen, box);
     }
 
-    /// <summary>条码下方那串可读数字：把它包成一条 <see cref="TextItem"/>，好复用 <see cref="DrawText"/> 与 SVG 那边的同一套规则。</summary>
+    /// <summary>
+    /// 条码下方那串可读数字：把它包成一条 <see cref="TextItem"/>，好复用 <see cref="DrawText"/> 与 SVG 那边的同一套规则。
+    /// <para>给没有分段规矩的制式（Code 128 / Code 39 / ITF）用——整串居中。</para>
+    /// </summary>
     public static TextItem ReadableLine(BarcodeItem barcode)
     {
         var textTop = barcode.BarsY + barcode.BarsHeight;
@@ -294,6 +360,36 @@ public static class LabelRenderer
             barcode.FontFamily, barcode.FontSizePt, false, HorizontalAlign.Center,
             ShrinkToFit: true, MaxLines: 1,
             Flagged: barcode.Flagged, FlagReason: barcode.FlagReason);
+    }
+
+    /// <summary>
+    /// UPC/EAN 的可读数字：Core 已经把每个字符的格子算好了（<c>BarcodeBars.BuildHri</c>），
+    /// 这里把「一格一个字」包成一组 <see cref="TextItem"/>。
+    /// <para><strong>为什么一个字一条</strong>：EAN 的数字不是等间距地摊在整条码下面——
+    /// 首位骑在左静区、中间两段各自铺满自己的 7 模块格，中间保护条那五格是空的。
+    /// 整串居中排出来的间距和 BARCODE WIZARD 对不上（差到 2.5 mm），所以必须逐格定位。
+    /// 包成 TextItem 是为了让预览、打印、PDF、图片、SVG 五个出口共用同一个画法（§七-11）。</para>
+    /// </summary>
+    public static IReadOnlyList<TextItem> ReadableGlyphs(BarcodeItem barcode)
+    {
+        if (barcode.Hri is not { Count: > 0 }) return Array.Empty<TextItem>();
+        // 数字带从数据条底再往下让一点才起（照 CDR 实测 3.175 个模块）。
+        // 但让多少得封顶——扁框里模块宽被撑大时 3 个模块能到 4 mm，字会整个掉出元素底边。
+        var textTop = barcode.BarsY + barcode.BarsHeight
+                      + Math.Min(BarcodeBars.HriTopOffsetModules * barcode.ModuleMm,
+                                 BarcodeBars.MinTextBandMm * 0.3);
+        var bandHeight = Math.Max(1, barcode.Height - (textTop - barcode.Y));
+        var list = new List<TextItem>(barcode.Hri.Count);
+        foreach (var glyph in barcode.Hri)
+        {
+            list.Add(new TextItem(
+                glyph.Ch.ToString(),
+                glyph.X, textTop, glyph.Width, bandHeight,
+                barcode.FontFamily, barcode.FontSizePt, false, HorizontalAlign.Center,
+                ShrinkToFit: true, MaxLines: 1,
+                Flagged: barcode.Flagged, FlagReason: barcode.FlagReason));
+        }
+        return list;
     }
 
     /// <summary>参考底图的角标：淡蓝虚线框 + "参考" 二字，明确告诉人这东西不上纸（定案 D7）。</summary>

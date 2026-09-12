@@ -428,6 +428,102 @@ public class SvgInterchangeTests
     });
 
     [Fact]
+    public void RotatedAndStretchedTextCarriesGeometryTransformIntoSvg() => OnStaThread(() =>
+    {
+        // 第 43 棒：文字带旋转 + 字面拉伸时，SVG 出口必须把那一段包进一个带 transform 的 <g>，
+        // 变换串与预览端 PushGeometry 同序同锚点——否则"预览转了、件子没转"就是五出口分叉。
+        var template = new LabelTemplate
+        {
+            Id = "test.svg.geom", Name = "转又拉的一行",
+            WidthMm = LabelW, HeightMm = LabelH, BorderMm = 0,
+        };
+        template.Elements.Add(new TemplateElement
+        {
+            Kind = ElementKind.Text, Text = "{{ItemNo}}",
+            X = 6, Y = 6, Width = 60, Height = 8, FontSizePt = 12,
+            RotationDeg = 30, TextScaleX = 2,
+        });
+        var plan = ImpositionEngine.Build(Spec(), LabelW, LabelH, 1);
+        var request = Request(plan, SourceOf(template, 1));
+
+        // 转曲那条
+        var outlined = Assert.Single(SheetSvgWriter.WritePage(request, 0, SvgExportOptions.Default));
+        var group = Layer(XDocument.Parse(outlined.Xml), "labels")
+            .Descendants(Svg + "g")
+            .Single(g => ((string?)g.Attribute("transform"))?.Contains("rotate(30") == true);
+        Assert.Equal(SvgBuilder.GeometryTransform(36, 10, 30, 2, 1), (string?)group.Attribute("transform"));
+
+        // 未转曲那条也要带同样的变换（<text> 也被包进 <g>）
+        var editable = Assert.Single(SheetSvgWriter.WritePage(request, 0,
+            new SvgExportOptions { TextAsOutlines = false }));
+        var textG = Layer(XDocument.Parse(editable.Xml), "labels").Descendants(Svg + "text").Single();
+        var wrap = textG.Ancestors(Svg + "g").First(g => ((string?)g.Attribute("transform"))?.Contains("rotate") == true);
+        Assert.Contains("scale(2,1)", (string?)wrap.Attribute("transform"));
+        return true;
+    });
+
+    [Fact]
+    public void PlainTextExportsNoGeometryGroup() => OnStaThread(() =>
+    {
+        // 回归：没有旋转/拉伸的普通文字【不该】多套一层 transform 组，否则存量件子的形状会变。
+        var template = new LabelTemplate
+        {
+            Id = "test.svg.nogeo", Name = "普通一行",
+            WidthMm = LabelW, HeightMm = LabelH, BorderMm = 0,
+        };
+        template.Elements.Add(new TemplateElement
+        {
+            Kind = ElementKind.Text, Text = "{{ItemNo}}",
+            X = 6, Y = 6, Width = 60, Height = 8, FontSizePt = 12,
+        });
+        var plan = ImpositionEngine.Build(Spec(), LabelW, LabelH, 1);
+        var file = Assert.Single(SheetSvgWriter.WritePage(
+            Request(plan, SourceOf(template, 1)), 0, SvgExportOptions.Default));
+        var labelGroup = Layer(XDocument.Parse(file.Xml), "labels").Elements(Svg + "g").Single();
+        // 那一枚标签自己的落位组里，不该再有第二层带 rotate/scale 的几何组
+        Assert.DoesNotContain(labelGroup.Descendants(Svg + "g"),
+            g => ((string?)g.Attribute("transform")) is string t && (t.Contains("rotate") || t.Contains("scale")));
+        return true;
+    });
+
+    [Fact]
+    public void PreviewPushGeometryActuallyMovesTheInk() => OnStaThread(() =>
+    {
+        // 像素级证据：同一行字，横向抻 2 倍后，预览画出来的墨迹宽要明显变大；
+        // 转 90° 后包围盒要接近"宽高互换"。只验 PushGeometry 真的动了画面，不是把变换挂上却没生效。
+        static Rect BoundsOf(double rotationDeg, double sx)
+        {
+            var template = new LabelTemplate
+            {
+                Id = "test.geo", Name = "几何", WidthMm = LabelW, HeightMm = LabelH, BorderMm = 0,
+            };
+            template.Elements.Add(new TemplateElement
+            {
+                Kind = ElementKind.Text, Text = "{{ItemNo}}",
+                X = 20, Y = 20, Width = 40, Height = 8, FontSizePt = 20,
+                RotationDeg = rotationDeg, TextScaleX = sx,
+            });
+            var layout = LayoutEngine.Build(template, SampleRecords.StandardSample(), new LayoutContext(1, 1));
+            var group = new System.Windows.Media.DrawingGroup();
+            using (var dc = group.Open())
+                LabelRenderer.Draw(dc, layout, 1.0, 0, 0, false, 1.0, drawBackground: false);
+            return group.Bounds;
+        }
+
+        var plain = BoundsOf(0, 1);
+        var stretched = BoundsOf(0, 2);
+        Assert.True(stretched.Width > plain.Width * 1.7,
+            $"抻两倍后墨迹宽没跟上：plain={plain.Width:F1} stretched={stretched.Width:F1}");
+        Assert.True(Math.Abs(stretched.Height - plain.Height) < plain.Height * 0.15 + 1,
+            "横向抻不该显著改变行高");
+
+        var turned = BoundsOf(90, 1);
+        // 原来扁长的一行转 90° → 变得更高更窄
+        Assert.True(turned.Height > turned.Width, $"转 90° 后没变成竖势：{turned.Width:F1}×{turned.Height:F1}");
+        return true;
+    });
+
+    [Fact]
     public void TruncatedTextCarriesTheRedBackdropOnEverySvgBranch() => OnStaThread(() =>
     {
         // 被省略号截断 = 这一格没印全。预览/打印两者都认（LabelRenderer 认 Flagged || Truncated），
@@ -450,6 +546,7 @@ public class SvgInterchangeTests
             Height = 4,
             FontSizePt = 14,
             MaxLines = 1,               // 单行不许折行：宽度不够只能缩，缩到下限仍装不下才是「被省略号截断」
+            WrapWidthMm = 12,           // 第 46 棒：这条路要显式给折行宽度（默认 0 = 永不折行，宽度不再参与缩字）
         });
 
         var record = SampleRecords.StandardSample();
