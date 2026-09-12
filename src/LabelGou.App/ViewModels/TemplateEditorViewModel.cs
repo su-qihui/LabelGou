@@ -2,9 +2,11 @@ using System.Collections.ObjectModel;
 using System.Globalization;
 using System.IO;
 using System.Windows.Input;
+using System.Windows.Media;
 using LabelGou.App.Mvvm;
 using LabelGou.App.Rendering;
 using LabelGou.App.Services;
+using LabelGou.Core.Colors;
 using LabelGou.Core.Editing;
 using LabelGou.Core.Layout;
 using LabelGou.Core.Marks;
@@ -1296,6 +1298,8 @@ public sealed class EditableElement : ObservableObject
         _element = element ?? throw new ArgumentNullException(nameof(element));
         _capture = capture;
         _changed = changed;
+        ApplyInkPresetCommand = new RelayCommand(p => { if (p is InkPreset preset) InkColor = preset.Color; });
+        ResetInkCommand = new RelayCommand(() => InkColor = null, () => _element.InkColor is not null);
     }
 
     public TemplateElement Element => _element;
@@ -1330,6 +1334,125 @@ public sealed class EditableElement : ObservableObject
             Done();
         }
     }
+
+    /// <summary>
+    /// 这一支墨的颜色（第 47 棒）。<strong>null = 黑</strong> = 老模板的观感，不填就不写进 JSON。
+    /// <para>面板上 CMYK 与 RGB 两档改的是<em>同一个</em> <see cref="LabelColor"/>：两端分量本来就并存，
+    /// 换档不换数（切过去看到的仍是这支墨在另一档的写法），所以不会有"切一下档颜色就变了"的怪事。</para>
+    /// </summary>
+    public LabelColor? InkColor
+    {
+        get => _element.InkColor;
+        set
+        {
+            if (Equals(value, _element.InkColor)) return;
+            Prepare(nameof(InkColor));
+            _element.InkColor = value;
+            Done();
+        }
+    }
+
+    private LabelColor InkOrBlack => _element.InkColor ?? LabelColor.Black;
+
+    /// <summary>色块画成什么色。<paramref name="InkColor"/> 为空时也画黑——面板上要看得见"这支是黑"，不许留白。</summary>
+    public Brush InkSwatch => RenderRules.InkOf(_element.InkColor);
+
+    /// <summary>色块旁边那行字：印刷口径的分量打头（他跟印刷店就是这么说话的），十六进制跟着。</summary>
+    public string InkSummary => _element.InkColor is { } ink ? $"{ink.ToPrintText()}　{ink.ToHex()}" : "黑（默认）";
+
+    /// <summary>面板当前给 CMYK 档。没填过颜色时默认给 CMYK——这活是印刷活。</summary>
+    public bool InkUsesCmyk
+    {
+        get => _element.InkColor?.Entry != ColorEntrySpace.Srgb;
+        set
+        {
+            if (value == InkUsesCmyk) return;
+            var ink = InkOrBlack;
+            InkColor = value
+                ? LabelColor.FromCmyk(ink.C, ink.M, ink.Y, ink.K)
+                : LabelColor.FromSrgb(ink.R, ink.G, ink.B);
+        }
+    }
+
+    /// <summary>RGB 档那颗单选钮（与 <see cref="InkUsesCmyk"/> 互为反面，绑到同一对 GroupName 上会打架，所以单开一格）。</summary>
+    public bool InkUsesRgb
+    {
+        get => !InkUsesCmyk;
+        set => InkUsesCmyk = !value;
+    }
+
+    public int InkC
+    {
+        get => InkOrBlack.C;
+        set => SetCmyk(value, InkOrBlack.M, InkOrBlack.Y, InkOrBlack.K);
+    }
+
+    public int InkM
+    {
+        get => InkOrBlack.M;
+        set => SetCmyk(InkOrBlack.C, value, InkOrBlack.Y, InkOrBlack.K);
+    }
+
+    public int InkY
+    {
+        get => InkOrBlack.Y;
+        set => SetCmyk(InkOrBlack.C, InkOrBlack.M, value, InkOrBlack.K);
+    }
+
+    public int InkK
+    {
+        get => InkOrBlack.K;
+        set => SetCmyk(InkOrBlack.C, InkOrBlack.M, InkOrBlack.Y, value);
+    }
+
+    public int InkR
+    {
+        get => InkOrBlack.R;
+        set => SetRgb(value, InkOrBlack.G, InkOrBlack.B);
+    }
+
+    public int InkG
+    {
+        get => InkOrBlack.G;
+        set => SetRgb(InkOrBlack.R, value, InkOrBlack.B);
+    }
+
+    public int InkB
+    {
+        get => InkOrBlack.B;
+        set => SetRgb(InkOrBlack.R, InkOrBlack.G, value);
+    }
+
+    /// <summary>十六进制那一格：认 <c>#rrggbb</c>、<c>#rgb</c>，也认 <c>cmyk(0 91 90 0)</c> 与 <c>device-cmyk(...)</c>。</summary>
+    public string InkHex
+    {
+        get => InkOrBlack.ToHex();
+        set
+        {
+            if (string.IsNullOrWhiteSpace(value)) return;
+            if (!LabelColor.TryParse(value.Trim(), out var parsed) || parsed is null) return;   // 打字打一半先不当真
+            InkColor = parsed;
+        }
+    }
+
+    /// <summary>「恢复默认（黑）」＝把这格清空（null），存盘时这个字段整个不写，与老模板逐字同形。</summary>
+    public ICommand ResetInkCommand { get; }
+
+    /// <summary>常用墨色（印刷口径的整数百分数）。唛头常用的就这几支，一键选比手打数字快。</summary>
+    public static IReadOnlyList<InkPreset> InkPresets { get; } = new[]
+    {
+        new InkPreset("黑", LabelColor.FromCmyk(0, 0, 0, 100)),
+        new InkPreset("红", LabelColor.FromCmyk(0, 100, 100, 0)),
+        new InkPreset("蓝", LabelColor.FromCmyk(100, 100, 0, 0)),
+        new InkPreset("绿", LabelColor.FromCmyk(100, 0, 100, 0)),
+        new InkPreset("橙", LabelColor.FromCmyk(0, 40, 100, 0)),
+    };
+
+    public ICommand ApplyInkPresetCommand { get; }
+
+    private void SetCmyk(int c, int m, int y, int k) => InkColor = LabelColor.FromCmyk(c, m, y, k);
+
+    private void SetRgb(int r, int g, int b) => InkColor = LabelColor.FromSrgb(r, g, b);
 
     public string KindText => _element.Kind switch
     {
@@ -1431,6 +1554,13 @@ public sealed class EditableElement : ObservableObject
     /// <summary>字体行只对带文字的元素有意义（文本 + 条码的可读数字）。</summary>
     public bool CanSetFont => _element.Kind is ElementKind.Text or ElementKind.Barcode;
 
+    /// <summary>
+    /// 「墨色」这一格对哪些元素有效（第 47 棒）：只有我们<em>自己落墨</em>的那几类——文本、线条、矩形框、条码。
+    /// <para>图片与矢量底图自带颜色（一张 Logo、一份 CDR 底稿），给它们一支笔色只会让人以为能改，
+    /// 而改了什么都没发生，那种格子宁可不给。</para>
+    /// </summary>
+    public bool CanTintInk => _element.Kind is ElementKind.Text or ElementKind.Line or ElementKind.Rect or ElementKind.Barcode;
+
     private bool Near(double value, double current)
         => Math.Abs(value - current) < 1e-6 || double.IsNaN(value);
 
@@ -1465,11 +1595,24 @@ public sealed class EditableElement : ObservableObject
         {
             nameof(X), nameof(Y), nameof(Width), nameof(Height), nameof(X2), nameof(Y2), nameof(Text), nameof(ImagePath),
             nameof(FontFamily), nameof(FontSizePt), nameof(Bold), nameof(ThicknessMm), nameof(MaxLines),
-            nameof(ShrinkToFit), nameof(Visible), nameof(Align),
-            nameof(RotationDeg), nameof(TextScaleX), nameof(TextScaleY), nameof(CanRotate), nameof(CanStretchText), nameof(CanSetFont),
+            nameof(ShrinkToFit), nameof(Visible), nameof(Align), nameof(WrapWidthMm),
+            nameof(RotationDeg), nameof(TextScaleX), nameof(TextScaleY), nameof(CanRotate), nameof(CanStretchText), nameof(CanSetFont), nameof(CanTintInk),
+            // 第 47 棒：墨色那一整组。撤销之后面板上还得刷回真值，漏一个就是一格数字在骗人。
+            nameof(InkColor), nameof(InkSwatch), nameof(InkSummary), nameof(InkUsesCmyk), nameof(InkUsesRgb),
+            nameof(InkC), nameof(InkM), nameof(InkY), nameof(InkK),
+            nameof(InkR), nameof(InkG), nameof(InkB), nameof(InkHex),
         })
         {
             Raise(name);
         }
     }
+}
+
+/// <summary>
+/// 面板上的一枚常用墨（第 47 棒）：名字 + 那支色。色块画笔与预览/导出读的是<em>同一个</em>
+/// <see cref="RenderRules.InkOf"/>，不另开一份颜色定义。
+/// </summary>
+public sealed record InkPreset(string Name, LabelColor Color)
+{
+    public Brush Swatch => RenderRules.InkOf(Color);
 }

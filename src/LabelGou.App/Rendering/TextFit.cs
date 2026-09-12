@@ -220,8 +220,8 @@ public static class TextFit
     /// <summary>量尺寸的结果：真实会占掉的高度、显示几行、自然有几行、以及单行时"绝不折行有多宽"。</summary>
     private readonly record struct TextNeed(double ShownHeight, int ShownLines, int NaturalLines, double FlatWidth);
 
-    /// <summary>需人工核对的字段标红，其余黑字。</summary>
-    public static Brush ForegroundFor(TextItem text) => text.Flagged ? RenderRules.FlagInk : RenderRules.Ink;
+    /// <summary>需人工核对的字段一律标红（警示压过一切），其余用元素自己那支墨（没填 = 黑）。</summary>
+    public static Brush ForegroundFor(TextItem text) => text.Flagged ? RenderRules.FlagInk : RenderRules.InkOf(text.Ink);
 
     /// <summary>
     /// 排出来实际几行。WPF 的 <see cref="FormattedText"/> 没有 <c>LineCount</c> 属性，

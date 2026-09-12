@@ -146,7 +146,7 @@ public static class LabelRenderer
     private static void DrawRect(DrawingContext dc, RectItem rect, double scale, bool showGuides, RenderTarget target)
     {
         var r = new Rect(Mm.ToDiu(rect.X) * scale, Mm.ToDiu(rect.Y) * scale, Mm.ToDiu(rect.Width) * scale, Mm.ToDiu(rect.Height) * scale);
-        dc.DrawRectangle(null, RenderRules.InkPen(rect.ThicknessMm, scale, target), r);
+        dc.DrawRectangle(null, RenderRules.PenFor(RenderRules.InkOf(rect.Ink), rect.ThicknessMm, scale, target), r);
         if (showGuides) dc.DrawRectangle(null, GuidePen, r);
     }
 
@@ -154,7 +154,7 @@ public static class LabelRenderer
     {
         var p1 = new Point(Mm.ToDiu(line.X1) * scale, Mm.ToDiu(line.Y1) * scale);
         var p2 = new Point(Mm.ToDiu(line.X2) * scale, Mm.ToDiu(line.Y2) * scale);
-        dc.DrawLine(RenderRules.InkPen(line.ThicknessMm, scale, target), p1, p2);
+        dc.DrawLine(RenderRules.PenFor(RenderRules.InkOf(line.Ink), line.ThicknessMm, scale, target), p1, p2);
     }
 
     private static void DrawText(DrawingContext dc, TextItem text, double scale, bool showGuides, double pixelsPerDip, RenderTarget target)
@@ -319,7 +319,7 @@ public static class LabelRenderer
             return;
         }
 
-        var ink = barcode.Flagged ? RenderRules.FlagInk : RenderRules.Ink;
+        var ink = barcode.Flagged ? RenderRules.FlagInk : RenderRules.InkOf(barcode.Ink);
         var barsTop = Mm.ToDiu(barcode.BarsY) * scale;
         foreach (var bar in barcode.Bars)
         {
@@ -359,7 +359,8 @@ public static class LabelRenderer
             barcode.X, textTop, barcode.Width, Math.Max(1, barcode.Height - (textTop - barcode.Y)),
             barcode.FontFamily, barcode.FontSizePt, false, HorizontalAlign.Center,
             ShrinkToFit: true, MaxLines: 1,
-            Flagged: barcode.Flagged, FlagReason: barcode.FlagReason);
+            Flagged: barcode.Flagged, FlagReason: barcode.FlagReason,
+            Ink: barcode.Ink);
     }
 
     /// <summary>
@@ -387,7 +388,8 @@ public static class LabelRenderer
                 glyph.X, textTop, glyph.Width, bandHeight,
                 barcode.FontFamily, barcode.FontSizePt, false, HorizontalAlign.Center,
                 ShrinkToFit: true, MaxLines: 1,
-                Flagged: barcode.Flagged, FlagReason: barcode.FlagReason));
+                Flagged: barcode.Flagged, FlagReason: barcode.FlagReason,
+                Ink: barcode.Ink));
         }
         return list;
     }

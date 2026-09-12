@@ -6,11 +6,16 @@ namespace LabelGou.Core.Layout;
 
 public abstract record LayoutItem;
 
-/// <summary>已解析好的矩形边框（毫米）。</summary>
-public sealed record RectItem(double X, double Y, double Width, double Height, double ThicknessMm) : LayoutItem;
+/// <summary>
+/// 已解析好的矩形边框（毫米）。
+/// </summary>
+/// <param name="Ink">这一支墨的颜色（第 47 棒）；null = 黑。模板外框那一条故意不填（它不属于任何元素）。</param>
+public sealed record RectItem(double X, double Y, double Width, double Height, double ThicknessMm,
+    Colors.LabelColor? Ink = null) : LayoutItem;
 
-/// <summary>已解析好的线段（毫米）。</summary>
-public sealed record LineItem(double X1, double Y1, double X2, double Y2, double ThicknessMm) : LayoutItem;
+/// <summary>已解析好的线段（毫米）。<paramref name="Ink"/> 同 <see cref="RectItem"/>：null = 黑。</summary>
+public sealed record LineItem(double X1, double Y1, double X2, double Y2, double ThicknessMm,
+    Colors.LabelColor? Ink = null) : LayoutItem;
 
 /// <summary>
 /// 已解析好的文本项。
@@ -39,7 +44,8 @@ public sealed record TextItem(
     double RotationDeg = 0,
     double TextScaleX = 1,
     double TextScaleY = 1,
-    double WrapWidthMm = 0) : LayoutItem
+    double WrapWidthMm = 0,
+    Colors.LabelColor? Ink = null) : LayoutItem
 {
     /// <summary>这一项带不带几何变换（旋转或任一方向拉伸）。渲染端用它决定要不要 Push/Pop 变换组。</summary>
     public bool HasGeometry => RotationDeg != 0 || TextScaleX != 1 || TextScaleY != 1;
@@ -100,7 +106,8 @@ public sealed record BarcodeItem(
     string? Warning = null,
     string? Error = null,
     double GuardBarsHeight = 0,
-    IReadOnlyList<HriGlyph>? Hri = null) : LayoutItem
+    IReadOnlyList<HriGlyph>? Hri = null,
+    Colors.LabelColor? Ink = null) : LayoutItem
 {
     /// <summary>保护条实际该画多高：没给（0）就与数据条等高，渲染端不必自己判空。</summary>
     public double EffectiveGuardBarsHeight => GuardBarsHeight > 0 ? GuardBarsHeight : BarsHeight;
@@ -217,11 +224,13 @@ public static class LayoutEngine
             switch (element.Kind)
             {
                 case ElementKind.Line:
-                    items.Add(new LineItem(element.X, element.Y, element.X2, element.Y2, element.ThicknessMm));
+                    items.Add(new LineItem(element.X, element.Y, element.X2, element.Y2, element.ThicknessMm,
+                        Ink: element.InkColor));
                     break;
 
                 case ElementKind.Rect:
-                    items.Add(new RectItem(element.X, element.Y, element.Width, element.Height, element.ThicknessMm));
+                    items.Add(new RectItem(element.X, element.Y, element.Width, element.Height, element.ThicknessMm,
+                        Ink: element.InkColor));
                     break;
 
                 case ElementKind.Vector:
@@ -283,7 +292,8 @@ public static class LayoutEngine
                         Warning: encoding.Ok ? geometry.Warning : null,
                         Error: encoding.Ok ? null : encoding.Error,
                         GuardBarsHeight: geometry.GuardBarsHeight,
-                        Hri: hri));
+                        Hri: hri,
+                        Ink: element.InkColor));
                     break;
                 }
 
@@ -312,7 +322,8 @@ public static class LayoutEngine
                         RotationDeg: element.RotationDeg,
                         TextScaleX: element.TextScaleX,
                         TextScaleY: element.TextScaleY,
-                        WrapWidthMm: element.WrapWidthMm)
+                        WrapWidthMm: element.WrapWidthMm,
+                        Ink: element.InkColor)
                     { Source = element });
                     break;
             }

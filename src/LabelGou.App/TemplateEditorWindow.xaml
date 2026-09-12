@@ -3,6 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:render="clr-namespace:LabelGou.App.Rendering"
         xmlns:tm="clr-namespace:LabelGou.Core.Templates;assembly=LabelGou.Core"
+        xmlns:vm="clr-namespace:LabelGou.App.ViewModels"
         xmlns:sys="clr-namespace:System;assembly=mscorlib"
         Title="{Binding Title}"
         Width="1180" Height="760" MinWidth="980" MinHeight="620"
@@ -243,6 +244,8 @@
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
                                 </Grid.RowDefinitions>
 
                                 <TextBlock Grid.Row="0" Text="类型" Style="{StaticResource Caption}" />
@@ -320,6 +323,143 @@
                                 <TextBox Grid.Row="14" Grid.Column="1" Margin="0,4,0,4" Text="{Binding Editing.WrapWidthMm, StringFormat={}{0:0.##}}"
                                          ToolTip="0 = 永不折行：内容多长排多长，排到纸外就看得见地超出去，用工具栏「缩回纸内」收回。填一个正值（例如与宽相同）就恢复按这个宽度折行与缩字号。"
                                          Visibility="{Binding Editing.HasText, Converter={StaticResource BoolVis}}" />
+
+                                <!--  墨色（第 47 棒）：这一支笔的颜色由 Core 的 LabelColor 存两端原值，
+                                      画布 / ③④ 步预览 / 打印 / 位图 / SVG 五个出口读同一份（RenderRules.InkOf、InkHex）。
+                                      默认黑 = 这一格为空，所以老模板一个字都不变。  -->
+                                <TextBlock Grid.Row="15" Text="墨色" Style="{StaticResource Caption}"
+                                           Visibility="{Binding Editing.CanTintInk, Converter={StaticResource BoolVis}}" />
+                                <StackPanel Grid.Row="15" Grid.Column="1" Orientation="Horizontal" Margin="0,4,0,4"
+                                            Visibility="{Binding Editing.CanTintInk, Converter={StaticResource BoolVis}}">
+                                    <ToggleButton x:Name="InkPicker" Width="30" Height="18" VerticalAlignment="Center"
+                                                  Background="{Binding Editing.InkSwatch}" BorderBrush="#8A8F98"
+                                                  ToolTip="选调这一支墨的颜色。唛头是印刷活，分量按 CMYK 百分数填。" />
+                                    <TextBlock Text="{Binding Editing.InkSummary}" VerticalAlignment="Center" Margin="6,0,0,0" FontSize="11" />
+                                    <Popup PlacementTarget="{Binding ElementName=InkPicker}" Placement="Bottom"
+                                           StaysOpen="False" AllowsTransparency="True"
+                                           IsOpen="{Binding IsChecked, ElementName=InkPicker, Mode=TwoWay}">
+                                        <Border Background="White" BorderBrush="#B7BCC5" BorderThickness="1" Padding="10" Width="308">
+                                            <StackPanel>
+                                                <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                                    <RadioButton Content="CMYK（印刷分量）" GroupName="InkSpace" FontSize="11"
+                                                                 IsChecked="{Binding Editing.InkUsesCmyk}" />
+                                                    <RadioButton Content="RGB（屏幕）" GroupName="InkSpace" FontSize="11" Margin="12,0,0,0"
+                                                                 IsChecked="{Binding Editing.InkUsesRgb}" />
+                                                </StackPanel>
+
+                                                <StackPanel Visibility="{Binding Editing.InkUsesCmyk, Converter={StaticResource BoolVis}}">
+                                                    <Grid Margin="0,0,0,3">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="26" />
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="44" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <TextBlock Text="C" VerticalAlignment="Center" FontSize="11" />
+                                                        <Slider Grid.Column="1" Minimum="0" Maximum="100" TickFrequency="1" IsSnapToTickEnabled="True"
+                                                                Value="{Binding Editing.InkC}" VerticalAlignment="Center" />
+                                                        <TextBox Grid.Column="2" Margin="6,0,0,0" Text="{Binding Editing.InkC}" />
+                                                    </Grid>
+                                                    <Grid Margin="0,0,0,3">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="26" />
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="44" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <TextBlock Text="M" VerticalAlignment="Center" FontSize="11" />
+                                                        <Slider Grid.Column="1" Minimum="0" Maximum="100" TickFrequency="1" IsSnapToTickEnabled="True"
+                                                                Value="{Binding Editing.InkM}" VerticalAlignment="Center" />
+                                                        <TextBox Grid.Column="2" Margin="6,0,0,0" Text="{Binding Editing.InkM}" />
+                                                    </Grid>
+                                                    <Grid Margin="0,0,0,3">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="26" />
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="44" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <TextBlock Text="Y" VerticalAlignment="Center" FontSize="11" />
+                                                        <Slider Grid.Column="1" Minimum="0" Maximum="100" TickFrequency="1" IsSnapToTickEnabled="True"
+                                                                Value="{Binding Editing.InkY}" VerticalAlignment="Center" />
+                                                        <TextBox Grid.Column="2" Margin="6,0,0,0" Text="{Binding Editing.InkY}" />
+                                                    </Grid>
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="26" />
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="44" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <TextBlock Text="K" VerticalAlignment="Center" FontSize="11" />
+                                                        <Slider Grid.Column="1" Minimum="0" Maximum="100" TickFrequency="1" IsSnapToTickEnabled="True"
+                                                                Value="{Binding Editing.InkK}" VerticalAlignment="Center" />
+                                                        <TextBox Grid.Column="2" Margin="6,0,0,0" Text="{Binding Editing.InkK}" />
+                                                    </Grid>
+                                                </StackPanel>
+
+                                                <StackPanel Visibility="{Binding Editing.InkUsesRgb, Converter={StaticResource BoolVis}}">
+                                                    <Grid Margin="0,0,0,3">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="26" />
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="44" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <TextBlock Text="R" VerticalAlignment="Center" FontSize="11" />
+                                                        <Slider Grid.Column="1" Minimum="0" Maximum="255" Value="{Binding Editing.InkR}" VerticalAlignment="Center" />
+                                                        <TextBox Grid.Column="2" Margin="6,0,0,0" Text="{Binding Editing.InkR}" />
+                                                    </Grid>
+                                                    <Grid Margin="0,0,0,3">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="26" />
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="44" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <TextBlock Text="G" VerticalAlignment="Center" FontSize="11" />
+                                                        <Slider Grid.Column="1" Minimum="0" Maximum="255" Value="{Binding Editing.InkG}" VerticalAlignment="Center" />
+                                                        <TextBox Grid.Column="2" Margin="6,0,0,0" Text="{Binding Editing.InkG}" />
+                                                    </Grid>
+                                                    <Grid Margin="0,0,0,3">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="26" />
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="44" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <TextBlock Text="B" VerticalAlignment="Center" FontSize="11" />
+                                                        <Slider Grid.Column="1" Minimum="0" Maximum="255" Value="{Binding Editing.InkB}" VerticalAlignment="Center" />
+                                                        <TextBox Grid.Column="2" Margin="6,0,0,0" Text="{Binding Editing.InkB}" />
+                                                    </Grid>
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <TextBlock Text="十六进制" VerticalAlignment="Center" FontSize="11" Width="52" />
+                                                        <TextBox Width="96" Text="{Binding Editing.InkHex, UpdateSourceTrigger=PropertyChanged}"
+                                                                 ToolTip="#rrggbb 也认 cmyk(C M Y K)；从 Corel 或网页抄来的写法可以直接粘" />
+                                                    </StackPanel>
+                                                </StackPanel>
+
+                                                <Border Height="16" Margin="0,8,0,0" Background="{Binding Editing.InkSwatch}" BorderBrush="#DDDDDD" BorderThickness="1" />
+
+                                                <TextBlock Text="常用" FontSize="11" Foreground="#666666" Margin="0,8,0,2" />
+                                                <ItemsControl ItemsSource="{x:Static vm:EditableElement.InkPresets}">
+                                                    <ItemsControl.ItemsPanel>
+                                                        <ItemsPanelTemplate>
+                                                            <StackPanel Orientation="Horizontal" />
+                                                        </ItemsPanelTemplate>
+                                                    </ItemsControl.ItemsPanel>
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate>
+                                                            <Button Width="28" Height="18" Margin="0,0,5,0" ToolTip="{Binding Name}"
+                                                                    Background="{Binding Swatch}" BorderBrush="#8A8F98"
+                                                                    Command="{Binding DataContext.Editing.ApplyInkPresetCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                    CommandParameter="{Binding}" />
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+
+                                                <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                                                    <Button Content="恢复默认（黑）" Command="{Binding Editing.ResetInkCommand}" Padding="6,1" />
+                                                    <TextBlock Text="这一屏只是近似，落墨以印刷店的 profile 为准" FontSize="10" Foreground="#8A8F98"
+                                                               VerticalAlignment="Center" Margin="8,0,0,0" TextWrapping="Wrap" MaxWidth="180" />
+                                                </StackPanel>
+                                            </StackPanel>
+                                        </Border>
+                                    </Popup>
+                                </StackPanel>
                             </Grid>
 
                             <TextBlock Text="校验提示" Style="{StaticResource StepTitle}" Margin="0,12,0,4" />

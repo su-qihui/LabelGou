@@ -2,6 +2,7 @@ using System.IO;
 using System.Windows;
 using System.Windows.Media;
 using LabelGou.App.Rendering;
+using LabelGou.Core.Colors;
 using LabelGou.Core.Export;
 using LabelGou.Core.Impos;
 using LabelGou.Core.Interop.Svg;
@@ -64,6 +65,14 @@ public static class SheetSvgWriter
         => brush is SolidColorBrush solid
             ? new SvgPaint { Color = RenderRules.HexOf(solid.Color), Opacity = solid.Opacity }
             : fallback;
+
+    /// <summary>
+    /// 元素自己那支墨写给 SVG 的填充（null = 黑）。
+    /// <para>颜色字符串只从 <see cref="RenderRules.InkHex"/> 出，与预览那支笔同源——
+    /// 第 47 棒之前这里直接写 <c>BlackFill</c>，元素一旦带色就会出现"屏上红、SVG 黑"。</para>
+    /// </summary>
+    private static SvgPaint InkPaint(LabelColor? ink)
+        => ink is null ? BlackFill : new SvgPaint { Color = RenderRules.InkHex(ink) };
 
     /// <summary>
     /// 写一页（0 起始，与 <see cref="SheetExportRequest.PageIndexes"/> 同一口径）。
@@ -222,11 +231,11 @@ public static class SheetSvgWriter
             switch (item)
             {
                 case RectItem rect:
-                    builder.Rect(rect.X, rect.Y, rect.Width, rect.Height, null, Stroke(rect.ThicknessMm, "#000000"));
+                    builder.Rect(rect.X, rect.Y, rect.Width, rect.Height, null, Stroke(rect.ThicknessMm, RenderRules.InkHex(rect.Ink)));
                     break;
 
                 case LineItem line:
-                    builder.Line(line.X1, line.Y1, line.X2, line.Y2, Stroke(line.ThicknessMm, "#000000"));
+                    builder.Line(line.X1, line.Y1, line.X2, line.Y2, Stroke(line.ThicknessMm, RenderRules.InkHex(line.Ink)));
                     break;
 
                 case TextItem text:
@@ -294,7 +303,7 @@ public static class SheetSvgWriter
         if (fit.Truncated)
             notes.Add($"「{Shrink(text.Content)}」缩到下限仍装不下，已被省略号截断——这一格必须人工改模板或改数据。");
 
-        var fill = text.Flagged || fit.Truncated ? FlagFill : BlackFill;
+        var fill = text.Flagged || fit.Truncated ? FlagFill : InkPaint(text.Ink);
 
         // 淡红底：与预览/打印同一判据（Flagged 或被截断都算），而且必须画在字之前、
         // 也要在「未转曲早退」之前，否则单行不转曲那条出口连个提示都不剩。
@@ -372,9 +381,11 @@ public static class SheetSvgWriter
             return;
         }
 
+        // 与预览同一判据：待核的条码整条标红，其余用元素自己那支墨（第 47 棒起可以带色）。
+        var bars = barcode.Flagged ? FlagFill : InkPaint(barcode.Ink);
         foreach (var bar in barcode.Bars)
             // 每根条按自己的高写：UPC/EAN 的保护条比数据条高一截（第 41 棒）。
-            builder.Rect(bar.X, barcode.BarsY, bar.Width, barcode.HeightOf(bar), BlackFill, null);
+            builder.Rect(bar.X, barcode.BarsY, bar.Width, barcode.HeightOf(bar), bars, null);
 
         if (barcode.ShowText)
         {
@@ -451,6 +462,13 @@ public static class SheetSvgWriter
 
         var docWidth = plan.WidthMm > 0 ? plan.WidthMm : Math.Max(1e-6, document.WidthMm);
         var docHeight = plan.HeightMm > 0 ? plan.HeightMm : Math.Max(1e-6, document.HeightMm);
+
+        // 底稿里被降级的部分（颜色写法、特效、渐变…）以前只在**导入那一次**说过：
+        // plan.Issues 全工程没人读，之后每次出片都悄悄用着降级结果。出片这一刻才是人真正在看的时候，
+        // 把它并进导出的降级清单（同一份清单会进摘要与日志），不再让第 5 个出口替前面兜底。
+        foreach (var issue in plan.Issues.Distinct())
+            notes.Add($"底稿「{name}」：{issue}");
+
         var sx = vector.Width / docWidth;
         var sy = vector.Height / docHeight;
 

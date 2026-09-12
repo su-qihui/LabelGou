@@ -94,6 +94,18 @@ public sealed class TemplateElement
     /// <summary>线宽/边框粗细（毫米）。印刷常用 0.25~0.5。</summary>
     public double ThicknessMm { get; set; } = 0.35;
 
+    /// <summary>
+    /// 这一支墨的颜色：文本的字色、线与框的笔色、条码的条色<strong>共用这一支</strong>（第 47 棒新增）。
+    /// <para><strong>null = 黑</strong>。这么定是为了"缺字段 = 今天的逐字旧行为"：
+    /// 现有那 11 份 AI 版式与金沐/邱总模板一个字节都不用改，没填过颜色的元素存盘时也不会多出这个字段
+    /// （<c>TemplateStore</c> 用的是 <c>WhenWritingNull</c>）。</para>
+    /// <para>「需人工核对」与「缩到下限仍装不下、被省略号截断」那两套警示红<strong>压在它上面</strong>——
+    /// 元素自己填了什么色都不许把警示盖掉，那是"这一格没核"必须看得见的那道闸。</para>
+    /// <para>屏幕上看到的是 <see cref="Colors.CmykMath"/> 的 naive 近似（<strong>不是色彩管理</strong>）；
+    /// 这个对象里那四个百分数才是印刷口径的原值，出片端要用的是它们（第 48 棒）。</para>
+    /// </summary>
+    public Colors.LabelColor? InkColor { get; set; }
+
     /// <summary>文本框内容放不下时是否允许自动缩字号（渲染端执行，引擎只带标志）。</summary>
     public bool ShrinkToFit { get; set; } = true;
 
@@ -179,8 +191,11 @@ public sealed class LabelTemplate
     /// v5 = 第 46 棒新增 <see cref="TemplateElement.WrapWidthMm"/>。<strong>缺字段 = 0 = 永不折行，这是刻意的
     /// 行为变更</strong>（用户 2026-09-12 拍板"排版层盒子拆掉，按墨迹层算"）：旧模板里长值不再被那条隐形行带
     /// 折回纸内，可能横着伸出纸边——接手这份保护的是"墨迹越界"那道检查（编辑器按样例拦、④⑤ 步按真数据进
-    /// 复核闸门）与「缩回纸内」一键，不再是排版盒。想恢复旧行为，把「折行宽度(mm)」填成与「宽(mm)」同值。</remarks>
-    public const int CurrentSchemaVersion = 5;
+    /// 复核闸门）与「缩回纸内」一键，不再是排版盒。想恢复旧行为，把「折行宽度(mm)」填成与「宽(mm)」同值。
+    /// v6 = 第 47 棒新增 <see cref="TemplateElement.InkColor"/>。<strong>缺字段 = null = 黑 = 逐字旧行为</strong>，
+    /// 与 v5 的区别只在"能不能填"，不在"不填会怎样"——所以现有模板文件一个都不用更新（用户 2026-09-13 明确：
+    /// 模板文件暂时不用更新）。JSON 里它是一个字符串：<c>"#c62828"</c> 或 <c>"cmyk(0 91 90 0)"</c>（整数百分数）。</remarks>
+    public const int CurrentSchemaVersion = 6;
 
     /// <summary>稳定标识，如 <c>builtin.standard-100x80</c>。用户模板用 <c>user.xxx</c>。</summary>
     public string Id { get; set; } = "user." + Guid.NewGuid().ToString("N")[..8];

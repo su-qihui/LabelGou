@@ -326,9 +326,18 @@ public static class SvgColor
             warning = "rgb() 颜色写法没认全，已退回黑色。";
             return "#000000";
         }
-        if (s.StartsWith("cmyk(", StringComparison.OrdinalIgnoreCase))
+        if (s.StartsWith("cmyk(", StringComparison.OrdinalIgnoreCase) || s.StartsWith("device-cmyk(", StringComparison.OrdinalIgnoreCase))
         {
-            warning = "CMYK 颜色已按 sRGB 近似为黑色（唛头是单色活，不影响出片）。";
+            // 外部的 CMYK 有两副面孔：SVG/CSS 规定的是 device-cmyk(0 0.9 0.9 0)（分量 0~1），
+            // 各家导出工具还常写 cmyk(0,90,90,0)（百分数）。以前只匹配后一种前缀，于是真正进来的
+            // device-cmyk 一路掉到下面那条「不认（可能是自定义色板名）」——**解释是错的**，
+            // 而那句"近似为黑色"又只有匹配上才会说，等于一句死话。
+            if (Colors.LabelColor.TryParse(s, out var cmyk) && cmyk is not null)
+            {
+                warning = $"CMYK 颜色「{s}」已按 naive 换算近似显示成 {cmyk.ToHex()}（屏幕上的是近似值，落墨以印刷店的 profile 为准）。";
+                return cmyk.ToHex();
+            }
+            warning = $"CMYK 颜色「{s}」的分量没认全，已退回黑色。";
             return "#000000";
         }
         if (s[0] == '#')

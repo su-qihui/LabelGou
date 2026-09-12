@@ -406,6 +406,28 @@ public class SvgInteropTests
     }
 
     [Fact]
+    public void DeviceCmykFillBecomesItsApproximationAndSaysSo()
+    {
+        // Corel / AI 系底稿写的是 device-cmyk(...)（CSS 规定分量取 0~1）。
+        // 第 47 棒之前这里只匹配 "cmyk(" 前缀，于是真家伙一路掉进「不认（可能是自定义色板名）」：
+        // **解释是错的，颜色也错了**（抹成黑）。现在它换算成屏幕近似值，并把话说清。
+        var result = SvgParser.Parse(Wrap(@"<rect width=""10"" height=""10"" fill=""device-cmyk(0 0.91 0.90 0)""/>"));
+        var fill = Assert.Single(result.Document.Paths).Fill!;
+        Assert.NotEqual("#000000", fill.Color);
+        Assert.StartsWith("#ff", fill.Color, StringComparison.Ordinal);          // 那支红不会画成黑
+        Assert.Contains(result.Issues, i => i.Message.Contains("近似", StringComparison.Ordinal));
+        Assert.DoesNotContain(result.Issues, i => i.Message.Contains("色板名", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void BareCmykPercentsAreAlsoRead()
+    {
+        // 各家导出工具的另一副面孔：百分数、逗号分隔。
+        var doc = Ok(Wrap(@"<rect width=""5"" height=""5"" fill=""cmyk(0,100,100,0)""/>"));
+        Assert.Equal("#ff0000", doc.Paths[0].Fill!.Color);
+    }
+
+    [Fact]
     public void DisplayNoneRemovesWholeGroup()
     {
         var doc = Ok(Wrap(@"<g display=""none""><rect width=""5"" height=""5""/></g><rect x=""6"" width=""5"" height=""5""/>"));

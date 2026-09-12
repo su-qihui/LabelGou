@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Media;
+using LabelGou.Core.Colors;
 using LabelGou.Core.Templates;
 using LabelGou.Core.Units;
 
@@ -43,8 +44,33 @@ public static class RenderRules
     /// <summary>出片端的下限：约 0.05mm。低于它的线 WPF 会画成发丝线，宁可显式给个下限也不留 0。</summary>
     public const double OutputMinThicknessDiu = 0.2;
 
-    /// <summary>唛头是单色活，墨色就是黑。</summary>
+    /// <summary>没填颜色的元素用哪支墨：唛头历来是单色活，默认就是黑（第 47 棒起元素才可以自己带色）。</summary>
     public static readonly Brush Ink = Brushes.Black;
+
+    /// <summary>
+    /// 元素自己填的那支墨 → 屏幕上的笔色（第 47 棒）。<strong>null = <see cref="Ink"/>（黑）</strong>，
+    /// 一个字节都不动老模板的观感。
+    /// <para>为什么用 <see cref="LabelColor.R"/>/<see cref="LabelColor.G"/>/<see cref="LabelColor.B"/> 那一半、
+    /// 而不是把 CMYK 交给 WPF 去转：实测（<c>labelgou-other\_probe\cmyk-tiff\out.txt</c>）WPF 的 Cmyk32
+    /// 隐式换算把 <c>K=100</c> 显示成 <c>RGB(23,23,24)</c>、把"无墨"显示成 <c>RGB(253,254,255)</c>——
+    /// 拿它显示，用户看到的就是一句"我明明填了 100% 黑，屏上怎么是灰的"。换算口径只此一家（<c>CmykMath</c>），
+    /// 五出口读同一份。</para>
+    /// </summary>
+    public static Brush InkOf(LabelColor? color) => color is null ? Ink : BrushCache.GetOrAdd(KeyOf(color), Create);
+
+    /// <summary>同一支墨写给 SVG 的十六进制（<strong>与 <see cref="InkOf"/> 同源</strong>，null = 黑）。</summary>
+    public static string InkHex(LabelColor? color) => color?.ToHex() ?? "#000000";
+
+    private static int KeyOf(LabelColor color) => (color.R << 16) | (color.G << 8) | color.B;
+
+    /// <summary>
+    /// 笔色缓存：整版预览与位图导出会把同一个颜色问上成千上万次，每次新建 <see cref="SolidColorBrush"/>
+    /// 既没必要也会把 GC 拖进来；冻结后的画笔可跨线程复用（栅格化跑在后台线程上）。
+    /// </summary>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, SolidColorBrush> BrushCache = new();
+
+    private static SolidColorBrush Create(int key) => Frozen(new SolidColorBrush(Color.FromRgb(
+        (byte)((key >> 16) & 0xFF), (byte)((key >> 8) & 0xFF), (byte)(key & 0xFF))));
 
     /// <summary>
     /// 需要人工核对的字段：红字 + 淡红底，预览/打印/导出五个出口都上。
@@ -98,11 +124,11 @@ public static class RenderRules
     public static double LineWidthMm(double thicknessMm, RenderTarget target)
         => Mm.FromDiu(LineWidthDiu(thicknessMm, scale: 1, target));
 
-    /// <summary>黑色实线画笔（冻结后可跨线程复用）。</summary>
-    public static Pen InkPen(double thicknessMm, double scale, RenderTarget target)
-        => Frozen(new Pen(Ink, LineWidthDiu(thicknessMm, scale, target)));
-
-    /// <summary>指定颜色的画笔（线宽口径同上，一次建好就冻结）。</summary>
+    /// <summary>
+    /// 指定颜色的画笔（线宽口径同上，一次建好就冻结）。
+    /// <para>刻意<strong>不</strong>留一个"黑色画笔"的快捷入口：元素可以自带颜色之后，
+    /// 任何直接要笔的地方都该先回答"这一支墨是谁的"，写死黑就是给第五个出口留漂移的口子。</para>
+    /// </summary>
     public static Pen PenFor(Brush brush, double thicknessMm, double scale, RenderTarget target, DashStyle? dash = null)
         => Frozen(new Pen(brush, LineWidthDiu(thicknessMm, scale, target)) { DashStyle = dash });
 
