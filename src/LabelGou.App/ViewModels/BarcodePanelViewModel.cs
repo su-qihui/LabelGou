@@ -1,9 +1,12 @@
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using LabelGou.App.Mvvm;
+using LabelGou.App.Rendering;
 using LabelGou.Core.Barcodes;
 using LabelGou.Core.Layout;
 using LabelGou.Core.Marks;
 using LabelGou.Core.Templates;
+using LabelGou.Core.Units;
 
 namespace LabelGou.App.ViewModels;
 
@@ -54,9 +57,27 @@ public sealed class BarcodePanelViewModel : ObservableObject
         _source = source;
         _apply = apply;
 
-        SymbologyOptions = new List<ChoiceOption<BarcodeSymbology>>(
-            from BarcodeSymbology s in Enum.GetValues(typeof(BarcodeSymbology))
-            select new ChoiceOption<BarcodeSymbology>(s, s.DisplayName()));
+        // 顺序按「店里用得上的排前面」，不按枚举值——枚举值是持久化用的（见 BarcodeSymbology 的注释），
+        // 新增制式时只能往后追加，所以下拉得自己排一份。
+        SymbologyOptions = new List<ChoiceOption<BarcodeSymbology>>
+        {
+            new(BarcodeSymbology.Code128, BarcodeSymbology.Code128.DisplayName()),
+            new(BarcodeSymbology.Ean13, BarcodeSymbology.Ean13.DisplayName()),
+            new(BarcodeSymbology.Ean8, BarcodeSymbology.Ean8.DisplayName()),
+            new(BarcodeSymbology.UpcA, BarcodeSymbology.UpcA.DisplayName()),
+            new(BarcodeSymbology.UpcE, BarcodeSymbology.UpcE.DisplayName()),
+            new(BarcodeSymbology.Code39, BarcodeSymbology.Code39.DisplayName()),
+            new(BarcodeSymbology.Itf14, BarcodeSymbology.Itf14.DisplayName()),
+            new(BarcodeSymbology.Itf, BarcodeSymbology.Itf.DisplayName()),
+            // 25 码紧跟 ITF：两者都叫「二五码」却是两种码，摆一起才看得区别（见 DisplayName 与 DataHint）
+            new(BarcodeSymbology.Code25, BarcodeSymbology.Code25.DisplayName()),
+            new(BarcodeSymbology.Codabar, BarcodeSymbology.Codabar.DisplayName()),
+            new(BarcodeSymbology.Msi, BarcodeSymbology.Msi.DisplayName()),
+            new(BarcodeSymbology.Jan8, BarcodeSymbology.Jan8.DisplayName()),
+            new(BarcodeSymbology.Jan13, BarcodeSymbology.Jan13.DisplayName()),
+            new(BarcodeSymbology.Isbn, BarcodeSymbology.Isbn.DisplayName()),
+            new(BarcodeSymbology.Issn, BarcodeSymbology.Issn.DisplayName()),
+        };
         SelectedSymbology = SymbologyOptions[0];
 
         PlacementOptions = new List<ChoiceOption<BarcodePlacement>>
@@ -157,6 +178,19 @@ public sealed class BarcodePanelViewModel : ObservableObject
         private set => Set(ref _preview, value);
     }
 
+    private ImageSource? _previewImage;
+
+    /// <summary>
+    /// 条码的<strong>实时预览图</strong>（条码栏目下面那块空白，用户 2026-09-11 圈的）。
+    /// <para>改制式、换列、改高度、改「印不印数字」都立即重画——就是 Corel 向导里那个
+    /// 「样本预览」的作用：选完能看见长什么样，不用加到模板再回头改。</para>
+    /// </summary>
+    public ImageSource? PreviewImage
+    {
+        get => _previewImage;
+        private set => Set(ref _previewImage, value);
+    }
+
     public Brush PreviewBrush => _preview.StartsWith("编不出来", StringComparison.Ordinal)
         ? new SolidColorBrush(Color.FromRgb(0xB3, 0x26, 0x1E))
         : new SolidColorBrush(Color.FromRgb(0x33, 0x44, 0x55));
@@ -255,10 +289,22 @@ public sealed class BarcodePanelViewModel : ObservableObject
             Preview = SelectedSource == FixedSourceOption
                 ? "还没填那串数字。"
                 : "还没选列。表里的列名都在下面这个下拉里——条码在哪一列就选哪一列。";
+            PreviewImage = null;
             return;
         }
 
-        var probe = new LabelTemplate { WidthMm = 400, HeightMm = 300, BorderMm = 0 };
+        // 预览按「加到模板后」的实际尺寸画——用户 2026-09-11：「按照实际效果来而不是固定的这个数值压成什么样了」。
+        // 条码在不同宽度的框里模块宽不同，拿一个写死的宽度去预览，预览里的比例就是错的、和右边模板对不上。
+        var template = _source.Template;
+        double barW = 80, barH = Math.Max(10, _heightMm);
+        if (template is not null)
+        {
+            var placed = new TemplateElement { Kind = ElementKind.Barcode };
+            PlaceInto(placed, template);
+            barW = placed.Width;
+            barH = placed.Height;
+        }
+        var probe = new LabelTemplate { WidthMm = barW, HeightMm = barH, BorderMm = 0 };
         probe.Elements.Add(new TemplateElement
         {
             Kind = ElementKind.Barcode,
@@ -266,10 +312,10 @@ public sealed class BarcodePanelViewModel : ObservableObject
             Symbology = symbology,
             ShowBarcodeText = ShowText,
             FontSizePt = 8,
-            X = 4,
-            Y = 4,
-            Width = 392,
-            Height = Math.Max(10, _heightMm),
+            X = 0,
+            Y = 0,
+            Width = barW,
+            Height = barH,
         });
 
         var record = _source.RawRecords.FirstOrDefault() ?? SampleRecords.StandardSample();
@@ -278,17 +324,45 @@ public sealed class BarcodePanelViewModel : ObservableObject
         if (item is null)
         {
             Preview = "这一格在这张表的第一行没值（所以它不会画）。换一列，或先核对那一列是不是真的空着。";
+            PreviewImage = null;
             return;
         }
         if (item.Error is { Length: > 0 } error)
         {
             Preview = "编不出来：" + error;
+            PreviewImage = null;
             return;
         }
 
         var note = item.Data.Equals(expression, StringComparison.Ordinal) ? string.Empty : "（已按规范补齐）";
         Preview = $"第一行会编成 {item.Data}{note}：{symbology.ShortName()}，{item.Bars.Count} 根条，" +
                   $"模块 {item.ModuleMm:0.00} mm。{(item.Warning is { Length: > 0 } w ? "注意：" + w : string.Empty)}";
+        RenderPreview(layout);
+    }
+
+    /// <summary>把预览版面画成位图（走 <see cref="LabelRenderer"/> 同一条画法——预览和正式输出必须一张脸）。</summary>
+    private void RenderPreview(LabelLayout layout)
+    {
+        try
+        {
+            const double previewPx = 340;
+            var scale = previewPx / Mm.ToDiu(layout.WidthMm);
+            var w = (int)Math.Ceiling(Mm.ToDiu(layout.WidthMm) * scale);
+            var h = (int)Math.Ceiling(Mm.ToDiu(layout.HeightMm) * scale);
+            var visual = new DrawingVisual();
+            using (var dc = visual.RenderOpen())
+                LabelRenderer.Draw(dc, layout, scale, offsetX: 0, offsetY: 0,
+                    showGuides: false, pixelsPerDip: 1.0, drawBackground: true);
+            var bmp = new RenderTargetBitmap(w, h, 96, 96, PixelFormats.Pbgra32);
+            bmp.Render(visual);
+            bmp.Freeze();
+            PreviewImage = bmp;
+        }
+        catch
+        {
+            // 预览画不出来不该把整个面板带崩：文字预览还在，用户照样能往下走
+            PreviewImage = null;
+        }
     }
 
     /// <summary>

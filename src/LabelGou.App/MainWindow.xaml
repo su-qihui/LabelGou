@@ -412,6 +412,11 @@
 
                             <TextBlock Text="{Binding Barcode.Preview}" Foreground="{Binding Barcode.PreviewBrush}"
                                        Style="{StaticResource Hint}" TextWrapping="Wrap" Margin="0,6,0,0" />
+
+                            <!--  条码的实时预览（用户 2026-09-11 圈的那块空白）：改制式、换列、改高度立即重画，
+                                 就是 Corel 向导里「样本预览」的作用——选完先看见长什么样，不用加到模板再回头改。 -->
+                            <Image Source="{Binding Barcode.PreviewImage}" Stretch="Uniform" StretchDirection="DownOnly"
+                                   MaxHeight="150" HorizontalAlignment="Left" Margin="0,8,0,0" />
                         </StackPanel>
                     </GroupBox>
                     </StackPanel>
