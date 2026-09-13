@@ -1,5 +1,6 @@
 using System.IO;
 using LabelGou.App.Export;
+using LabelGou.App.Rendering;
 using LabelGou.App.ViewModels;
 using LabelGou.Core.Colors;
 using LabelGou.Core.Editing;
@@ -128,4 +129,53 @@ public class RectToolTests
         var tiny = TemplateFactory.RectFromCorners(20, 20, 20.1, 20.2);
         Assert.True(tiny.Width >= EditGeometry.MinSideMm && tiny.Height >= EditGeometry.MinSideMm);
     }
+
+    // ---------- 按下分派（画布那一层）----------
+    // 上面七条测的是 VM，而"矩形压根画不出来"坏在 VM 之前：矩形那条分支曾被嵌进 if (IsBezierTool) 的块里，
+    // 两个开关又互斥，于是永远进不去。VM 全绿也救不了这一层——所以这一节单独钉。
+
+    [Fact]
+    public void TheRectToolActuallyReachesTheRectBranch() => OnSta(() =>
+    {
+        var vm = Open();
+        vm.IsRectTool = true;
+        Assert.False(vm.IsBezierTool);                       // 互斥是那条分支进不去的前提，不是巧合
+
+        Assert.Equal(TemplateEditorControl.ToolDown.Drag,
+            TemplateEditorControl.TryToolDown(vm, 10, 12, doubleClick: false, ctrl: false));
+        var element = Assert.Single(vm.Template.Elements);   // 真落了一只框，不是"返回 true 但什么都没建"
+        Assert.Equal(ElementKind.Rect, element.Kind);
+        return true;
+    });
+
+    [Fact]
+    public void TheBezierToolStillDrawsPointsAndADoubleClickFinishesInstead() => OnSta(() =>
+    {
+        var vm = Open();
+        vm.IsBezierTool = true;
+        Assert.False(vm.IsRectTool);
+
+        Assert.Equal(TemplateEditorControl.ToolDown.Drag,
+            TemplateEditorControl.TryToolDown(vm, 10, 12, doubleClick: false, ctrl: false));
+        var element = Assert.Single(vm.Template.Elements);
+        Assert.Equal(ElementKind.Line, element.Kind);
+
+        // 双击 = "这条画完了"，必须回 Handled：回 Drag 的话处理程序会顺手 _dragging=true，松手就多落一个点。
+        // 只有一个落点时收尾等于丢掉这条退化路径（不足两点不成线），所以元素数归零而不是变二。
+        Assert.Equal(TemplateEditorControl.ToolDown.Handled,
+            TemplateEditorControl.TryToolDown(vm, 30, 30, doubleClick: true, ctrl: false));
+        Assert.Empty(vm.Template.Elements);
+        Assert.False(vm.IsDrawingPath);
+        return true;
+    });
+
+    [Fact]
+    public void TheSelectToolLeavesThePressToTheNormalPath() => OnSta(() =>
+    {
+        var vm = Open();                                   // 默认就是挑选工具
+        Assert.Equal(TemplateEditorControl.ToolDown.None,
+            TemplateEditorControl.TryToolDown(vm, 10, 12, doubleClick: false, ctrl: false));
+        Assert.Empty(vm.Template.Elements);                // 空画布上按下不该凭空长出元素
+        return true;
+    });
 }

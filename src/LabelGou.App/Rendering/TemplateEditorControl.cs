@@ -336,6 +336,43 @@ public sealed class TemplateEditorControl : FrameworkElement
 
     // ---------- 鼠标 ----------
 
+    /// <summary>
+    /// 按下这一次被谁吃掉了。<see cref="Handled"/> = 吃掉了但<strong>不进入拖动态</strong>
+    /// （双击收尾、以及"元素已到上限"这类被拒）；<see cref="None"/> = 挑选工具，交给常规路径
+    /// （选中/拖动/双击复位缩放）。
+    /// </summary>
+    internal enum ToolDown { None, Drag, Handled }
+
+    /// <summary>
+    /// 画布按下的<strong>唯一分派点</strong>。三种工具本来就互斥（同一个 <see cref="TemplateEditorViewModel.Tool"/>
+    /// 字段的三个投影），所以这里用 switch 而不是嵌套 if——
+    /// <strong>矩形那条从前被写成"在贝塞尔那个 if 块里再判一次 IsRectTool"，而两个开关互斥，于是永远进不去，
+    /// 用户看到的就是"勾了矩形框、在画布上拖，什么都不画"</strong>（第 50 棒，VM 层 16 条测试全绿也照不出来）。
+    /// </summary>
+    internal static ToolDown TryToolDown(TemplateEditorViewModel vm, double xMm, double yMm, bool doubleClick, bool ctrl)
+    {
+        switch (vm.Tool)
+        {
+            case TemplateEditorViewModel.EditorTool.Bezier:
+                // 贝塞尔工具下双击是"这条画完了"（类 CDR），不是复位缩放——两件事抢同一个手势时，正在画的那条说了算。
+                if (doubleClick)
+                {
+                    vm.FinishPath();
+                    return ToolDown.Handled;
+                }
+                // 按下即落点：只点不拖＝尖角＝直线段；拖开＝这一点带柄＝刚画那一段跟着弯（与 CorelDRAW 同口径）。
+                // Ctrl＝限制线条（CorelDRAW 贝塞尔工具自带文案就是这么写的），夹成水平或垂直。
+                return vm.BeginPath(xMm, yMm, ctrl) ? ToolDown.Drag : ToolDown.Handled;
+
+            case TemplateEditorViewModel.EditorTool.Rect:
+                // 矩形工具：按下落一只框，拖到哪算哪，松手定形（CorelDRAW 的矩形工具原文就是「绘制矩形」）。
+                return vm.BeginRect(xMm, yMm) ? ToolDown.Drag : ToolDown.Handled;
+
+            default:
+                return ToolDown.None;
+        }
+    }
+
     protected override void OnMouseLeftButtonDown(MouseButtonEventArgs e)
     {
         base.OnMouseLeftButtonDown(e);
@@ -348,33 +385,18 @@ public sealed class TemplateEditorControl : FrameworkElement
         // 口径 = 本机 CorelDRAW X4 实测（第 45 棒）：**Shift = 绕中心向四周**（角柄本来就等比，
         // 不需要键）；**Ctrl = 移动时锁水平或垂直**。44 棒把 Shift 实现成"等比"是错的，已翻案。
         var shift = Keyboard.Modifiers.HasFlag(ModifierKeys.Shift);
-        if (vm.IsBezierTool)
+        switch (TryToolDown(vm, ToMmX(point.X), ToMmY(point.Y), e.ClickCount == 2,
+                    Keyboard.Modifiers.HasFlag(ModifierKeys.Control)))
         {
-            // 贝塞尔工具下双击是"这条画完了"（类 CDR），不是复位缩放——两件事抢同一个手势时，正在画的那条说了算。
-            if (e.ClickCount == 2)
-            {
-                vm.FinishPath();
-                e.Handled = true;
-                return;
-            }
-            // 按下即落点：只点不拖＝尖角＝直线段；拖开＝这一点带柄＝上一段跟着弯（与 CorelDRAW 同口径）。
-    // Ctrl＝限制线条（CorelDRAW 贝塞尔工具的自带文案就是这么写的），夹成水平或垂直。
-            // 矩形工具：按下落一只零尺寸框，拖到哪算哪，松手定形（CorelDRAW 的矩形工具原文就是「绘制矩形」）。
-            if (vm.IsRectTool)
-            {
-                if (!vm.BeginRect(ToMmX(point.X), ToMmY(point.Y))) return;
+            case ToolDown.Drag:
                 _dragging = true;
                 CaptureMouse();
                 e.Handled = true;
                 return;
-            }
 
-            var constrain = Keyboard.Modifiers.HasFlag(ModifierKeys.Control);
-            if (!vm.BeginPath(ToMmX(point.X), ToMmY(point.Y), constrain)) return;
-            _dragging = true;
-            CaptureMouse();
-            e.Handled = true;
-            return;
+            case ToolDown.Handled:
+                e.Handled = true;
+                return;
         }
 
         // 双击 = 复位缩放（放在按下里而不是 OnMouseDown，否则会先起一次多余的拖动）

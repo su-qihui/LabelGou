@@ -21,4 +21,12 @@
     <ProjectReference Include="..\LabelGou.Core\LabelGou.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- 画布那一层的按下分派点（TemplateEditorControl.TryToolDown）留成 internal：它不是产品 API，
+         但"勾了工具开关却什么都没发生"这类毛病只有这一层能钉住，所以让测试工程读得到。 -->
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
+      <_Parameter1>LabelGou.App.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
 </Project>
