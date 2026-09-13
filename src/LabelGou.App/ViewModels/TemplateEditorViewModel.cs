@@ -115,7 +115,6 @@ public sealed class TemplateEditorViewModel : ObservableObject
     public LabelLayout SampleLayout { get; private set; } = new();
 
     public ICommand AddTextCommand { get; private set; } = null!;
-    public ICommand AddRectCommand { get; private set; } = null!;
     public ICommand AddImageCommand { get; private set; } = null!;
     public ICommand RemoveCommand { get; private set; } = null!;
     public ICommand DuplicateCommand { get; private set; } = null!;
@@ -299,7 +298,6 @@ public sealed class TemplateEditorViewModel : ObservableObject
     public void BuildCommands()
     {
         AddTextCommand = new RelayCommand(() => AddElement(TemplateFactory.NewText("新文本", _template.PaddingMm, _template.PaddingMm, 30, 6), "文本"));
-        AddRectCommand = new RelayCommand(() => AddElement(TemplateFactory.NewRect(_template.PaddingMm, _template.PaddingMm, 30, 14), "矩形框"));
         BuildNodeCommands();
         AddImageCommand = new RelayCommand(AddImage);
         RemoveCommand = new RelayCommand(RemoveSelected, () => SelectedRow is not null);
@@ -613,8 +611,11 @@ public sealed class TemplateEditorViewModel : ObservableObject
         /// <summary>选择/移动/缩放（从前那把箭头）。</summary>
         Select = 0,
 
-        /// <summary>贝塞尔：按下拖出节点的控制柄，松开定下一点；<strong>按住 Shift 拖＝直线（不出柄）</strong>。</summary>
+        /// <summary>贝塞尔：按下拖出节点的控制柄，松开定下一点；<strong>单击＝尖角＝直线</strong>。</summary>
         Bezier = 1,
+
+        /// <summary>矩形：按下拖出一只框（CorelDRAW 的矩形工具原文就是"绘制矩形"），松手定形。</summary>
+        Rect = 2,
     }
 
     public enum DragMode
@@ -637,8 +638,9 @@ public sealed class TemplateEditorViewModel : ObservableObject
         set
         {
             if (_tool == value) return;
-            // 切走之前把没画完的这条收尾：不然画布上会留一条半截曲线，而人已经去点别的东西了。
+            // 切走之前把没画完的这条收尾：不然画布上会留一条半截曲线/一只零尺寸框，而人已经去点别的东西了。
             if (_tool == EditorTool.Bezier && IsDrawingPath) FinishPath();
+            if (_tool == EditorTool.Rect && IsDrawingRect) EndRect();
             _tool = value;
             Raise(nameof(Tool));
             Raise(nameof(IsBezierTool));
@@ -656,6 +658,13 @@ public sealed class TemplateEditorViewModel : ObservableObject
     {
         get => Tool == EditorTool.Bezier;
         set => Tool = value ? EditorTool.Bezier : EditorTool.Select;
+    }
+
+    /// <summary>那颗「矩形框」按钮绑的就是它（双向）：按下拖动画一只框，松手定形。</summary>
+    public bool IsRectTool
+    {
+        get => Tool == EditorTool.Rect;
+        set => Tool = value ? EditorTool.Rect : EditorTool.Select;
     }
 
     // ---------- 贝塞尔：正在画的那条路径（第 49 棒）----------
@@ -839,6 +848,93 @@ public sealed class TemplateEditorViewModel : ObservableObject
 
     /// <summary>新画曲线的默认线宽（与「添加线条」那颗按钮同源，不另定一份）。</summary>
     public const double DefaultLineThicknessMm = 0.35;
+
+    // ---------- 矩形：按下拖出一只框（第 50 棒）----------
+
+    /// <summary>正在画的矩形在模板里的下标（-1 = 没在画）。</summary>
+    private int _rectIndex = -1;
+
+    private double _rectAnchorX;
+    private double _rectAnchorY;
+
+    /// <summary>画布上是否有一只拖到一半的矩形（决定 Esc 归谁）。</summary>
+    public bool IsDrawingRect => _rectIndex >= 0;
+
+    /// <summary>拖动小于这个距离就按"只点了一下"算，给一只默认尺寸的框，别留一只看不见的零尺寸矩形。</summary>
+    public const double MinDragToSizeMm = 2;
+
+    /// <summary>默认框尺寸（点一下不拖时用，与从前那颗按钮给的尺寸同源）。</summary>
+    public const double DefaultRectWidthMm = 30;
+
+    public const double DefaultRectHeightMm = 14;
+
+    /// <summary>按下：落下这只矩形（第一个点）。撤销快照必须在加入之前录，否则 Esc/撤销退不干净。</summary>
+    public bool BeginRect(double xMm, double yMm)
+    {
+        Capture();
+        var element = TemplateFactory.NewRect(xMm, yMm, EditGeometry.MinSideMm, EditGeometry.MinSideMm);
+        var outcome = TemplateFactory.AddElement(_template, element, xMm, yMm);
+        if (outcome is null)
+        {
+            StatusText = "元素数量已到上限，画不下去了。";
+            ReleaseCapture();
+            return false;
+        }
+        _rectIndex = outcome.Index;
+        var placed = _template.Elements[outcome.Index];
+        _rectAnchorX = placed.X;
+        _rectAnchorY = placed.Y;
+        RefreshElements();
+        SelectedRow = Elements.FirstOrDefault(r => ReferenceEquals(r.Element, placed));
+        DragRect(xMm, yMm);
+        return true;
+    }
+
+    /// <summary>拖动中：以按下的那一角为锚，实时改这只框（本体走 SampleLayout，所以必须重建，见 §五-148）。</summary>
+    public void DragRect(double xMm, double yMm)
+    {
+        if (_rectIndex < 0 || _rectIndex >= _template.Elements.Count) return;
+        var element = _template.Elements[_rectIndex];
+        var (x, y, w, h) = TemplateFactory.RectFromCorners(_rectAnchorX, _rectAnchorY, xMm, yMm);
+        element.X = x;
+        element.Y = y;
+        element.Width = w;
+        element.Height = h;
+        RebuildSample();
+    }
+
+    /// <summary>松手定形；只点没拖就给一只默认尺寸的框（不留一只零尺寸的东西让人以为没画上）。</summary>
+    public void EndRect()
+    {
+        if (_rectIndex < 0) return;
+        if (_rectIndex < _template.Elements.Count)
+        {
+            var element = _template.Elements[_rectIndex];
+            if (element.Width < MinDragToSizeMm || element.Height < MinDragToSizeMm)
+            {
+                element.Width = DefaultRectWidthMm;
+                element.Height = DefaultRectHeightMm;
+            }
+        }
+        _rectIndex = -1;
+        Touch();
+        RebuildSample();
+        RecomputeIssues();
+        StatusText = "矩形画好了。属性面板可以改线宽、填充和圆角。";
+    }
+
+    /// <summary>Esc：丢掉这只拖到一半的框（连元素一起撤，撤销栈同步收回）。</summary>
+    public void CancelRect()
+    {
+        if (_rectIndex < 0) return;
+        if (_rectIndex < _template.Elements.Count) _template.Elements.RemoveAt(_rectIndex);
+        _rectIndex = -1;
+        ReleaseCapture();
+        RefreshElements();
+        RebuildSample();
+        RecomputeIssues();
+        StatusText = "取消这个矩形。";
+    }
 
     // ---------- 当前节点与三态（CorelDRAW：使节点成为尖突 / 平滑节点 / 生成对称节点）----------
 
@@ -1658,7 +1754,7 @@ public sealed class EditableElement : ObservableObject
         _capture = capture;
         _changed = changed;
         ApplyInkPresetCommand = new RelayCommand(p => { if (p is InkPreset preset) InkColor = preset.Color; });
-        ResetInkCommand = new RelayCommand(() => InkColor = null, () => _element.InkColor is not null);
+        ResetInkCommand = new RelayCommand(() => InkColor = null, () => TargetInk is not null);
         StraightenCommand = new RelayCommand(() => CurveEdit(CurveGeometry.Straighten), () => IsCurve);
         FlattenToEndsCommand = new RelayCommand(() => CurveEdit(Flatten), () => IsCurve);
         SyncPickerFromColour();   // 选中一行时调色盘要停在那支墨真正的位置，别默认给左上角
@@ -1705,35 +1801,69 @@ public sealed class EditableElement : ObservableObject
     }
 
     /// <summary>
-    /// 这一支墨的颜色（第 47 棒）。<strong>null = 黑</strong> = 老模板的观感，不填就不写进 JSON。
-    /// <para>面板上 CMYK 与 RGB 两档改的是<em>同一个</em> <see cref="LabelColor"/>：两端分量本来就并存，
-    /// 换档不换数（切过去看到的仍是这支墨在另一档的写法），所以不会有"切一下档颜色就变了"的怪事。</para>
+    /// 面板这一整组颜色控件（色块、CMYK/RGB 两档、调色盘、常用墨）现在编辑的是哪一支墨：
+    /// 笔色还是填充色。<strong>只是面板的指向，不额外落盘</strong>——真正的颜色存在元素自己身上。
+    /// <para>第 50 棒给矩形加了填充，若把填充色另抄一套控件，就是 90 行 XAML 抄两遍、两份迟早各改各的；
+    /// 所以改成一组控件、两个目标。</para>
     /// </summary>
-    public LabelColor? InkColor
+    public bool EditingFill
     {
-        get => _element.InkColor;
+        get => _editingFill;
         set
         {
-            if (Equals(value, _element.InkColor)) return;
-            Prepare(nameof(InkColor));
-            _element.InkColor = value;
-            if (!_applyingPicker) SyncPickerFromColour();     // 调色盘自己拖出来的那一路以面板为准，别反推回去
+            if (_editingFill == value) return;
+            _editingFill = value;
+            SyncPickerFromColour();
             Done();
         }
     }
 
-    private LabelColor InkOrBlack => _element.InkColor ?? LabelColor.Black;
+    private bool _editingFill;
+
+    /// <summary>当前那组颜色控件读写的是元素上的哪个字段。</summary>
+    private LabelColor? TargetInk
+    {
+        get => _editingFill ? _element.FillColor : _element.InkColor;
+        set
+        {
+            if (_editingFill) _element.FillColor = value;
+            else _element.InkColor = value;
+        }
+    }
+
+    /// <summary>
+    /// 面板上看到的那一支墨（第 47 棒）。<strong>null = 黑</strong> = 老模板的观感，不填就不写进 JSON。
+    /// <para> getter/setter 都走 <see cref="TargetInk"/>，所以这一格名字没变、XAML 不用动，
+    /// 但选中矩形并切到"填充"时它管的是填充。</para>
+    /// <para>CMYK 与 RGB 两档改的是<em>同一个</em> <see cref="LabelColor"/>：两端分量本来就并存，
+    /// 换档不换数（切过去看到的仍是这支墨在另一档的写法），所以不会有"切一下档颜色就变了"的怪事。</para>
+    /// </summary>
+    public LabelColor? InkColor
+    {
+        get => TargetInk;
+        set
+        {
+            if (Equals(value, TargetInk)) return;
+            Prepare(nameof(InkColor));
+            TargetInk = value;
+            if (!_applyingPicker) SyncPickerFromColour();    // 调色盘自己拖出来的那一路以面板为准，别反推回去
+            Done();
+        }
+    }
+
+    private LabelColor InkOrBlack => TargetInk ?? LabelColor.Black;
 
     /// <summary>色块画成什么色。<paramref name="InkColor"/> 为空时也画黑——面板上要看得见"这支是黑"，不许留白。</summary>
-    public Brush InkSwatch => RenderRules.InkOf(_element.InkColor);
+    public Brush InkSwatch => RenderRules.InkOf(TargetInk);
 
     /// <summary>色块旁边那行字：印刷口径的分量打头（他跟印刷店就是这么说话的），十六进制跟着。</summary>
-    public string InkSummary => _element.InkColor is { } ink ? $"{ink.ToPrintText()}　{ink.ToHex()}" : "黑（默认）";
+    public string InkSummary => TargetInk is { } ink ? $"{ink.ToPrintText()}　{ink.ToHex()}"
+        : (_editingFill ? "不填充" : "黑（默认）");
 
     /// <summary>面板当前给 CMYK 档。没填过颜色时默认给 CMYK——这活是印刷活。</summary>
     public bool InkUsesCmyk
     {
-        get => _element.InkColor?.Entry != ColorEntrySpace.Srgb;
+        get => TargetInk?.Entry != ColorEntrySpace.Srgb;
         set
         {
             if (value == InkUsesCmyk) return;
@@ -1945,6 +2075,82 @@ public sealed class EditableElement : ObservableObject
     /// <summary>「恢复默认（黑）」＝把这格清空（null），存盘时这个字段整个不写，与老模板逐字同形。</summary>
     public ICommand ResetInkCommand { get; }
 
+    // ---------- 矩形外观：填充 / 描边 / 圆角（第 50 棒）----------
+
+    /// <summary>这只元素是不是矩形（决定那几格显不显示）。</summary>
+    public bool IsRect => _element.Kind == ElementKind.Rect;
+
+    /// <summary>填充开关：关掉＝把填充色清空（= 不填充，与老模板同形）；打开＝没填过时给一支黑。</summary>
+    public bool FillEnabled
+    {
+        get => _element.FillColor is not null;
+        set
+        {
+            if (value == (_element.FillColor is not null)) return;
+            Prepare(nameof(FillEnabled));
+            _element.FillColor = value ? LabelColor.Black : null;
+            EditingFill = value;
+            Done();
+        }
+    }
+
+    /// <summary>描边开关。默认开；关掉时存 <c>"stroked": false</c>（开着不写，老文件不变多一行）。</summary>
+    public bool ShowsStroke
+    {
+        get => _element.ShowsStroke;
+        set
+        {
+            if (value == _element.ShowsStroke) return;
+            Prepare(nameof(ShowsStroke));
+            _element.Stroked = value ? null : false;
+            Done();
+        }
+    }
+
+    /// <summary>圆角半径（毫米）。0＝直角。</summary>
+    public double CornerRadiusMm
+    {
+        get => _element.CornerRadiusMm;
+        set
+        {
+            var v = Math.Max(0, Math.Round(value, 2));
+            if (Near(v, _element.CornerRadiusMm)) return;
+            Prepare(nameof(CornerRadiusMm));
+            _element.CornerRadiusMm = v;
+            Done();
+        }
+    }
+
+    /// <summary>四个角是否全圆（那颗「全部圆角」锁，照 CorelDRAW 的写法）。</summary>
+    public bool CornersAll
+    {
+        get => _element.CornersToRound == Corner.All;
+        set
+        {
+            if (value == (_element.CornersToRound == Corner.All)) return;
+            Prepare(nameof(CornersAll));
+            _element.RoundedCorners = value ? Corner.All : Corner.None;
+            Done();
+        }
+    }
+
+    public bool CornerTopLeft { get => Has(Corner.TopLeft); set => Set(Corner.TopLeft, value); }
+    public bool CornerTopRight { get => Has(Corner.TopRight); set => Set(Corner.TopRight, value); }
+    public bool CornerBottomRight { get => Has(Corner.BottomRight); set => Set(Corner.BottomRight, value); }
+    public bool CornerBottomLeft { get => Has(Corner.BottomLeft); set => Set(Corner.BottomLeft, value); }
+
+    private bool Has(Corner which) => (_element.CornersToRound & which) != 0;
+
+    private void Set(Corner which, bool on)
+    {
+        var now = _element.CornersToRound;
+        var next = on ? now | which : now & ~which;
+        if (next == now) return;
+        Prepare(nameof(CornersAll));
+        _element.RoundedCorners = next == Corner.All ? null : next;      // 全圆时回到"缺字段"，与老文件同形
+        Done();
+    }
+
     // ---------- 曲线（第 49 棒）----------
 
     /// <summary>这条元素是曲线：线条带了中间节点或控制柄才算（两点直线不算）。</summary>
@@ -2132,6 +2338,10 @@ public sealed class EditableElement : ObservableObject
             nameof(InkC), nameof(InkM), nameof(InkY), nameof(InkK),
             nameof(InkR), nameof(InkG), nameof(InkB), nameof(InkHex),
             nameof(IsCurve), nameof(NodeCount),
+            // 第 50 棒：矩形外观那一组（填充/描边/圆角）。漏一个就是一格显示在骗人。
+            nameof(EditingFill), nameof(FillEnabled), nameof(ShowsStroke), nameof(CornerRadiusMm),
+            nameof(CornerTopLeft), nameof(CornerTopRight), nameof(CornerBottomRight), nameof(CornerBottomLeft),
+            nameof(CornersAll), nameof(IsRect),
         })
         {
             Raise(name);

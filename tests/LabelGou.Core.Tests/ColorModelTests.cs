@@ -201,11 +201,11 @@ public class ColorModelTests
     }
 
     /// <summary>
-    /// 版本号跟着"最近一次加字段"走：v6 = 第 47 棒的墨色，v7 = 第 49 棒的曲线三字段（缺字段=直线=旧行为）。
-    /// 递增时必须在这儿留一句为什么，接手的人才知道老文件缺哪个字段该当什么。
+    /// 版本号跟着"最近一次加字段"走。递增时在这儿钉一下新值，逐条"缺字段该当什么"写在
+    /// <see cref="LabelTemplate.CurrentSchemaVersion"/> 的注释里（一份事实只留一处）。
     /// </summary>
     [Fact]
-    public void SchemaVersionTracksTheLatestFieldAddition() => Assert.Equal(7, LabelTemplate.CurrentSchemaVersion);
+    public void SchemaVersionTracksTheLatestFieldAddition() => Assert.Equal(8, LabelTemplate.CurrentSchemaVersion);
 
     private static LabelTemplate WriteThenReadJson(string json)
     {

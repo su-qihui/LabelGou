@@ -51,7 +51,8 @@
                 <Button Content="文本" Command="{Binding AddTextCommand}" ToolTip="加一个文本元素（可含字段占位符）" />
                 <ToggleButton Content="曲线" IsChecked="{Binding IsBezierTool}" MinWidth="56" Margin="2,0"
                               ToolTip="贝塞尔工具（类 CorelDRAW）：点一下就是一个尖角，这一笔是直线；按下拖开就给这一点带上控制柄，刚画出来的那一段跟着弯。&#10;接着点下一处继续画，双击或回车收尾；Ctrl+Z 退一个落点，Esc 丢掉整条。&#10;画好后选中它，节点和控制柄可以直接在画布上拖。" />
-                <Button Content="矩形框" Command="{Binding AddRectCommand}" ToolTip="加边框/表格线" />
+                <ToggleButton Content="矩形框" IsChecked="{Binding IsRectTool}" MinWidth="56" Margin="2,0"
+                              ToolTip="矩形工具（类 CorelDRAW）：在画布上按下拖出一只框、松手定形；只点一下不给一只默认尺寸（30×14mm）的框。Esc 取消拖到一半的框。" />
                 <Button Content="图片" Command="{Binding AddImageCommand}" ToolTip="加 Logo 或条码图，会复制到模板目录" />
                 <Button Content="复制" Command="{Binding DuplicateCommand}" ToolTip="复制选中元素（偏移 2mm）" />
                 <Button Content="删除" Command="{Binding RemoveCommand}" ToolTip="删除选中元素，可撤销" />
@@ -248,6 +249,7 @@
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
                                 </Grid.RowDefinitions>
 
                                 <TextBlock Grid.Row="0" Text="类型" Style="{StaticResource Caption}" />
@@ -342,6 +344,11 @@
                                            StaysOpen="False" AllowsTransparency="True"
                                            IsOpen="{Binding IsChecked, ElementName=InkPicker, Mode=TwoWay}">
                                         <Border Background="White" BorderBrush="#B7BCC5" BorderThickness="1" Padding="10" Width="512">
+                                            <StackPanel>
+                                        <CheckBox Content="下面这一组改的是「填充色」（不勾＝笔色）" Margin="0,0,0,8"
+                                                  IsChecked="{Binding Editing.EditingFill, Mode=TwoWay}"
+                                                  Visibility="{Binding Editing.IsRect, Converter={StaticResource BoolVis}}"
+                                                  ToolTip="矩形可以又有笔色（描边）又有填充色。勾上它，下面的色块、CMYK/RGB、调色盘、常用墨全部改成编辑填充色；&#10;不勾就回到编辑笔色。填充开关在属性面板「矩形」那一行。" />
                                             <Grid>
                                                 <Grid.ColumnDefinitions>
                                                     <ColumnDefinition Width="Auto" />
@@ -525,6 +532,7 @@
                                                             HorizontalAlignment="Left" />
                                                 </StackPanel>
                                             </Grid>
+                                            </StackPanel>
                                         </Border>
                                     </Popup>
                                 </StackPanel>
@@ -553,6 +561,43 @@
                                                FontSize="10" Foreground="#8A8F98" />
                                     <TextBlock Text="节点和柄在画布上直接拖" VerticalAlignment="Center" Margin="10,0,0,0"
                                                FontSize="10" Foreground="#8A8F98" />
+                                </StackPanel>
+
+                                <!--  矩形外观（第 50 棒）。描边宽度仍用上面第 7 行那个「线宽」，这里不另开一格——
+                                      同一份数据在面板上出现两次，迟早出现改一处另一处不跳的假象。  -->
+                                <TextBlock Grid.Row="17" Text="矩形" Style="{StaticResource Caption}"
+                                           Visibility="{Binding Editing.IsRect, Converter={StaticResource BoolVis}}" />
+                                <StackPanel Grid.Row="17" Grid.Column="1" Margin="0,4,0,4"
+                                            Visibility="{Binding Editing.IsRect, Converter={StaticResource BoolVis}}">
+                                    <StackPanel Orientation="Horizontal">
+                                        <CheckBox Content="填充" VerticalAlignment="Center"
+                                                  IsChecked="{Binding Editing.FillEnabled}"
+                                                  ToolTip="矩形内部上色。关掉＝不填充（与老模板同形，一个字段都不写）。" />
+                                        <CheckBox Content="描边" Margin="12,0,0,0" VerticalAlignment="Center"
+                                                  IsChecked="{Binding Editing.ShowsStroke}"
+                                                  ToolTip="画不画那条边框线，宽度就是上面那格「线宽(mm)」。关掉后若又没填色，这个矩形在纸上什么都不剩（校验会提醒）。" />
+                                        <TextBlock Text="圆角(mm)" Style="{StaticResource Caption}" Margin="14,0,4,0"
+                                                   VerticalAlignment="Center" />
+                                        <TextBox Width="46" Text="{Binding Editing.CornerRadiusMm, StringFormat={}{0:0.##}}"
+                                                 ToolTip="0 = 直角。超过短边一半时按短边一半画（再大就成了胶囊，不是更圆），校验会说明。" />
+                                        <CheckBox Content="全部角" Margin="12,0,0,0" VerticalAlignment="Center"
+                                                  IsChecked="{Binding Editing.CornersAll}"
+                                                  ToolTip="勾上＝四个角一起圆（CorelDRAW 的「全部圆角」）。取消勾后可以在下面逐角挑。" />
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                                        <TextBlock Text="圆哪几个角" Style="{StaticResource Caption}" VerticalAlignment="Center"
+                                                   Margin="0,0,6,0" />
+                                        <ToggleButton Content="左上" MinWidth="40" Margin="0,0,4,0"
+                                                      IsChecked="{Binding Editing.CornerTopLeft}" />
+                                        <ToggleButton Content="右上" MinWidth="40" Margin="0,0,4,0"
+                                                      IsChecked="{Binding Editing.CornerTopRight}" />
+                                        <ToggleButton Content="右下" MinWidth="40" Margin="0,0,4,0"
+                                                      IsChecked="{Binding Editing.CornerBottomRight}" />
+                                        <ToggleButton Content="左下" MinWidth="40"
+                                                      IsChecked="{Binding Editing.CornerBottomLeft}" />
+                                        <TextBlock Text="（半径 &gt; 0 才有可见效果）" VerticalAlignment="Center"
+                                                   Margin="8,0,0,0" FontSize="10" Foreground="#8A8F98" />
+                                    </StackPanel>
                                 </StackPanel>
                             </Grid>
 

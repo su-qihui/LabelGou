@@ -164,7 +164,17 @@ public static class TemplateFactory
     }
 
     /// <summary>
-    /// 找不到空位时的兜底落点：把偏好位置夹进纸内，<strong>不拒绝、不丢弃</strong>。
+    /// 拖动两点 → 矩形（毫米）：以按下的那一角为锚，拖到哪算哪。
+    /// <para>往左上、左下拖都成立（负向要翻回左上角并取绝对值），边长最低 <see cref="MinSideMm"/>
+    /// ——零尺寸的框既画不出来也存不住，校验器会直接报错。</para>
+    /// </summary>
+    public static (double X, double Y, double Width, double Height) RectFromCorners(
+        double anchorX, double anchorY, double xMm, double yMm)
+        => (Math.Min(anchorX, xMm), Math.Min(anchorY, yMm),
+            Math.Max(EditGeometry.MinSideMm, Math.Abs(xMm - anchorX)),
+            Math.Max(EditGeometry.MinSideMm, Math.Abs(yMm - anchorY)));
+
+    /// <summary>找不到空位时的兜底落点：把偏好位置夹进纸内，<strong>不拒绝、不丢弃</strong>。
     /// <para>元素本身比标签还大时夹到 (0,0) 并交给校验器报越界 —— 那种情况看得见、说得清，
     /// 比"点了没反应"强（§五-80：判据写好了没人读等于没有判据）。</para>
     /// </summary>

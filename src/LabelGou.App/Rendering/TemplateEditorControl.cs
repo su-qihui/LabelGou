@@ -359,6 +359,16 @@ public sealed class TemplateEditorControl : FrameworkElement
             }
             // 按下即落点：只点不拖＝尖角＝直线段；拖开＝这一点带柄＝上一段跟着弯（与 CorelDRAW 同口径）。
     // Ctrl＝限制线条（CorelDRAW 贝塞尔工具的自带文案就是这么写的），夹成水平或垂直。
+            // 矩形工具：按下落一只零尺寸框，拖到哪算哪，松手定形（CorelDRAW 的矩形工具原文就是「绘制矩形」）。
+            if (vm.IsRectTool)
+            {
+                if (!vm.BeginRect(ToMmX(point.X), ToMmY(point.Y))) return;
+                _dragging = true;
+                CaptureMouse();
+                e.Handled = true;
+                return;
+            }
+
             var constrain = Keyboard.Modifiers.HasFlag(ModifierKeys.Control);
             if (!vm.BeginPath(ToMmX(point.X), ToMmY(point.Y), constrain)) return;
             _dragging = true;
@@ -396,12 +406,13 @@ public sealed class TemplateEditorControl : FrameworkElement
         var point = e.GetPosition(this);
         if (_dragging)
         {
-            if (vm.IsBezierTool) vm.DragPath(ToMmX(point.X), ToMmY(point.Y), Keyboard.Modifiers.HasFlag(ModifierKeys.Control));
+            if (vm.IsRectTool) vm.DragRect(ToMmX(point.X), ToMmY(point.Y));
+            else if (vm.IsBezierTool) vm.DragPath(ToMmX(point.X), ToMmY(point.Y), Keyboard.Modifiers.HasFlag(ModifierKeys.Control));
             else vm.DragTo(ToMmX(point.X), ToMmY(point.Y));
             return;
         }
 
-        if (vm.IsBezierTool)
+        if (vm.IsBezierTool || vm.IsRectTool)
         {
             Cursor = Cursors.Cross;
             return;
@@ -437,7 +448,8 @@ public sealed class TemplateEditorControl : FrameworkElement
         if (!_dragging) return;
         _dragging = false;
         ReleaseMouseCapture();
-        if (_vm is { IsBezierTool: true }) _vm.EndPathSegment();
+        if (_vm is { IsRectTool: true }) _vm.EndRect();
+        else if (_vm is { IsBezierTool: true }) _vm.EndPathSegment();
         else _vm?.EndDrag();
     }
 
@@ -488,6 +500,14 @@ public sealed class TemplateEditorControl : FrameworkElement
             _dragging = false;
             ReleaseMouseCapture();
             vm.CancelPath();
+            e.Handled = true;
+            return;
+        }
+        if (e.Key == Key.Escape && _vm?.IsDrawingRect == true)
+        {
+            _dragging = false;
+            ReleaseMouseCapture();
+            _vm.CancelRect();
             e.Handled = true;
             return;
         }

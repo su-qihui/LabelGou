@@ -231,7 +231,7 @@ public static class SheetSvgWriter
             switch (item)
             {
                 case RectItem rect:
-                    builder.Rect(rect.X, rect.Y, rect.Width, rect.Height, null, Stroke(rect.ThicknessMm, RenderRules.InkHex(rect.Ink)));
+                    WriteRect(builder, rect);
                     break;
 
                 case LineItem line:
@@ -593,6 +593,73 @@ public static class SheetSvgWriter
         Color = color,
         WidthMm = RenderRules.LineWidthMm(thicknessMm, RenderTarget.Vector),
     };
+
+    /// <summary>填充画笔：null 就是"不填充"。这里<strong>必须</strong>把它传成 null 让 builder 写
+    /// <c>fill="none"</c>——SVG 里省略 fill 属性的初值是黑，只描边的矩形会被填成一团黑。</summary>
+    private static SvgPaint? FillPaint(LabelColor? fill)
+        => fill is null ? null : new SvgPaint { Color = RenderRules.InkHex(fill) };
+
+    /// <summary>
+    /// 矩形出口：填充、描边开关、圆角各归各的写法。
+    /// <para>四角同半径用 <c>&lt;rect rx ry&gt;</c>；<strong>只圆某几个角</strong>时 <c>rx</c> 表达不了，
+    /// 改发 <c>&lt;path&gt;</c>，四分之一圆用 kappa 换算成三次贝塞尔——不依赖各家导入器对
+    /// <c>A</c> 命令的支持差异（CorelDRAW 的 SVG 滤镜本来就够挑三拣四）。半径夹到短边一半，
+    /// 与 WPF 那份 <c>LabelRenderer.RoundedRect</c> 同一个口径，免得屏上一套、SVG 一套。</para>
+    /// </summary>
+    private static void WriteRect(SvgBuilder builder, RectItem rect)
+    {
+        var fill = FillPaint(rect.Fill);
+        var stroke = rect.Stroked ? Stroke(rect.ThicknessMm, RenderRules.InkHex(rect.Ink)) : null;
+        var cap = Math.Min(rect.Width, rect.Height) / 2;
+        var radius = Math.Min(rect.RadiusMm, cap);
+
+        if (radius <= 1e-6 || rect.Corners is Corner.None or Corner.All)
+        {
+            builder.Rect(rect.X, rect.Y, rect.Width, rect.Height, fill, stroke,
+                rect.Corners == Corner.All ? radius : 0);
+            return;
+        }
+        builder.Path(RoundedRectCommands(rect.X, rect.Y, rect.Width, rect.Height, radius, rect.Corners), fill, stroke);
+    }
+
+    private const double ArcKappa = 0.5522847498307936;
+
+    /// <summary>逐角圆角矩形 → 路径命令（毫米、绝对）：直线段 + 每个被圆化的角一段三次贝塞尔。</summary>
+    private static List<SvgPathCommand> RoundedRectCommands(
+        double x, double y, double w, double h, double r, Corner corners)
+    {
+        double R(Corner which) => (corners & which) != 0 ? r : 0;
+        var (tl, tr, br, bl) = (R(Corner.TopLeft), R(Corner.TopRight), R(Corner.BottomRight), R(Corner.BottomLeft));
+        var right = x + w;
+        var bottom = y + h;
+        var commands = new List<SvgPathCommand> { new('M', new[] { x + tl, y }) };
+        ArcCorner(commands, right - tr, y, right, y, right, y + tr, tr);                   // 右上角
+        ArcCorner(commands, right, bottom - br, right, bottom, right - br, bottom, br);     // 右下角
+        ArcCorner(commands, x + bl, bottom, x, bottom, x, bottom - bl, bl);                 // 左下角
+        ArcCorner(commands, x, y + tl, x, y, x + tl, y, tl);                               // 左上角
+        commands.Add(new SvgPathCommand('Z', Array.Empty<double>()));
+        return commands;
+    }
+
+    /// <summary>
+    /// 一个角：先从上一处沿边<strong>直线走到起弧点 A</strong>，再从 A 经角点 C 那侧弯到 B，
+    /// 写成三次贝塞尔（两个控制点分别是 A、B 朝 C 方向走 kappa 倍边长）。这个近似是圆角矩形的
+    /// 标准画法，误差在 0.02% 以内，比依赖各家对 <c>A</c> 命令的支持程度稳妥。
+    /// <para>A 那一步不能省：省了就把上一段的结束点直接当弧的起点，整条直边会跟着一起弯——
+    /// 与 <see cref="Rendering.LabelRenderer.RoundedRect"/> 画出来的就不是同一个形状了（五个出口读同一份）。</para>
+    /// </summary>
+    private static void ArcCorner(List<SvgPathCommand> commands,
+        double ax, double ay, double cornerX, double cornerY, double bx, double by, double r)
+    {
+        commands.Add(new SvgPathCommand('L', new[] { ax, ay }));
+        if (r <= 1e-9) return;
+        commands.Add(new SvgPathCommand('C', new[]
+        {
+            ax + (cornerX - ax) * ArcKappa, ay + (cornerY - ay) * ArcKappa,
+            bx + (cornerX - bx) * ArcKappa, by + (cornerY - by) * ArcKappa,
+            bx, by,
+        }));
+    }
 
     private static string MimeTypeOf(string path) => Path.GetExtension(path).ToLowerInvariant() switch
     {

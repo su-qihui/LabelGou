@@ -41,6 +41,24 @@ public enum HorizontalAlign
 }
 
 /// <summary>
+/// 圆角作用在哪几个角上。CorelDRAW 的圆角属性栏给的是「左边角圆滑度 / 右边角圆滑度 / 按下后所有角同时变圆」
+/// 三档；这里按用户说的"可以选择任意角或全部角"做成<strong>四角各一位 + 一个 All</strong>，更直白也够表达前者。
+/// </summary>
+[Flags]
+public enum Corner
+{
+    /// <summary>一个角都不圆（选了半径但全不勾时就是它，与"半径 0"同效）。</summary>
+    None = 0,
+
+    TopLeft = 1,
+    TopRight = 2,
+    BottomRight = 4,
+    BottomLeft = 8,
+
+    All = TopLeft | TopRight | BottomRight | BottomLeft,
+}
+
+/// <summary>
 /// 模板元素。<strong>坐标一律毫米、字号一律磅</strong>，绝不用像素——
 /// 这样同一份模板在预览、打印、PDF、图片导出里尺寸一致。
 /// </summary>
@@ -121,6 +139,32 @@ public sealed class TemplateElement
 
     /// <summary>终点的进柄（相对终点，毫米）。null 或零＝终点是尖角。</summary>
     public CurveHandle? EndIn { get; set; }
+
+    /// <summary>
+    /// 矩形的内填充色（第 50 棒）。<strong>null = 不填充</strong>——缺字段就是从前那只只有边框的框，
+    /// 老模板文件不用更新（<c>WhenWritingNull</c> 会整条省掉）。
+    /// </summary>
+    public Colors.LabelColor? FillColor { get; set; }
+
+    /// <summary>
+    /// 描边开不开。<strong>null = 开</strong>（＝从前行为）；只有关掉时才写 <c>"stroked": false</c>。
+    /// <para>为什么用可空而不是 <c>bool = true</c>：默认值为 true 的布尔会被序列化器逐条写出去，
+    /// 每只框都多一行、老文件当场全变——"模板文件不用更新"这条就这么被破了。</para>
+    /// </summary>
+    public bool? Stroked { get; set; }
+
+    /// <summary>圆角半径（毫米）。0＝直角；0 不写进文件（<c>WhenWritingDefault</c>）。</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public double CornerRadiusMm { get; set; }
+
+    /// <summary>哪几个角要圆。<strong>null = 四个角全圆</strong>；单独勾某几个角时才写。</summary>
+    public Corner? RoundedCorners { get; set; }
+
+    /// <summary>这框到底该不该描边（null 视作开，与老文件同形）。</summary>
+    public bool ShowsStroke => Stroked ?? true;
+
+    /// <summary>这只框圆了哪几个角（null 视作四角全圆）。</summary>
+    public Corner CornersToRound => RoundedCorners ?? Corner.All;
 
     /// <summary>文本框内容放不下时是否允许自动缩字号（渲染端执行，引擎只带标志）。</summary>
     public bool ShrinkToFit { get; set; } = true;
@@ -216,7 +260,11 @@ public sealed class LabelTemplate
     /// 没有中间节点也没有柄 = 从前那条直线 = 逐字旧行为</strong>，所以现有模板文件还是一个都不用更新；
     /// 用曲线工具拖出来的<strong>直线</strong>也不会写这三个字段（见 <c>CurveGeometry.ApplyNodes</c>），
     /// 老文件与新文件里"一条直线"长同一个样子。</remarks>
-    public const int CurrentSchemaVersion = 7;
+    /// <remarks>v8 = 第 50 棒给矩形加了 <see cref="TemplateElement.FillColor"/> / <see cref="TemplateElement.Stroked"/> /
+    /// <see cref="TemplateElement.CornerRadiusMm"/> / <see cref="TemplateElement.RoundedCorners"/>。<strong>四个字段全缺 =
+    /// 不填充、有描边、四角直角 = 逐字旧行为</strong>，现有模板文件还是一个都不用更新；填充色与笔色一样是
+    /// <c>LabelColor</c> 那个字符串写法（<c>"#c62828"</c> / <c>"cmyk(0 91 90 0)"</c>）。</remarks>
+    public const int CurrentSchemaVersion = 8;
 
     /// <summary>稳定标识，如 <c>builtin.standard-100x80</c>。用户模板用 <c>user.xxx</c>。</summary>
     public string Id { get; set; } = "user." + Guid.NewGuid().ToString("N")[..8];
@@ -468,6 +516,14 @@ public static class TemplateValidator
                 issues.Add(new TemplateIssue(IssueLevel.Error,
                     $"{tag} 的文字拉伸 {e.TextScaleX:0.##} × {e.TextScaleY:0.##} 不在 {MinStretch:0.#}~{MaxStretch:0.#} 之间。", i));
             // 旋转/拉伸探出纸的越界，上面 OccupiedBoundsOf 那条已经一并拦了（不在这重复判）。
+
+            // —— 第 50 棒：矩形的填充 / 描边 / 圆角 ——
+            if (e.Kind == ElementKind.Rect && !e.ShowsStroke && e.FillColor is null)
+                issues.Add(new TemplateIssue(IssueLevel.Warning,
+                    $"{tag} 既不描边也不填充，纸上看不到任何东西（要隐形占位的话，留描边把线宽设小更稳）。", i));
+            if (e.Kind == ElementKind.Rect && e.CornerRadiusMm > Math.Min(e.Width, e.Height) / 2 + 0.01)
+                issues.Add(new TemplateIssue(IssueLevel.Warning,
+                    $"{tag} 圆角半径 {e.CornerRadiusMm:0.##} mm 超过短边一半，实际按 {Math.Min(e.Width, e.Height) / 2:0.##} mm 画（再大就成了胶囊，不是更圆）。", i));
 
             if (e.ThicknessMm <= 0)
                 issues.Add(new TemplateIssue(IssueLevel.Warning, $"{tag} 线宽为 0，打印时不会显示。", i));

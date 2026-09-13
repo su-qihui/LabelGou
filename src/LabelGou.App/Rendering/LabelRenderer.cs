@@ -146,8 +146,50 @@ public static class LabelRenderer
     private static void DrawRect(DrawingContext dc, RectItem rect, double scale, bool showGuides, RenderTarget target)
     {
         var r = new Rect(Mm.ToDiu(rect.X) * scale, Mm.ToDiu(rect.Y) * scale, Mm.ToDiu(rect.Width) * scale, Mm.ToDiu(rect.Height) * scale);
-        dc.DrawRectangle(null, RenderRules.PenFor(RenderRules.InkOf(rect.Ink), rect.ThicknessMm, scale, target), r);
+        // 描边关掉又没填充＝什么都不画。那是用户自己两下都关掉的，校验器负责提醒，这里不猜。
+        var fill = rect.Fill is null ? null : RenderRules.InkOf(rect.Fill);
+        var pen = rect.Stroked ? RenderRules.PenFor(RenderRules.InkOf(rect.Ink), rect.ThicknessMm, scale, target) : null;
+        var radius = Mm.ToDiu(rect.RadiusMm) * scale;
+
+        if (radius <= 1e-6 || rect.Corners == Core.Templates.Corner.None) dc.DrawRectangle(fill, pen, r);
+        else if (rect.Corners == Core.Templates.Corner.All)
+        {
+            var capped = Math.Min(radius, Math.Min(r.Width, r.Height) / 2);
+            dc.DrawRoundedRectangle(fill, pen, r, capped, capped);
+        }
+        else dc.DrawGeometry(fill, pen, RoundedRect(r, radius, rect.Corners));
+
         if (showGuides) dc.DrawRectangle(null, GuidePen, r);
+    }
+
+    /// <summary>
+    /// 逐角圆角矩形（设备单位）：<strong>半径夹到短边的一半</strong>，否则 ArcTo 会自己翻出去画出怪形状；
+    /// 没被选中的角半径按 0 处理，于是"只圆左上和右下"这类是画得出来的。
+    /// </summary>
+    public static Geometry RoundedRect(Rect box, double radiusMm, Core.Templates.Corner corners)
+    {
+        var cap = Math.Min(box.Width, box.Height) / 2;
+        double R(Core.Templates.Corner which) => (corners & which) != 0 ? Math.Min(radiusMm, cap) : 0;
+        var tl = R(Core.Templates.Corner.TopLeft);
+        var tr = R(Core.Templates.Corner.TopRight);
+        var br = R(Core.Templates.Corner.BottomRight);
+        var bl = R(Core.Templates.Corner.BottomLeft);
+
+        var geometry = new StreamGeometry();
+        using (var c = geometry.Open())
+        {
+            c.BeginFigure(new Point(box.Left + tl, box.Top), true, true);
+            c.LineTo(new Point(box.Right - tr, box.Top), true, false);
+            if (tr > 0) c.ArcTo(new Point(box.Right, box.Top + tr), new Size(tr, tr), 0, false, SweepDirection.Clockwise, true, false);
+            c.LineTo(new Point(box.Right, box.Bottom - br), true, false);
+            if (br > 0) c.ArcTo(new Point(box.Right - br, box.Bottom), new Size(br, br), 0, false, SweepDirection.Clockwise, true, false);
+            c.LineTo(new Point(box.Left + bl, box.Bottom), true, false);
+            if (bl > 0) c.ArcTo(new Point(box.Left, box.Bottom - bl), new Size(bl, bl), 0, false, SweepDirection.Clockwise, true, false);
+            c.LineTo(new Point(box.Left, box.Top + tl), true, false);
+            if (tl > 0) c.ArcTo(new Point(box.Left + tl, box.Top), new Size(tl, tl), 0, false, SweepDirection.Clockwise, true, false);
+        }
+        geometry.Freeze();
+        return geometry;
     }
 
     private static void DrawLine(DrawingContext dc, LineItem line, double scale, RenderTarget target)

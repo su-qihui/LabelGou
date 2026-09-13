@@ -7,11 +7,18 @@ namespace LabelGou.Core.Layout;
 public abstract record LayoutItem;
 
 /// <summary>
-/// 已解析好的矩形边框（毫米）。
+/// 已解析好的矩形框（毫米）。<paramref name="Ink"/> 是笔色（null = 黑）；模板外框那一条故意不填（它不属于任何元素）。
+/// <para>第 50 棒另带四件外观：<paramref name="Fill"/>（null = 不填充）、<paramref name="Stroked"/>、
+/// <paramref name="RadiusMm"/> 与 <paramref name="Corners"/>（哪几个角圆）。
+/// 和 <c>Arc</c> 一样：<strong>这些判断全在 Core 做完</strong>，五个出口只照着画，
+/// 不许在渲染端各写一套"什么时候该有填充"。</para>
 /// </summary>
-/// <param name="Ink">这一支墨的颜色（第 47 棒）；null = 黑。模板外框那一条故意不填（它不属于任何元素）。</param>
 public sealed record RectItem(double X, double Y, double Width, double Height, double ThicknessMm,
-    Colors.LabelColor? Ink = null) : LayoutItem;
+    Colors.LabelColor? Ink = null,
+    Colors.LabelColor? Fill = null,
+    bool Stroked = true,
+    double RadiusMm = 0,
+    Templates.Corner Corners = Templates.Corner.All) : LayoutItem;
 
 /// <summary>
 /// 已解析好的线段（毫米）。<paramref name="Ink"/> 同 <see cref="RectItem"/>：null = 黑。
@@ -245,7 +252,11 @@ public static class LayoutEngine
 
                 case ElementKind.Rect:
                     items.Add(new RectItem(element.X, element.Y, element.Width, element.Height, element.ThicknessMm,
-                        Ink: InkOf(element.InkColor, context)));
+                        Ink: InkOf(element.InkColor, context),
+                        Fill: FillOf(element.FillColor, context),
+                        Stroked: element.ShowsStroke,
+                        RadiusMm: element.CornerRadiusMm,
+                        Corners: element.CornersToRound));
                     break;
 
                 case ElementKind.Vector:
@@ -360,6 +371,15 @@ public static class LayoutEngine
     /// </summary>
     private static Colors.LabelColor? InkOf(Colors.LabelColor? ink, LayoutContext context)
         => context.Plate == Colors.InkPlate.None ? ink : Colors.InkPlates.ForPlate(ink, context.Plate);
+
+    /// <summary>
+    /// 填充色：<strong>null 必须保持 null</strong>（"没填"和"填了黑"是两件事，笔色那边才可以，因为它本来就有默认黑）。
+    /// 分色时同笔色一样按版折算成灰。
+    /// </summary>
+    private static Colors.LabelColor? FillOf(Colors.LabelColor? fill, LayoutContext context)
+        => fill is null ? null
+            : context.Plate == Colors.InkPlate.None ? fill
+            : Colors.InkPlates.ForPlate(fill, context.Plate);
 
     /// <summary>
     /// 分色版上没有「警示红」这种墨——那是给人眼和打印闸门看的记号，不是配墨的一部分。
