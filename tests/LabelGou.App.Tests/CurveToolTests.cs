@@ -224,6 +224,31 @@ public class CurveToolTests
     });
 
     [Fact]
+    public void GrabbingANodeMakesItTheCurrentNodeForTheThreeCommands() => OnSta(() =>
+    {
+        var element = Line(10, 50, 90, 50, new CurveNode(50, 20, -8, 0, 2, 0));
+        var vm = Open(element);
+        vm.SelectedRow = vm.Elements[0];
+        Assert.Equal(-1, vm.CurrentNodeIndex);
+
+        Assert.Equal(TemplateEditorViewModel.DragMode.Node, vm.BeginDrag(50, 20, 1.5));
+        vm.EndDrag();
+        Assert.Equal(1, vm.CurrentNodeIndex);                       // 抓的是中间那个点
+
+        Assert.True(vm.NodeSymmetricCommand.CanExecute(null));
+        vm.NodeSymmetricCommand.Execute(null);
+        Assert.Equal((-8d, 0d, 8d, 0d), (element.Nodes![0].InX, element.Nodes[0].InY, element.Nodes[0].OutX, element.Nodes[0].OutY));
+
+        vm.NodeCornerCommand.Execute(null);
+        Assert.Equal((0d, 0d), (element.Nodes[0].InX, element.Nodes[0].OutX));   // 尖突：两柄收掉，这里就是"折角"
+
+        vm.Undo();
+        var undone = Assert.Single(vm.Template.Elements);   // 撤销是整份换模板对象，旧引用不能再拿去断言
+        Assert.Equal(8d, undone.Nodes![0].OutX);            // 一次撤销退回对称那一步，不是退回画之前
+        return true;
+    });
+
+    [Fact]
     public void DraggingANodeMovesOnlyThatNodeAndDoesNotAccumulate() => OnSta(() =>
     {
         var element = Line(10, 50, 90, 50, new CurveNode(50, 20, -8, 0, 8, 0));

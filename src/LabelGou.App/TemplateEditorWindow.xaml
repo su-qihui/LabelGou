@@ -539,6 +539,18 @@
                                             ToolTip="所有控制柄归零：节点位置不动，每段变成直线段（想退回直线又不想删了重画时用）" />
                                     <Button Content="只留两端" Command="{Binding Editing.FlattenToEndsCommand}" Margin="6,0,0,0" Padding="6,1"
                                             ToolTip="删掉所有中间节点与柄，回到从前那条两点直线" />
+                                    <Separator Width="12" Background="Transparent" />
+                                    <Button Content="尖突" Command="{Binding DataContext.NodeCornerCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                            Margin="0,0,0,0" Padding="6,1"
+                                            ToolTip="使节点成为尖突（CorelDRAW 同名命令）：收掉这个点的两根柄，曲线在此折断成折角。" />
+                                    <Button Content="平滑" Margin="6,0,0,0" Padding="6,1"
+                                            Command="{Binding DataContext.NodeSmoothCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                            ToolTip="平滑节点：两根柄压到同一条方向线上，但各自长度保留——过点顺滑、两侧弯度可以不一样。" />
+                                    <Button Content="对称" Margin="6,0,0,0" Padding="6,1"
+                                            Command="{Binding DataContext.NodeSymmetricCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                            ToolTip="生成对称节点：两根柄共线而且等长。" />
+                                    <TextBlock Text="（先点住要改的那个节点）" VerticalAlignment="Center" Margin="6,0,0,0"
+                                               FontSize="10" Foreground="#8A8F98" />
                                     <TextBlock Text="节点和柄在画布上直接拖" VerticalAlignment="Center" Margin="10,0,0,0"
                                                FontSize="10" Foreground="#8A8F98" />
                                 </StackPanel>

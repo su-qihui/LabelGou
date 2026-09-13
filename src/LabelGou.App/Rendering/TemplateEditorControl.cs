@@ -254,24 +254,75 @@ public sealed class TemplateEditorControl : FrameworkElement
     }
 
     /// <summary>
-    /// 选中曲线时画在画布上的节点与控制柄（类 CorelDRAW：节点是方框、柄头是圆点、中间一根细线）。
-    /// <para>先画柄再画节点：节点是"最常抓的那个"，压在上方才不会被柄线盖住点不中。
-    /// 尺寸按像素给（不随缩放变粗），位置一律经 <see cref="ToDiuX"/>/<see cref="ToDiuY"/>——
+    /// 选中曲线时画在画布上的节点与控制柄（照 CorelDRAW：**当前节点的方向线是带两端箭头的虚线**，
+    /// 其余节点只画短柄线；当前节点实心、其他空心）。
+    /// <para>为什么要箭头和虚线：用户上一轮的原话是"没有 CDR 的…预览效果就感觉很随机"——看不到切线走向，
+    /// 就不知道这一拖会把上一段弯成什么样。方向线两端出头画箭头，正是 CDR 给的那点预判。</para>
+    /// <para>尺寸按像素给（不随缩放变粗），位置一律经 <see cref="ToDiuX"/>/<see cref="ToDiuY"/>——
     /// 与命中判据同一套坐标，不会出现"看得见柄头、抓不到"。</para>
     /// </summary>
     private void DrawCurveNodes(DrawingContext dc, TemplateElement element)
     {
-        foreach (var n in CurveGeometry.NodesOf(element))
+        var pts = CurveGeometry.NodesOf(element);
+        var current = _vm?.CurrentNodeIndex ?? -1;
+        for (var i = 0; i < pts.Count; i++)
         {
+            var n = pts[i];
             var node = new Point(ToDiuX(n.X), ToDiuY(n.Y));
-            if (n.InX != 0 || n.InY != 0) DrawHandleLine(dc, node, new Point(ToDiuX(n.X + n.InX), ToDiuY(n.Y + n.InY)));
-            if (n.OutX != 0 || n.OutY != 0) DrawHandleLine(dc, node, new Point(ToDiuX(n.X + n.OutX), ToDiuY(n.Y + n.OutY)));
+            if (i == current) DrawDirectionLine(dc, node, n);
+            else
+            {
+                if (n.InX != 0 || n.InY != 0) DrawHandleLine(dc, node, new Point(ToDiuX(n.X + n.InX), ToDiuY(n.Y + n.InY)));
+                if (n.OutX != 0 || n.OutY != 0) DrawHandleLine(dc, node, new Point(ToDiuX(n.X + n.OutX), ToDiuY(n.Y + n.OutY)));
+            }
         }
-        foreach (var n in CurveGeometry.NodesOf(element))
-            DrawHandle(dc, new Point(ToDiuX(n.X), ToDiuY(n.Y)));
+        for (var i = 0; i < pts.Count; i++)
+        {
+            var at = new Point(ToDiuX(pts[i].X), ToDiuY(pts[i].Y));
+            if (i == current) dc.DrawRectangle(HandleBrush, SelectedPen, new Rect(at.X - 4, at.Y - 4, 8, 8));
+            else DrawHandle(dc, at);
+        }
+    }
+
+    /// <summary>当前节点的方向线：虚线穿过两根柄、两头各多画一截并加箭头（CorelDRAW 画法）。</summary>
+    private void DrawDirectionLine(DrawingContext dc, Point node, CurveNode n)
+    {
+        double ix = node.X + Mm.ToDiu(n.InX) * _zoom, iy = node.Y + Mm.ToDiu(n.InY) * _zoom;
+        double ox = node.X + Mm.ToDiu(n.OutX) * _zoom, oy = node.Y + Mm.ToDiu(n.OutY) * _zoom;
+        if (n.InX == 0 && n.InY == 0 && n.OutX == 0 && n.OutY == 0) return;
+        if (n.InX == 0 && n.InY == 0) { (ix, iy) = (2 * node.X - ox, 2 * node.Y - oy); }
+        else if (n.OutX == 0 && n.OutY == 0) { (ox, oy) = (2 * node.X - ix, 2 * node.Y - iy); }
+
+        dc.DrawLine(DirectionPen, new Point(ix, iy), new Point(ox, oy));
+        Arrow(dc, new Point(ox, oy), new Point(node.X, node.Y));
+        Arrow(dc, new Point(ix, iy), new Point(node.X, node.Y));
+        DrawHandleLine(dc, node, new Point(ox, oy));
+        DrawHandleLine(dc, node, new Point(ix, iy));
+    }
+
+    /// <summary>箭头：沿 from→tip 的方向在尖端画两条短斜线（比攒一个 PathGeometry 轻，且不会随缩放变形）。</summary>
+    private void Arrow(DrawingContext dc, Point tip, Point from)
+    {
+        var dx = tip.X - from.X;
+        var dy = tip.Y - from.Y;
+        var len = Math.Sqrt(dx * dx + dy * dy);
+        if (len < 1e-6) return;
+        dx /= len;
+        dy /= len;
+        const float arm = 6f;
+        const float spread = 0.42f;
+        var basePoint = new Point(tip.X - dx * arm, tip.Y - dy * arm);
+        var perp = new Point(-dy, dx);
+        dc.DrawLine(DirectionPen, tip, new Point(basePoint.X + perp.X * arm * spread, basePoint.Y + perp.Y * arm * spread));
+        dc.DrawLine(DirectionPen, tip, new Point(basePoint.X - perp.X * arm * spread, basePoint.Y - perp.Y * arm * spread));
     }
 
     private static readonly Pen HandleLinePen = Frozen(new Pen(new SolidColorBrush(Color.FromRgb(0, 120, 200)), 1));
+
+    private static readonly Pen DirectionPen = Frozen(new Pen(new SolidColorBrush(Color.FromRgb(0, 120, 200)), 1)
+    {
+        DashStyle = DashStyles.Dash,
+    });
 
     private void DrawHandleLine(DrawingContext dc, Point from, Point to)
     {

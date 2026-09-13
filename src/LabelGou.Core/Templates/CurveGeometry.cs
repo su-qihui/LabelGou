@@ -229,6 +229,59 @@ public static class CurveGeometry
         ApplyNodes(element, pts);
     }
 
+    // ---------- 节点三态：名字照 CorelDRAW 自己的命令（VGCoreIntl.dll：使节点成为尖突 / 平滑节点 / 生成对称节点）----------
+
+    /// <summary><strong>使节点成为尖突</strong>：两根柄都收掉，曲线在这个点上折断成两条切线（用户说的"折角"）。</summary>
+    public static void MakeCorner(TemplateElement element, int index)
+        => EditNode(element, index, (_, _, _, _) => (0, 0, 0, 0));
+
+    /// <summary>
+    /// <strong>平滑节点</strong>：两根柄压到同一条方向线上（共线、方向相反），<strong>各自长度保留</strong>——
+    /// 这就是"过点顺滑但两侧弯度可以不一样"，也就是用户说的"曲率"可调。
+    /// <para>方向取较长的那根（它更像用户刚拖出来的意图），短的那根翻到反向、长度不变。</para>
+    /// </summary>
+    public static void MakeSmooth(TemplateElement element, int index) => EditNode(element, index, (inX, inY, outX, outY) =>
+    {
+        var (ax, ay, inLen, outLen) = AxisOf(inX, inY, outX, outY);
+        if (ax == 0 && ay == 0) return (inX, inY, outX, outY);       // 两头都没柄＝尖角，无从平滑
+        return (-ax * inLen, -ay * inLen, ax * outLen, ay * outLen);
+    });
+
+    /// <summary>
+    /// <strong>生成对称节点</strong>：共线而且<strong>等长</strong>。长度取两根里较长的那根——
+    /// 把用户刚拖出来的方向线缩短，看着就像"没响应"。
+    /// </summary>
+    public static void MakeSymmetric(TemplateElement element, int index) => EditNode(element, index, (inX, inY, outX, outY) =>
+    {
+        var (ax, ay, inLen, outLen) = AxisOf(inX, inY, outX, outY);
+        if (ax == 0 && ay == 0) return (inX, inY, outX, outY);
+        var len = Math.Max(inLen, outLen);
+        return (-ax * len, -ay * len, ax * len, ay * len);
+    });
+
+    /// <summary>两柄共同的单位方向（0,0 表示两头都没有柄）与各自的长度。</summary>
+    private static (double Ax, double Ay, double InLen, double OutLen) AxisOf(
+        double inX, double inY, double outX, double outY)
+    {
+        var inLen = Math.Sqrt(inX * inX + inY * inY);
+        var outLen = Math.Sqrt(outX * outX + outY * outY);
+        if (outLen >= inLen && outLen > 1e-9) return (outX / outLen, outY / outLen, inLen, outLen);
+        if (inLen > 1e-9) return (-inX / inLen, -inY / inLen, inLen, outLen);
+        return (0, 0, inLen, outLen);
+    }
+
+    /// <summary>三态命令的公共骨架：读全节点表 → 改这一点的两根柄 → 写回（唯一写入口仍是 <see cref="ApplyNodes"/>）。</summary>
+    private static void EditNode(TemplateElement element, int index,
+        Func<double, double, double, double, (double InX, double InY, double OutX, double OutY)> edit)
+    {
+        var pts = NodesOf(element);
+        if (index < 0 || index >= pts.Count) return;
+        var n = pts[index];
+        var (inX, inY, outX, outY) = edit(n.InX, n.InY, n.OutX, n.OutY);
+        pts[index] = n with { InX = inX, InY = inY, OutX = outX, OutY = outY };
+        ApplyNodes(element, pts);
+    }
+
     /// <summary>
     /// 拆成段序列。没填曲线字段时交回<strong>恰好一段直线</strong>——所以调用方不必再分"直线/曲线"两套代码，
     /// 老的线条元素走的也是这条路，画法与从前逐字一致。

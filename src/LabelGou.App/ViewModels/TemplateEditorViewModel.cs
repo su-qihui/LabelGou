@@ -300,6 +300,7 @@ public sealed class TemplateEditorViewModel : ObservableObject
     {
         AddTextCommand = new RelayCommand(() => AddElement(TemplateFactory.NewText("新文本", _template.PaddingMm, _template.PaddingMm, 30, 6), "文本"));
         AddRectCommand = new RelayCommand(() => AddElement(TemplateFactory.NewRect(_template.PaddingMm, _template.PaddingMm, 30, 14), "矩形框"));
+        BuildNodeCommands();
         AddImageCommand = new RelayCommand(AddImage);
         RemoveCommand = new RelayCommand(RemoveSelected, () => SelectedRow is not null);
         DuplicateCommand = new RelayCommand(DuplicateSelected, () => SelectedRow is not null);
@@ -708,6 +709,7 @@ public sealed class TemplateEditorViewModel : ObservableObject
             // 几笔下来柄互相牵着走，画出来的就是乱绕的圈（2026-09-13 用户实拍的那张乱画）。
             _path.Add(new CurveNode(xMm, yMm, 0, 0, 0, 0));
         }
+        CurrentNodeIndex = _path.Count - 1;  // 画的过程中也要看得见方向线，否则"这一拖会把上一段弯成什么样"全靠猜
         WritePath();
         return true;
     }
@@ -831,6 +833,58 @@ public sealed class TemplateEditorViewModel : ObservableObject
     /// <summary>新画曲线的默认线宽（与「添加线条」那颗按钮同源，不另定一份）。</summary>
     public const double DefaultLineThicknessMm = 0.35;
 
+    // ---------- 当前节点与三态（CorelDRAW：使节点成为尖突 / 平滑节点 / 生成对称节点）----------
+
+    /// <summary>
+    /// 刚抓过的那个节点（<see cref="CurveGeometry.NodesOf"/> 那张全节点表里的下标，0 = 起点）。
+    /// <para>画布上"哪个方块是实心的"、方向线画在谁身上、那三颗按钮能不能点，全看这一个数。</para>
+    /// </summary>
+    public int CurrentNodeIndex
+    {
+        get => _currentNode;
+        private set
+        {
+            if (_currentNode == value) return;
+            _currentNode = value;
+            Raise(nameof(CurrentNodeIndex));
+            Raise(nameof(HasCurrentNode));
+            CanvasChanged?.Invoke();
+        }
+    }
+    private int _currentNode = -1;
+
+    public bool HasCurrentNode => _currentNode >= 0;
+
+    /// <summary>使当前节点成为尖突（两柄收掉，曲线在此折断）。</summary>
+    public RelayCommand NodeCornerCommand { get; private set; } = null!;
+
+    /// <summary>平滑当前节点：两柄共线、各留原长。</summary>
+    public RelayCommand NodeSmoothCommand { get; private set; } = null!;
+
+    /// <summary>给当前节点生成对称柄：共线且等长。</summary>
+    public RelayCommand NodeSymmetricCommand { get; private set; } = null!;
+
+    /// <summary>三态命令共用的一步编辑：录撤销 → 改当前节点 → 刷新（与拖动那几处同一套口径）。</summary>
+    private void ApplyNodeType(Action<TemplateElement, int> edit)
+    {
+        var element = SelectedRow?.Element;
+        if (element is null || _currentNode < 0) return;
+        Capture();
+        edit(element, _currentNode);
+        Touch();
+        RebuildSample();
+        RecomputeIssues();
+        CanvasChanged?.Invoke();
+    }
+
+    private void BuildNodeCommands()
+    {
+        bool Can() => HasCurrentNode && SelectedRow?.Element is { Kind: ElementKind.Line } e && CurveGeometry.IsCurved(e);
+        NodeCornerCommand = new RelayCommand(() => ApplyNodeType(CurveGeometry.MakeCorner), Can);
+        NodeSmoothCommand = new RelayCommand(() => ApplyNodeType(CurveGeometry.MakeSmooth), Can);
+        NodeSymmetricCommand = new RelayCommand(() => ApplyNodeType(CurveGeometry.MakeSymmetric), Can);
+    }
+
     /// <summary>
     /// 按下鼠标：<paramref name="handleRadiusMm"/> 由控件按当前缩放换算（屏幕上约 8 像素）。
     /// 命中元素即选中并准备拖动；点空白则取消选中。
@@ -862,10 +916,12 @@ public sealed class TemplateEditorViewModel : ObservableObject
         if (index < 0)
         {
             SelectedRow = null;
+            CurrentNodeIndex = -1;
             return DragMode.None;
         }
 
         var element = _template.Elements[index];
+        if (!ReferenceEquals(SelectedRow?.Element, element)) CurrentNodeIndex = -1;  // 换了一个元素，别把上一个的当前节点带过去
         SelectedRow = Elements.FirstOrDefault(r => ReferenceEquals(r.Element, element));
 
         Capture();
@@ -882,6 +938,7 @@ public sealed class TemplateEditorViewModel : ObservableObject
             && CurveGeometry.HandleAt(element, xMm, yMm, handleRadiusMm) is { } hit)
         {
             _curveHit = hit;
+            CurrentNodeIndex = hit.Index;  // 抓到的这个点就是当前节点：方向线与三态按钮都作用在它身上
             _dragMode = hit.Part == CurvePart.Node ? DragMode.Node : DragMode.Handle;
             _dragHandle = ResizeHandle.None;
             return _dragMode;

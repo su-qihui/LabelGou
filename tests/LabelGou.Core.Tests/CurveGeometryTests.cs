@@ -191,6 +191,38 @@ public class CurveGeometryTests
     }
 
     [Fact]
+    public void TheThreeNodeTypesDoWhatCorelDrawNamesThemTo()
+    {
+        // 一个直角节点：进柄指左、出柄指上。三态各自把它改成什么，是 CDR 命令的原文语义。
+        TemplateElement Node(double outX, double outY)
+        {
+            var e = Line(10, 50, 90, 50);
+            CurveGeometry.ApplyNodes(e, new[]
+            {
+                new CurveNode(10, 50, 0, 0, 0, 0),
+                new CurveNode(50, 20, -8, 0, outX, outY),
+                new CurveNode(90, 50, 0, 0, 0, 0),
+            });
+            return e;
+        }
+
+        var corner = Node(0, 8);
+        CurveGeometry.MakeCorner(corner, 1);
+        Assert.Equal((0d, 0d, 0d, 0d), (corner.Nodes![0].InX, corner.Nodes[0].InY, corner.Nodes[0].OutX, corner.Nodes[0].OutY));
+
+        var smooth = Node(0, 8);
+        CurveGeometry.MakeSmooth(smooth, 1);
+        Assert.Equal((0d, -8d, 0d, 8d), (smooth.Nodes![0].InX, smooth.Nodes[0].InY, smooth.Nodes[0].OutX, smooth.Nodes[0].OutY));
+
+        var unequal = Node(2, 0);
+        CurveGeometry.MakeSmooth(unequal, 1);
+        Assert.Equal((-8d, 0d, 2d, 0d), (unequal.Nodes![0].InX, unequal.Nodes[0].InY, unequal.Nodes[0].OutX, unequal.Nodes[0].OutY));
+        CurveGeometry.MakeSymmetric(unequal, 1);
+        Assert.Equal((-8d, 0d, 8d, 0d), (unequal.Nodes![0].InX, unequal.Nodes[0].InY, unequal.Nodes[0].OutX, unequal.Nodes[0].OutY));
+        Assert.Equal((50d, 20d), (unequal.Nodes![0].X, unequal.Nodes[0].Y));                // 节点本体一颗都不许挪
+    }
+
+    [Fact]
     public void NodeEditsMoveOnlyWhatTheySayTheyMove()
     {
         var element = Line(10, 10, 90, 10);
