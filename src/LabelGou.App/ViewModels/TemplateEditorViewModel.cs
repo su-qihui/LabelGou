@@ -642,7 +642,8 @@ public sealed class TemplateEditorViewModel : ObservableObject
             Raise(nameof(Tool));
             Raise(nameof(IsBezierTool));
             StatusText = value == EditorTool.Bezier
-                ? "曲线工具：在画布上按下拖出这一节的弯度，松开定下一个点；按住 Shift 拖＝直线；双击或回车收尾，Esc 取消。"
+                ? "曲线工具：点一下＝一个尖角（这一笔是直线）；按下拖开＝这一点带柄，刚画的那一段跟着弯。" +
+                  "接着点下一处续画，双击或回车收尾，Esc 取消。"
                 : "已切回选择工具。";
             CanvasChanged?.Invoke();
         }
@@ -671,13 +672,19 @@ public sealed class TemplateEditorViewModel : ObservableObject
     public int PathIndex { get; private set; } = -1;
 
     /// <summary>
-    /// 贝塞尔工具下按下鼠标：落下一个节点并开始拖它的出柄。
+    /// 贝塞尔工具下按下鼠标：落下一个节点。<strong>只点不按＝尖角＝这一笔是直线段</strong>
+    /// （CorelDRAW 的口径，2026-09-13 用户看图更正：不按 Shift 本来就是直线，只有把点拖开才弯）。
     /// <para>第一个点会真的建一个元素（走 <see cref="TemplateFactory.AddElement"/> 那一路，
     /// 所以撤销栈、越界校验、重叠提醒都与其他元素同一套），之后每个点只改这个元素的节点表。</para>
     /// </summary>
-    /// <param name="shift">按住 Shift＝这一节要直（柄归零，下一段也是直线）。</param>
-    public bool BeginPath(double xMm, double yMm, bool shift)
+    public bool BeginPath(double xMm, double yMm, bool constrain = false)
     {
+        if (constrain && _path.Count > 0)
+        {
+            // CorelDRAW 的贝塞尔工具写着"按住 Ctrl 键单击可限制线条"（VGCoreIntl.dll 自带文案，实测挖出来的）。
+            // 这里按同一口径实现：这一笔被夹成水平或垂直，跟选择工具里 Ctrl 锁轴是一个意思。
+            (xMm, yMm) = ConstrainFrom(_path[^1], xMm, yMm);
+        }
         if (_path.Count == 0)
         {
             var element = TemplateFactory.NewLine(xMm, yMm, xMm, yMm, DefaultLineThicknessMm);
@@ -697,27 +704,40 @@ public sealed class TemplateEditorViewModel : ObservableObject
         }
         else
         {
-            // 新节点：进柄取上一节点出柄的反向（CDR 的"平滑"手感），Shift 则两头都归零＝尖角。
-            var prev = _path[^1];
-            var mirrorIn = shift || prev.OutX == 0 && prev.OutY == 0
-                ? (0d, 0d)
-                : (-prev.OutX, -prev.OutY);
-            _path.Add(new CurveNode(xMm, yMm, mirrorIn.Item1, mirrorIn.Item2, 0, 0));
+            // 新节点一律先当"单击＝尖角"。刻意不把上一节点的出柄镜像过来：那样等于替用户决定"这段要平滑"，
+            // 几笔下来柄互相牵着走，画出来的就是乱绕的圈（2026-09-13 用户实拍的那张乱画）。
+            _path.Add(new CurveNode(xMm, yMm, 0, 0, 0, 0));
         }
         WritePath();
         return true;
     }
 
-    /// <summary>拖动中：当前节点的出柄跟鼠标走（Shift 时归零，这一段就是直的）。</summary>
-    public void DragPath(double xMm, double yMm, bool shift)
+    /// <summary>
+    /// 拖动中：<strong>拖的是"刚画出来的那一段"</strong>（CorelDRAW / 通用钢笔的语义，用户 2026-09-13 看图纠正）。
+    /// <para>第一个点后面还没有段可弯，所以它拖的是<strong>出柄</strong>；从第二个点起，拖的是这一点的
+    /// <strong>进柄</strong>（它决定上一段怎么进到这个点），出柄按镜像跟着走，节点保持平滑。</para>
+    /// </summary>
+    public void DragPath(double xMm, double yMm, bool constrain = false)
     {
         if (_path.Count == 0) return;
         var n = _path[^1];
-        var dx = shift ? 0 : xMm - n.X;
-        var dy = shift ? 0 : yMm - n.Y;
-        _path[^1] = n with { OutX = dx, OutY = dy };
+        if (constrain)
+        {
+            (xMm, yMm) = ConstrainFrom(n, xMm, yMm);
+        }
+        var dx = xMm - n.X;
+        var dy = yMm - n.Y;
+        _path[^1] = _path.Count == 1
+            ? n with { OutX = dx, OutY = dy }
+            : n with { InX = dx, InY = dy, OutX = -dx, OutY = -dy };
         WritePath();
     }
+
+    /// <summary>把目标点夹到参照点的正上/正下/正左/正右（位移更大的那根轴说了算）。</summary>
+    private static (double X, double Y) ConstrainFrom(CurveNode from, double xMm, double yMm)
+        => Math.Abs(xMm - from.X) >= Math.Abs(yMm - from.Y)
+            ? (xMm, from.Y)
+            : (from.X, yMm);
 
     /// <summary>松开鼠标：这一节的柄定下来了（此时才允许下一段接上去）。</summary>
     public void EndPathSegment()

@@ -51,13 +51,12 @@ public class CurveToolTests
     /// <summary>点三下画一条两点一拱再收尾的曲线（N 个点 = N-1 段）。</summary>
     private static void DrawAnArc(TemplateEditorViewModel vm, double x1, double y1, double xm, double ym, double x2, double y2)
     {
-        vm.BeginPath(x1, y1, false);
-        vm.DragPath(x1 + 12, y1 - 12, false);
+        vm.BeginPath(x1, y1);
+        vm.EndPathSegment();                                      // 第一下只点不拖：起点是尖角
+        vm.BeginPath(xm, ym);
+        vm.DragPath(xm - 12, ym + 12);                            // 拖第二下：弯的是刚画出来的 1→2 那一段
         vm.EndPathSegment();
-        vm.BeginPath(xm, ym, false);
-        vm.DragPath(xm + 12, ym - 12, false);
-        vm.EndPathSegment();
-        vm.BeginPath(x2, y2, false);
+        vm.BeginPath(x2, y2);
         vm.EndPathSegment();
         vm.FinishPath();
     }
@@ -83,15 +82,15 @@ public class CurveToolTests
     });
 
     [Fact]
-    public void ShiftWhileDrawingWritesExactlyTheOldStraightLine() => OnSta(() =>
+    public void ClicksWithoutDraggingWriteExactlyTheOldStraightLine() => OnSta(() =>
     {
-        // 用户要的那半句：按住 Shift 是为直线。直线就该存成从前那个样子——三个曲线字段一个都不写。
+        // 只点不拖＝尖角＝直线段（用户看图更正后的口径：不按 Shift 本来就是直线）。
+        // 直线就该存成从前那个样子——三个曲线字段一个都不写。
         var vm = Open();
         vm.IsBezierTool = true;
-        vm.BeginPath(10, 30, true);
-        vm.DragPath(70, 30, true);
+        vm.BeginPath(10, 30);
         vm.EndPathSegment();
-        vm.BeginPath(90, 30, true);
+        vm.BeginPath(90, 30);
         vm.EndPathSegment();
         vm.FinishPath();
 
@@ -110,8 +109,8 @@ public class CurveToolTests
     {
         var vm = Open();
         vm.IsBezierTool = true;
-        vm.BeginPath(20, 20, false);
-        vm.DragPath(30, 10, false);
+        vm.BeginPath(20, 20);
+        vm.DragPath(30, 10);
         Assert.Single(vm.Template.Elements);                                // 第一个点就落地了（撤销栈要能整步退掉）
 
         vm.CancelPath();
@@ -139,10 +138,10 @@ public class CurveToolTests
         // 切走之前不收尾，画布上就留着一条"半截曲线"，而人已经去点别的东西了。
         var vm = Open();
         vm.IsBezierTool = true;
-        vm.BeginPath(15, 45, false);
-        vm.DragPath(35, 25, false);
+        vm.BeginPath(15, 45);
+        vm.DragPath(35, 25);
         vm.EndPathSegment();
-        vm.BeginPath(75, 45, false);
+        vm.BeginPath(75, 45);
         vm.EndPathSegment();
 
         vm.IsBezierTool = false;
@@ -153,7 +152,7 @@ public class CurveToolTests
         Assert.Equal(2, pts.Count);
         Assert.Equal((element.X, element.Y), (pts[0].X, pts[0].Y));                        // 端点只有一个出处
         Assert.Equal((element.X2, element.Y2), (pts[^1].X, pts[^1].Y));
-        Assert.NotEqual(0, element.EndIn!.DX);                            // 终点的进柄留着：最后一段的弯度就靠它
+        Assert.NotEqual(0, element.StartOut!.DX);  // 第一下拖出的出柄还在：它决定 1→2 怎么离开起点
         return true;
     });
 
@@ -175,6 +174,52 @@ public class CurveToolTests
         Assert.Equal(element.Y - before.Y, element.Nodes[0].Y - before.Item4);
         Assert.Equal((86d, 46d), (element.X2, element.Y2));                                // 另一端同样跟着
         Assert.Equal((-8d, 0d), (element.Nodes[0].InX, element.Nodes[0].InY));             // 弯度一点没变
+        return true;
+    });
+
+    [Fact]
+    public void DraggingTheSecondNodeBendsTheSegmentAlreadyDrawn() => OnSta(() =>
+    {
+        // 这条钉子就是本次纠正的正身：拖当前点改的是【刚画出来的那一段】，不是下一段。
+        // 之前实现成"改下一段"，用户看到的就是第二下之后线被钉死、怎么拖都不弯。
+        var vm = Open();
+        vm.IsBezierTool = true;
+        vm.BeginPath(10, 10);
+        vm.EndPathSegment();
+        vm.BeginPath(90, 10);
+        var element = Assert.Single(vm.Template.Elements);
+        Assert.True(CurveGeometry.Segments(element)[0].IsStraight);              // 第二下还没拖：这一段是直的
+
+        vm.DragPath(70, 40);                                                     // 往左下方拖这一点
+        var seg = CurveGeometry.Segments(element)[0];
+        Assert.False(seg.IsStraight);
+        Assert.Equal((70d, 40d), (seg.CX2, seg.CY2));                            // 控制点正落在拖的方向上
+        vm.EndPathSegment();
+        vm.BeginPath(150, 40);                                                   // 第三下：第二点从"终点"变成中间节点
+        var mid = CurveGeometry.NodesOf(element)[1];
+        Assert.Equal((-20d, 30d), (mid.InX, mid.InY));                            // 刚拖的那根进柄存住了
+        Assert.Equal((20d, -30d), (mid.OutX, mid.OutY));                          // 出柄是它的反向＝平滑延续，下一段不会突然折
+        return true;
+    });
+
+    [Fact]
+    public void HoldingCtrlConstrainsTheSegmentToHorizontalOrVertical() => OnSta(() =>
+    {
+        // CorelDRAW 的贝塞尔工具自带文案：「按住 Ctrl 键单击可限制线条」（VGCoreIntl.dll）。
+        // 用户自己更正过：Shift 不是这个键，所以这里钉的是 Ctrl 那一条。
+        var vm = Open();
+        vm.IsBezierTool = true;
+        vm.BeginPath(10, 10);
+        vm.EndPathSegment();
+        vm.BeginPath(90, 60, constrain: true);        // 横向走得更多 → 这一笔被夹成水平
+
+        var element = Assert.Single(vm.Template.Elements);
+        Assert.Equal(90, element.X2);
+        Assert.Equal(10, element.Y2);                 // 不是 60：斜的那一下不给落
+
+        vm.DragPath(60, 40, constrain: true);         // 拖柄也一样：只留水平那根分量
+        var node = CurveGeometry.NodesOf(element)[1];
+        Assert.Equal((-30d, 0d), (node.InX, node.InY));
         return true;
     });
 

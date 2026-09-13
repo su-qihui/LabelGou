@@ -303,8 +303,10 @@ public sealed class TemplateEditorControl : FrameworkElement
                 e.Handled = true;
                 return;
             }
-            // 本工具下 Shift 的含义换成"这一节要直"（用户 2026-09-13 定的口径），与选择工具的"绕中心缩放"不冲突。
-            if (!vm.BeginPath(ToMmX(point.X), ToMmY(point.Y), shift)) return;
+            // 按下即落点：只点不拖＝尖角＝直线段；拖开＝这一点带柄＝上一段跟着弯（与 CorelDRAW 同口径）。
+    // Ctrl＝限制线条（CorelDRAW 贝塞尔工具的自带文案就是这么写的），夹成水平或垂直。
+            var constrain = Keyboard.Modifiers.HasFlag(ModifierKeys.Control);
+            if (!vm.BeginPath(ToMmX(point.X), ToMmY(point.Y), constrain)) return;
             _dragging = true;
             CaptureMouse();
             e.Handled = true;
@@ -340,7 +342,7 @@ public sealed class TemplateEditorControl : FrameworkElement
         var point = e.GetPosition(this);
         if (_dragging)
         {
-            if (vm.IsBezierTool) vm.DragPath(ToMmX(point.X), ToMmY(point.Y), Keyboard.Modifiers.HasFlag(ModifierKeys.Shift));
+            if (vm.IsBezierTool) vm.DragPath(ToMmX(point.X), ToMmY(point.Y), Keyboard.Modifiers.HasFlag(ModifierKeys.Control));
             else vm.DragTo(ToMmX(point.X), ToMmY(point.Y));
             return;
         }
