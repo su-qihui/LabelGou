@@ -1770,6 +1770,7 @@ public sealed class EditableElement : ObservableObject
         ApplyInkPresetCommand = new RelayCommand(p => { if (p is InkPreset preset) InkColor = preset.Color; });
         ResetInkCommand = new RelayCommand(() => InkColor = null, () => TargetInk is not null);
         OpenPenEditorCommand = new RelayCommand(() => OpenInkEditor(false));
+        NoInkCommand = new RelayCommand(ApplyNoInk, () => EditingFill ? _element.FillColor is not null : _element.ShowsStroke);
         OpenFillEditorCommand = new RelayCommand(() => OpenInkEditor(true));
         StraightenCommand = new RelayCommand(() => CurveEdit(CurveGeometry.Straighten), () => IsCurve);
         FlattenToEndsCommand = new RelayCommand(() => CurveEdit(Flatten), () => IsCurve);
@@ -2118,6 +2119,18 @@ public sealed class EditableElement : ObservableObject
 
     /// <summary>面板上那两颗色块（描边、填充）各自按下去做的事：定好目标再开弹层。</summary>
     public ICommand OpenPenEditorCommand { get; }
+
+    /// <summary>
+    /// 弹层里那颗"无颜色"（斜杠块，CorelDRAW 的写法）：<strong>关掉此刻在编辑的这一支</strong>——
+    /// 从填充那颗进来就取消填充，从描边那颗进来就不画边框。已经关着时这颗是灰的，不给一颗点了没反应的按钮。
+    /// </summary>
+    public ICommand NoInkCommand { get; }
+
+    private void ApplyNoInk()
+    {
+        if (EditingFill) FillEnabled = false;
+        else ShowsStroke = false;
+    }
     public ICommand OpenFillEditorCommand { get; }
 
     // ---------- 描边宽度（面板上写成 "5.0 mm"，与 CorelDRAW 那颗组合框同形）----------

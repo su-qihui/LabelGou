@@ -177,6 +177,28 @@ public sealed class RectAppearanceTests : IDisposable
     });
 
     [Fact]
+    public void TheNoColourSwatchTurnsOffWhicheverInkIsBeingEdited() => OnSta(() =>
+    {
+        var (_, panel, element) = Open(Box());
+
+        panel.OpenFillEditorCommand.Execute(null);
+        Assert.False(panel.NoInkCommand.CanExecute(null));                    // 本来就没填充：不给一颗点了没反应的按钮
+        panel.FillEnabled = true;
+        Assert.True(panel.NoInkCommand.CanExecute(null));
+        panel.NoInkCommand.Execute(null);
+        Assert.Null(element.FillColor);                                       // 关掉的是填充
+        Assert.True(element.ShowsStroke);                                     // 描边那支一个字没被碰
+
+        panel.OpenPenEditorCommand.Execute(null);
+        Assert.True(panel.NoInkCommand.CanExecute(null));                     // 描边还开着，能关
+        panel.NoInkCommand.Execute(null);
+        Assert.False(element.ShowsStroke);
+        Assert.Null(element.FillColor);
+        Assert.False(panel.NoInkCommand.CanExecute(null));                    // 已经关了，灰掉
+        return true;
+    });
+
+    [Fact]
     public void TheStrokeWidthBoxAcceptsTypedUnitsAndRefusesToQuietlyZero() => OnSta(() =>
     {
         var (_, panel, element) = Open(Box());
