@@ -137,6 +137,67 @@ public sealed class RectAppearanceTests : IDisposable
     });
 
     [Fact]
+    public void TheTwoSwatchesEachShowTheirOwnInkWhateverThePopupIsEditing() => OnSta(() =>
+    {
+        var (_, panel, element) = Open(Box());
+        panel.FillEnabled = true;
+        panel.EditingFill = true;
+        panel.InkC = 100;
+        panel.InkK = 0;                                             // 填色＝纯青
+        panel.EditingFill = false;
+        panel.InkM = 100;
+        panel.InkK = 0;                                             // 笔色＝纯品红
+
+        // 两颗色块各看各的：从哪颗进来编辑都不许把另一颗也刷成同一个颜色
+        Assert.Equal("#ff00ff", Hex(panel.PenSwatch));
+        Assert.Equal("#00ffff", Hex(panel.FillSwatch));
+        Assert.Contains("#ff00ff", panel.PenSummary, StringComparison.Ordinal);
+        Assert.Contains("#00ffff", panel.FillSummary, StringComparison.Ordinal);
+        Assert.True(element.InkColor!.M == 100 && element.FillColor!.C == 100);
+        return true;
+    });
+
+    [Fact]
+    public void EachSwatchOpensTheOneSharedEditorPointedAtItself() => OnSta(() =>
+    {
+        var (_, panel, _) = Open(Box());
+
+        panel.OpenFillEditorCommand.Execute(null);
+        Assert.True(panel.InkPopupOpen);
+        Assert.True(panel.EditingFill);                             // 从填充那颗进来＝这一组控件改填充
+        Assert.Equal("正在编辑：填充", panel.InkTargetText);
+
+        panel.OpenPenEditorCommand.Execute(null);
+        Assert.True(panel.InkPopupOpen);                            // 弹层不关，只换目标
+        Assert.False(panel.EditingFill);
+        panel.InkC = 100;                                           // 这一路落笔色，不碰填充
+        Assert.Equal(100, panel.Element.InkColor!.C);
+        Assert.Null(panel.Element.FillColor);
+        return true;
+    });
+
+    [Fact]
+    public void TheStrokeWidthBoxAcceptsTypedUnitsAndRefusesToQuietlyZero() => OnSta(() =>
+    {
+        var (_, panel, element) = Open(Box());
+        Assert.Equal("0.35 mm", panel.ThicknessText);               // 默认那支笔的宽度，写法照 CorelDRAW 的"5.0 mm"
+
+        panel.ThicknessText = "0.8";
+        Assert.Equal(0.8d, element.ThicknessMm);
+        panel.ThicknessText = "1.25 mm";
+        Assert.Equal(1.25d, element.ThicknessMm);
+        panel.ThicknessText = "2 毫米";
+        Assert.Equal(2d, element.ThicknessMm);
+
+        panel.ThicknessText = "糊了";                                // 认不出：退回上一个数，绝不静默清成 0
+        Assert.Equal(2d, element.ThicknessMm);
+        Assert.Equal("2 mm", panel.ThicknessText);
+        panel.ThicknessText = "";
+        Assert.Equal(2d, element.ThicknessMm);
+        return true;
+    });
+
+    [Fact]
     public void StrokeOffIsTheOnlyThingWrittenAndComesOffAgainCleanly() => OnSta(() =>
     {
         var plain = TemplateStore.ToJson(TemplateOf(Box()));
@@ -323,6 +384,13 @@ public sealed class RectAppearanceTests : IDisposable
 
         Assert.DoesNotContain("\"fillColor\"", TemplateStore.ToJson(template), StringComparison.Ordinal);
         Assert.DoesNotContain("\"roundedCorners\"", TemplateStore.ToJson(template), StringComparison.Ordinal);
+    }
+
+    /// <summary>画刷的 RGB 拼成小写 #rrggbb（WPF 的 Media.Color 自己没这个现成方法）。</summary>
+    private static string Hex(Brush brush)
+    {
+        var c = ((SolidColorBrush)brush).Color;
+        return $"#{c.R:x2}{c.G:x2}{c.B:x2}";
     }
 
     private static (int Index, int Value) Darkest(byte[] plane)

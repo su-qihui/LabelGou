@@ -278,9 +278,12 @@
                                 <TextBox Grid.Row="6" Grid.Column="1" Margin="0,0,0,4" Text="{Binding Editing.Height, StringFormat={}{0:0.##}}"
                                          Visibility="{Binding Editing.HasBox, Converter={StaticResource BoolVis}}" />
 
-                                <TextBlock Grid.Row="7" Text="线宽(mm)" Style="{StaticResource Caption}" />
+                                <!--  矩形不在这格填线宽：第 17 行那颗「描边宽度」组合框才是它的位置（同一个 ThicknessMm，两处出现迟早有一处不跳）。  -->
+                                <TextBlock Grid.Row="7" Text="线宽(mm)" Style="{StaticResource Caption}"
+                                           Visibility="{Binding Editing.IsRect, Converter={StaticResource BoolVisInv}}" />
                                 <TextBox Grid.Row="7" Grid.Column="1" Margin="0,0,0,4" Text="{Binding Editing.ThicknessMm, StringFormat={}{0:0.###}}"
-                                         ToolTip="印刷常用 0.25~0.5" />
+                                         ToolTip="印刷常用 0.25~0.5"
+                                         Visibility="{Binding Editing.IsRect, Converter={StaticResource BoolVisInv}}" />
 
                                 <TextBlock Grid.Row="8" Text="字号(pt)" Style="{StaticResource Caption}" Visibility="{Binding Editing.IsText, Converter={StaticResource BoolVis}}" />
                                 <StackPanel Grid.Row="8" Grid.Column="1" Orientation="Horizontal" Margin="0,0,0,4"
@@ -335,20 +338,19 @@
                                            Visibility="{Binding Editing.CanTintInk, Converter={StaticResource BoolVis}}" />
                                 <StackPanel Grid.Row="15" Grid.Column="1" Orientation="Horizontal" Margin="0,4,0,4"
                                             Visibility="{Binding Editing.CanTintInk, Converter={StaticResource BoolVis}}">
-                                    <ToggleButton x:Name="InkPicker" Width="30" Height="18" VerticalAlignment="Center"
-                                                  Background="{Binding Editing.InkSwatch}" BorderBrush="#8A8F98"
-                                                  ToolTip="选调这一支墨的颜色。唛头是印刷活，分量按 CMYK 百分数填。" />
-                                    <TextBlock Text="{Binding Editing.InkSummary}" VerticalAlignment="Center" Margin="6,0,0,0" FontSize="11" />
+                                    <Button x:Name="InkPicker" Width="30" Height="18" VerticalAlignment="Center"
+                                            Background="{Binding Editing.PenSwatch}" BorderBrush="#8A8F98"
+                                            Command="{Binding Editing.OpenPenEditorCommand}"
+                                            ToolTip="选调描边（笔色）这一支墨。唛头是印刷活，分量按 CMYK 百分数填。" />
+                                    <TextBlock Text="{Binding Editing.PenSummary}" VerticalAlignment="Center" Margin="6,0,0,0" FontSize="11" />
                                     <Popup PlacementTarget="{Binding ElementName=InkPicker}" Placement="Top"
                                            HorizontalOffset="-482" VerticalOffset="-6"
                                            StaysOpen="False" AllowsTransparency="True"
-                                           IsOpen="{Binding IsChecked, ElementName=InkPicker, Mode=TwoWay}">
+                                           IsOpen="{Binding Editing.InkPopupOpen, Mode=TwoWay}">
                                         <Border Background="White" BorderBrush="#B7BCC5" BorderThickness="1" Padding="10" Width="512">
                                             <StackPanel>
-                                        <CheckBox Content="下面这一组改的是「填充色」（不勾＝笔色）" Margin="0,0,0,8"
-                                                  IsChecked="{Binding Editing.EditingFill, Mode=TwoWay}"
-                                                  Visibility="{Binding Editing.IsRect, Converter={StaticResource BoolVis}}"
-                                                  ToolTip="矩形可以又有笔色（描边）又有填充色。勾上它，下面的色块、CMYK/RGB、调色盘、常用墨全部改成编辑填充色；&#10;不勾就回到编辑笔色。填充开关在属性面板「矩形」那一行。" />
+                                        <TextBlock Text="{Binding Editing.InkTargetText}" Margin="0,0,0,8" FontSize="11" FontWeight="Bold"
+                                                   Visibility="{Binding Editing.IsRect, Converter={StaticResource BoolVis}}" />
                                             <Grid>
                                                 <Grid.ColumnDefinitions>
                                                     <ColumnDefinition Width="Auto" />
@@ -565,38 +567,59 @@
 
                                 <!--  矩形外观（第 50 棒）。描边宽度仍用上面第 7 行那个「线宽」，这里不另开一格——
                                       同一份数据在面板上出现两次，迟早出现改一处另一处不跳的假象。  -->
+                                <!--  矩形外观（第 50 棒，照 CorelDRAW 的样子摆）：两支墨各自一颗色块、描边宽度挨着描边开关、
+                                      圆角是"四颗角 + 旁边一颗锁"（锁＝四个角一起调，与 CDR 那颗挂锁同义）。  -->
                                 <TextBlock Grid.Row="17" Text="矩形" Style="{StaticResource Caption}"
                                            Visibility="{Binding Editing.IsRect, Converter={StaticResource BoolVis}}" />
                                 <StackPanel Grid.Row="17" Grid.Column="1" Margin="0,4,0,4"
                                             Visibility="{Binding Editing.IsRect, Converter={StaticResource BoolVis}}">
                                     <StackPanel Orientation="Horizontal">
-                                        <CheckBox Content="填充" VerticalAlignment="Center"
-                                                  IsChecked="{Binding Editing.FillEnabled}"
+                                        <CheckBox Content="填充" VerticalAlignment="Center" IsChecked="{Binding Editing.FillEnabled}"
                                                   ToolTip="矩形内部上色。关掉＝不填充（与老模板同形，一个字段都不写）。" />
-                                        <CheckBox Content="描边" Margin="12,0,0,0" VerticalAlignment="Center"
+                                        <Button Width="30" Height="18" Margin="6,0,0,0" VerticalAlignment="Center"
+                                                Background="{Binding Editing.FillSwatch}" BorderBrush="#8A8F98"
+                                                Command="{Binding Editing.OpenFillEditorCommand}"
+                                                ToolTip="选调填充这一支墨。它和左边那颗「描边」是两支独立的墨，改一支不动另一支。" />
+                                        <TextBlock Text="{Binding Editing.FillSummary}" VerticalAlignment="Center" Margin="6,0,0,0" FontSize="11" />
+                                        <CheckBox Content="描边" Margin="16,0,0,0" VerticalAlignment="Center"
                                                   IsChecked="{Binding Editing.ShowsStroke}"
-                                                  ToolTip="画不画那条边框线，宽度就是上面那格「线宽(mm)」。关掉后若又没填色，这个矩形在纸上什么都不剩（校验会提醒）。" />
-                                        <TextBlock Text="圆角(mm)" Style="{StaticResource Caption}" Margin="14,0,4,0"
-                                                   VerticalAlignment="Center" />
-                                        <TextBox Width="46" Text="{Binding Editing.CornerRadiusMm, StringFormat={}{0:0.##}}"
-                                                 ToolTip="0 = 直角。超过短边一半时按短边一半画（再大就成了胶囊，不是更圆），校验会说明。" />
-                                        <CheckBox Content="全部角" Margin="12,0,0,0" VerticalAlignment="Center"
-                                                  IsChecked="{Binding Editing.CornersAll}"
-                                                  ToolTip="勾上＝四个角一起圆（CorelDRAW 的「全部圆角」）。取消勾后可以在下面逐角挑。" />
+                                                  ToolTip="画不画那条边框线。关掉后若又没填充，这个矩形在纸上什么都不剩（校验会提醒）。" />
+                                        <ComboBox IsEditable="True" Width="88" Margin="6,0,0,0" VerticalAlignment="Center"
+                                                  Text="{Binding Editing.ThicknessText, UpdateSourceTrigger=LostFocus}"
+                                                  ItemsSource="{x:Static vm:EditableElement.ThicknessPresets}"
+                                                  ItemStringFormat="{}{0:0.##} mm"
+                                                  ToolTip="描边粗细（毫米）。直接打字——0.35、0.35 mm、0.35毫米 都认；下拉里是常用档。&#10;认不出的写法退回上一个数，不会把框悄悄清成 0。" />
                                     </StackPanel>
-                                    <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
-                                        <TextBlock Text="圆哪几个角" Style="{StaticResource Caption}" VerticalAlignment="Center"
-                                                   Margin="0,0,6,0" />
-                                        <ToggleButton Content="左上" MinWidth="40" Margin="0,0,4,0"
-                                                      IsChecked="{Binding Editing.CornerTopLeft}" />
-                                        <ToggleButton Content="右上" MinWidth="40" Margin="0,0,4,0"
-                                                      IsChecked="{Binding Editing.CornerTopRight}" />
-                                        <ToggleButton Content="右下" MinWidth="40" Margin="0,0,4,0"
-                                                      IsChecked="{Binding Editing.CornerBottomRight}" />
-                                        <ToggleButton Content="左下" MinWidth="40"
-                                                      IsChecked="{Binding Editing.CornerBottomLeft}" />
-                                        <TextBlock Text="（半径 &gt; 0 才有可见效果）" VerticalAlignment="Center"
-                                                   Margin="8,0,0,0" FontSize="10" Foreground="#8A8F98" />
+                                    <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                                        <TextBlock Text="圆角(mm)" Style="{StaticResource Caption}" VerticalAlignment="Center" Margin="0,0,4,0" />
+                                        <TextBox Width="46" VerticalAlignment="Center"
+                                                 Text="{Binding Editing.CornerRadiusMm, StringFormat={}{0:0.##}}"
+                                                 ToolTip="0 = 直角。超过短边一半时按短边一半画（再大就成了胶囊，不是更圆），校验会说明。" />
+                                        <Grid Margin="14,0,0,0">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="4" />
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="8" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="4" />
+                                                <RowDefinition Height="Auto" />
+                                            </Grid.RowDefinitions>
+                                            <ToggleButton Content="左上" MinWidth="42" Grid.Row="0" Grid.Column="0"
+                                                          IsChecked="{Binding Editing.CornerTopLeft}" />
+                                            <ToggleButton Content="右上" MinWidth="42" Grid.Row="0" Grid.Column="2"
+                                                          IsChecked="{Binding Editing.CornerTopRight}" />
+                                            <ToggleButton Content="左下" MinWidth="42" Grid.Row="2" Grid.Column="0"
+                                                          IsChecked="{Binding Editing.CornerBottomLeft}" />
+                                            <ToggleButton Content="右下" MinWidth="42" Grid.Row="2" Grid.Column="2"
+                                                          IsChecked="{Binding Editing.CornerBottomRight}" />
+                                            <ToggleButton Content="四个角一起" Grid.Row="0" Grid.RowSpan="3" Grid.Column="4"
+                                                          VerticalAlignment="Center" IsChecked="{Binding Editing.CornersAll}"
+                                                          ToolTip="就是 CorelDRAW 那颗锁：锁上＝四个角一起圆（这时下面四颗没意义）；&#10;打开＝用旁边四颗逐角挑要圆哪几个。" />
+                                        </Grid>
                                     </StackPanel>
                                 </StackPanel>
                             </Grid>

@@ -1748,6 +1748,20 @@ public sealed class EditableElement : ObservableObject
     private string _lastCapturedFor = string.Empty;
     private DateTime _lastCaptureAt = DateTime.MinValue;
 
+    /// <summary>取色弹层开着的与否。<strong>两颗色块（描边、填充）共用这一个弹层</strong>，所以开合状态放在这儿，不挂在某颗按钮上。</summary>
+    public bool InkPopupOpen
+    {
+        get => _inkPopupOpen;
+        set
+        {
+            if (_inkPopupOpen == value) return;
+            _inkPopupOpen = value;
+            Done();
+        }
+    }
+
+    private bool _inkPopupOpen;
+
     public EditableElement(TemplateElement element, Action capture, Action changed)
     {
         _element = element ?? throw new ArgumentNullException(nameof(element));
@@ -1755,6 +1769,8 @@ public sealed class EditableElement : ObservableObject
         _changed = changed;
         ApplyInkPresetCommand = new RelayCommand(p => { if (p is InkPreset preset) InkColor = preset.Color; });
         ResetInkCommand = new RelayCommand(() => InkColor = null, () => TargetInk is not null);
+        OpenPenEditorCommand = new RelayCommand(() => OpenInkEditor(false));
+        OpenFillEditorCommand = new RelayCommand(() => OpenInkEditor(true));
         StraightenCommand = new RelayCommand(() => CurveEdit(CurveGeometry.Straighten), () => IsCurve);
         FlattenToEndsCommand = new RelayCommand(() => CurveEdit(Flatten), () => IsCurve);
         SyncPickerFromColour();   // 选中一行时调色盘要停在那支墨真正的位置，别默认给左上角
@@ -1852,6 +1868,31 @@ public sealed class EditableElement : ObservableObject
     }
 
     private LabelColor InkOrBlack => TargetInk ?? LabelColor.Black;
+
+    /// <summary>
+    /// 面板上那两颗色块与它们旁边那行字，<strong>永远各自显示自己那支墨</strong>（描边那颗看 <c>InkColor</c>、
+    /// 填充那颗看 <c>FillColor</c>），与"弹层此刻在编辑谁"无关——否则两行会同时变成同一个颜色。
+    /// </summary>
+    public Brush PenSwatch => RenderRules.InkOf(_element.InkColor);
+    public Brush FillSwatch => RenderRules.InkOf(_element.FillColor);
+
+    public string PenSummary => InkText(_element.InkColor, "黑（默认）");
+    public string FillSummary => InkText(_element.FillColor, "不填充");
+
+    private static string InkText(LabelColor? ink, string whenNone)
+        => ink is { } v ? $"{v.ToPrintText()}　{v.ToHex()}" : whenNone;
+
+    /// <summary>弹层顶部那行字：说清楚这一组控件现在改的是谁（从哪颗色块进来就改谁）。</summary>
+    public string InkTargetText => EditingFill ? "正在编辑：填充" : "正在编辑：描边（笔色）";
+
+    /// <summary>那颗色块按下去要编辑谁，并把弹层打开。弹层只有一份，两行共用——抄两份迟早各改各的。</summary>
+    private void OpenInkEditor(bool fill)
+    {
+        EditingFill = fill;                               // 同目标时 setter 会早退，所以下面无条件同步一次
+        SyncPickerFromColour();
+        InkPopupOpen = true;
+    }
+
 
     /// <summary>色块画成什么色。<paramref name="InkColor"/> 为空时也画黑——面板上要看得见"这支是黑"，不许留白。</summary>
     public Brush InkSwatch => RenderRules.InkOf(TargetInk);
@@ -2074,6 +2115,45 @@ public sealed class EditableElement : ObservableObject
 
     /// <summary>「恢复默认（黑）」＝把这格清空（null），存盘时这个字段整个不写，与老模板逐字同形。</summary>
     public ICommand ResetInkCommand { get; }
+
+    /// <summary>面板上那两颗色块（描边、填充）各自按下去做的事：定好目标再开弹层。</summary>
+    public ICommand OpenPenEditorCommand { get; }
+    public ICommand OpenFillEditorCommand { get; }
+
+    // ---------- 描边宽度（面板上写成 "5.0 mm"，与 CorelDRAW 那颗组合框同形）----------
+
+    /// <summary>常用线宽（毫米）。唛头这活就那几档，给出来省得每次打字。</summary>
+    public static IReadOnlyList<double> ThicknessPresets { get; } =
+        new double[] { 0.1, 0.2, 0.35, 0.5, 0.75, 1, 1.5, 2, 3, 5 };
+
+    /// <summary>
+    /// 线宽那一格的文本。<strong>set 只在读得出数时才落值</strong>：读不出（"abc"、空、负数）就原样退回
+    /// 上一个数并重画这一格——不许把用户的框悄悄清成 0，那是静默降级。
+    /// </summary>
+    public string ThicknessText
+    {
+        get => _element.ThicknessMm.ToString("0.##", CultureInfo.InvariantCulture) + " mm";
+        set
+        {
+            var v = ParseMm(value);
+            if (v is null || Near(v.Value, _element.ThicknessMm))
+            {
+                Done();                                       // 含解析失败：把这一格刷回真值，别留一个假数字在框里
+                return;
+            }
+            Prepare(nameof(ThicknessMm));
+            _element.ThicknessMm = Math.Max(0.01, Math.Round(v.Value, 3));
+            Done();
+        }
+    }
+
+    /// <summary>"0.35"、"0.35 mm"、"0.35毫米"、全角小数点都认；认不出返回 null。</summary>
+    private static double? ParseMm(string? raw)
+    {
+        if (raw is null) return null;
+        var t = raw.Replace("毫米", " ").Replace("mm", " ").Replace("。", ".").Trim();
+        return double.TryParse(t, NumberStyles.Float, CultureInfo.InvariantCulture, out var v) && v > 0 ? v : null;
+    }
 
     // ---------- 矩形外观：填充 / 描边 / 圆角（第 50 棒）----------
 
@@ -2342,6 +2422,8 @@ public sealed class EditableElement : ObservableObject
             nameof(EditingFill), nameof(FillEnabled), nameof(ShowsStroke), nameof(CornerRadiusMm),
             nameof(CornerTopLeft), nameof(CornerTopRight), nameof(CornerBottomRight), nameof(CornerBottomLeft),
             nameof(CornersAll), nameof(IsRect),
+            nameof(PenSwatch), nameof(FillSwatch), nameof(PenSummary), nameof(FillSummary),
+            nameof(InkTargetText), nameof(InkPopupOpen), nameof(ThicknessText),
         })
         {
             Raise(name);
