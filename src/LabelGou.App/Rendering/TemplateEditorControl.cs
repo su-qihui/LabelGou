@@ -218,6 +218,13 @@ public sealed class TemplateEditorControl : FrameworkElement
             }
 
             if (!selected) return;
+            // 第 53 棒：形状工具选中多边形——顶点画出来，用户才知道能抓哪几个（抓了才触发"转曲线再拖"）。
+            if (element.Kind == ElementKind.Polygon && _vm?.IsNodeTool == true)
+            {
+                foreach (var v in Core.Templates.ShapeGeometry.PolygonPoints(element))
+                    DrawHandle(dc, new Point(ToDiuX(v.X), ToDiuY(v.Y)));
+                return;
+            }
             if (element.Kind == ElementKind.Line)
             {
                 // 画到一半的那条也要有节点方块（哪怕还没拖出柄）：CDR 就是点一下就看到点落住了。
@@ -348,7 +355,7 @@ public sealed class TemplateEditorControl : FrameworkElement
     /// <strong>矩形那条从前被写成"在贝塞尔那个 if 块里再判一次 IsRectTool"，而两个开关互斥，于是永远进不去，
     /// 用户看到的就是"勾了矩形框、在画布上拖，什么都不画"</strong>（第 50 棒，VM 层 16 条测试全绿也照不出来）。
     /// </summary>
-    internal static ToolDown TryToolDown(TemplateEditorViewModel vm, double xMm, double yMm, bool doubleClick, bool ctrl, bool shift = false)
+    internal static ToolDown TryToolDown(TemplateEditorViewModel vm, double xMm, double yMm, bool doubleClick, bool ctrl, bool shift = false, double nodeRadiusMm = 1)
     {
         switch (vm.Tool)
         {
@@ -371,6 +378,16 @@ public sealed class TemplateEditorControl : FrameworkElement
                 // Shift＝从中心绘制（「按住 Shift 键并拖动可从中心绘制」）。
                 return vm.BeginShape(vm.Tool, xMm, yMm, shift, ctrl) ? ToolDown.Drag : ToolDown.Handled;
 
+            case TemplateEditorViewModel.EditorTool.Shape:
+                // 转换点工具（第 53 棒，CDR「编辑对象的节点」）：双击段加点、多边形抓顶点先转曲线再拖；
+                // 其余（拖点、拖柄、整只挪）交回常规路径——那套第 49 棒就有了，不造第二份。
+                return vm.ShapeDown(xMm, yMm, doubleClick, nodeRadiusMm) switch
+                {
+                    TemplateEditorViewModel.NodeDown.Drag => ToolDown.Drag,
+                    TemplateEditorViewModel.NodeDown.Handled => ToolDown.Handled,
+                    _ => ToolDown.None,
+                };
+
             default:
                 return ToolDown.None;
         }
@@ -389,7 +406,7 @@ public sealed class TemplateEditorControl : FrameworkElement
         // 不需要键）；**Ctrl = 移动时锁水平或垂直**。44 棒把 Shift 实现成"等比"是错的，已翻案。
         var shift = Keyboard.Modifiers.HasFlag(ModifierKeys.Shift);
         switch (TryToolDown(vm, ToMmX(point.X), ToMmY(point.Y), e.ClickCount == 2,
-                    Keyboard.Modifiers.HasFlag(ModifierKeys.Control), shift))
+                    Keyboard.Modifiers.HasFlag(ModifierKeys.Control), shift, HandleRadiusMm))
         {
             case ToolDown.Drag:
                 _dragging = true;
@@ -437,7 +454,7 @@ public sealed class TemplateEditorControl : FrameworkElement
             return;
         }
 
-        if (vm.IsBezierTool || vm.IsShapeTool)
+        if (vm.IsBezierTool || vm.IsShapeTool || vm.IsNodeTool)
         {
             Cursor = Cursors.Cross;
             return;
@@ -546,6 +563,13 @@ public sealed class TemplateEditorControl : FrameworkElement
         }
         if (e.Key == Key.Delete)
         {
+            // 形状工具且已选中曲线上的一个点：删的是这个点，不是整条元素（CDR 同口径）。
+            if (vm.IsNodeTool && vm.SelectedRow?.Element.Kind == ElementKind.Line && vm.CurrentNodeIndex >= 0)
+            {
+                vm.RemoveCurrentNode();
+                e.Handled = true;
+                return;
+            }
             if (vm.RemoveCommand.CanExecute(null)) vm.RemoveCommand.Execute(null);
             e.Handled = true;
             return;

@@ -154,6 +154,15 @@ public sealed class TemplateElement
     public CurveHandle? EndIn { get; set; }
 
     /// <summary>
+    /// 曲线是否<strong>闭合</strong>（第 53 棒：终点回到起点再补一段收口，多边形/矩形"转换为曲线"就落在这）。
+    /// <para>只对 <see cref="ElementKind.Line"/> 有意义；false = 逐字旧行为（老文件缺字段读出来就是它，
+    /// 新文件不闭合也不写这一行——<c>WhenWritingDefault</c> 对 bool 恰好就是"false 不上盘"）。
+    /// 闭合时起点与终点是同一个可见点：<c>CurveGeometry.MoveNode</c> 拖一个另一个跟着走。</para>
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool Closed { get; set; }
+
+    /// <summary>
     /// 矩形的内填充色（第 50 棒）。<strong>null = 不填充</strong>——缺字段就是从前那只只有边框的框，
     /// 老模板文件不用更新（<c>WhenWritingNull</c> 会整条省掉）。
     /// </summary>
@@ -357,7 +366,9 @@ public sealed class LabelTemplate
     /// <remarks>v10 = 第 51 棒加两种形状元素 <c>Ellipse</c> / <c>Polygon</c> 与 <see cref="TemplateElement.PolygonSides"/>
     /// （默认 5，非默认才写盘）。<strong>老文件里既没有这两种 kind 也没有这个字段，读进来行为逐字不变</strong>；
     /// 它们的填充 / 描边 / 笔色用的就是 v8 那几件字段，不新造第二套外观。</remarks>
-    public const int CurrentSchemaVersion = 10;
+    /// <remarks>v11 = 第 53 棒给曲线加 <see cref="TemplateElement.Closed"/>（闭合标志，多边形/矩形"转换为曲线"的落点）。
+    /// <strong>缺字段 = false = 开口曲线 = 逐字旧行为</strong>，现有模板文件还是一个都不用更新。</remarks>
+    public const int CurrentSchemaVersion = 11;
 
     /// <summary>稳定标识，如 <c>builtin.standard-100x80</c>。用户模板用 <c>user.xxx</c>。</summary>
     public string Id { get; set; } = "user." + Guid.NewGuid().ToString("N")[..8];
@@ -610,8 +621,8 @@ public static class TemplateValidator
                     $"{tag} 的文字拉伸 {e.TextScaleX:0.##} × {e.TextScaleY:0.##} 不在 {MinStretch:0.#}~{MaxStretch:0.#} 之间。", i));
             // 旋转/拉伸探出纸的越界，上面 OccupiedBoundsOf 那条已经一并拦了（不在这重复判）。
 
-            // —— 第 50 棒：矩形的填充 / 描边 / 圆角；第 51 棒：椭圆与多边形共用这套外观 ——
-            if (ShapeGeometry.IsBoxShape(e) && !e.ShowsStroke && e.FillColor is null)
+            // —— 第 50 棒：矩形的填充 / 描边 / 圆角；第 51 棒：椭圆与多边形共用这套外观；第 53 棒：闭合曲线也算 ——
+            if ((ShapeGeometry.IsBoxShape(e) || (e.Kind == ElementKind.Line && e.Closed)) && !e.ShowsStroke && e.FillColor is null)
                 issues.Add(new TemplateIssue(IssueLevel.Warning,
                     $"{tag} 既不描边也不填充，纸上看不到任何东西（要隐形占位的话，留描边把线宽设小更稳）。", i));
             if (e.Kind == ElementKind.Polygon && e.PolygonSides is { } sides && (sides < ShapeGeometry.MinSides || sides > ShapeGeometry.MaxSides))

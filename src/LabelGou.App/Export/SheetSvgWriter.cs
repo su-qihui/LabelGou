@@ -267,7 +267,10 @@ public static class SheetSvgWriter
                     if (line.Arc is { Count: > 0 } arc)
                     {
                         // 直线段写 L、弧段写 C：拿去 CorelDRAW 里挑中还是一个个节点，而不是一堆没用的控制点。
-                        builder.Path(ArcCommands(arc), null, Stroke(line.ThicknessMm, RenderRules.InkHex(line.Ink)));
+                        // 第 53 棒：闭合曲线补收口 Z、认填充与描边开关——判据全在 Core 的段序列/Closed 里，这里只翻译。
+                        builder.Path(ArcCommands(arc, line.Closed),
+                            line.Closed ? FillPaint(line.Fill) : null,
+                            line.Stroked ? Stroke(line.ThicknessMm, RenderRules.InkHex(line.Ink)) : null);
                     }
                     else
                     {
@@ -555,7 +558,7 @@ public static class SheetSvgWriter
     /// 拿去 CorelDRAW 里挑中就是节点，而不是一堆控制点。<strong>形状仍由 Core 的
     /// <c>CurveGeometry.Segments</c> 定</strong>，这里只做词汇翻译，不再算一遍弧。
     /// </summary>
-    private static List<SvgPathCommand> ArcCommands(IReadOnlyList<Core.Templates.CurveSegment> arc)
+    private static List<SvgPathCommand> ArcCommands(IReadOnlyList<Core.Templates.CurveSegment> arc, bool closed = false)
     {
         var commands = new List<SvgPathCommand>(arc.Count + 1)
         {
@@ -567,6 +570,7 @@ public static class SheetSvgWriter
                 ? new SvgPathCommand('L', new[] { s.X2, s.Y2 })
                 : new SvgPathCommand('C', new[] { s.CX1, s.CY1, s.CX2, s.CY2, s.X2, s.Y2 }));
         }
+        if (closed) commands.Add(new SvgPathCommand('Z', System.Array.Empty<double>()));
         return commands;
     }
 

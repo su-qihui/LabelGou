@@ -299,4 +299,123 @@ public sealed class ShapeToolTests : IDisposable
         Assert.False(geometry.FillContains(new Point(Mm.ToDiu(10.2), Mm.ToDiu(6.2))));
         return true;
     });
+
+    // ---------- 第 53 棒：形状工具（编辑对象的点） ----------
+
+    [Fact]
+    public void AClosedCurveFillsItsInteriorAcrossOutlets() => OnSta(() =>
+    {
+        var square = new TemplateElement
+        {
+            Kind = ElementKind.Line, X = 10, Y = 10, X2 = 10, Y2 = 10, Closed = true,
+            Nodes = new System.Collections.Generic.List<CurveNode>
+            {
+                new(30, 10, 0, 0, 0, 0), new(30, 30, 0, 0, 0, 0), new(10, 30, 0, 0, 0, 0),
+            },
+            FillColor = Core.Colors.LabelColor.Black,
+        };
+        var layout = LayoutEngine.Build(TemplateOf(square), SampleRecords.StandardSample(), new LayoutContext(1, 1));
+        var item = Assert.Single(layout.Items.OfType<LineItem>());
+        var geometry = LabelRenderer.ArcGeometry(item.Arc!, 1.0, item.Closed);
+        Assert.True(geometry.FillContains(new Point(Mm.ToDiu(20), Mm.ToDiu(20))));   // 盒中心在圈里
+        Assert.False(geometry.FillContains(new Point(Mm.ToDiu(9), Mm.ToDiu(9))));    // 外面没有
+
+        var xml = SvgOf(square);
+        var d = XDocument.Parse(xml).Descendants()
+            .Where(e => e.Name.LocalName == "path" && ((string?)e.Attribute("d"))!.EndsWith(" Z", StringComparison.Ordinal))
+            .Select(e => (string?)e.Attribute("d")!).Single();                      // 收口：CDR 认它是闭合对象（注记层那条没有 Z）
+        Assert.Contains("L 10 10 Z", d, StringComparison.Ordinal);                   // 收口段回到起点 (10,10) 再闭合
+        return true;
+    });
+
+    [Fact]
+    public void TheShapeToolDoubleAddsANodeOnTheCurveWithoutChangingItsShape() => OnSta(() =>
+    {
+        var vm = Open();
+        vm.Template.Elements.Add(new TemplateElement
+        {
+            Kind = ElementKind.Line, X = 0, Y = 20, X2 = 40, Y2 = 20,
+            StartOut = new CurveHandle(14, -12), EndIn = new CurveHandle(-14, -12),
+        });
+        vm.RefreshElements();
+        vm.SelectedRow = vm.Elements[0];
+        vm.IsNodeTool = true;
+
+        Assert.Equal(TemplateEditorControl.ToolDown.Handled,
+            TemplateEditorControl.TryToolDown(vm, 20, 12, doubleClick: true, ctrl: false, nodeRadiusMm: 2));
+        var element = Assert.Single(vm.Template.Elements);
+        Assert.Single(element.Nodes!);                                                // 中间多了一个点
+        Assert.Equal(2, Assert.Single(vm.SampleLayout.Items.OfType<LineItem>()).Arc!.Count);   // 一段弧裂成两段
+        Assert.Contains("加了一个点", vm.StatusText, StringComparison.Ordinal);
+        return true;
+    });
+
+    [Fact]
+    public void GrabbingAPolygonVertexConvertsItToACurveFirst() => OnSta(() =>
+    {
+        var vm = Open();
+        var poly = new TemplateElement { Kind = ElementKind.Polygon, X = 20, Y = 10, Width = 40, Height = 40 };
+        vm.Template.Elements.Add(poly);
+        vm.RefreshElements();
+        vm.SelectedRow = vm.Elements[0];
+        vm.IsNodeTool = true;
+
+        var top = ShapeGeometry.PolygonPoints(poly)[0];                               // 首点：盒顶中点 (40,10)
+        Assert.Equal(40d, top.X, 6);
+        Assert.Equal(10d, top.Y, 6);
+        Assert.Equal(TemplateEditorControl.ToolDown.Drag,
+            TemplateEditorControl.TryToolDown(vm, top.X, top.Y, doubleClick: false, ctrl: false, nodeRadiusMm: 2));
+
+        var converted = Assert.Single(vm.Template.Elements);
+        Assert.Equal(ElementKind.Line, converted.Kind);
+        Assert.True(converted.Closed);
+        vm.DragTo(top.X - 6, top.Y + 6);                                              // 拖这一点
+        vm.EndDrag();
+        Assert.True(Math.Abs(converted.X - (top.X - 6)) < 0.5, "顶点没跟着拖走");
+        Assert.True(Math.Abs(converted.X2 - (top.X - 6)) < 0.5, "接缝另一端没同步");   // 首尾是一个点
+        vm.Undo();                                                                    // 一步退回转换前（连拖带转都收在同一步里）
+        Assert.Equal(ElementKind.Polygon, vm.Template.Elements[0].Kind);
+        return true;
+    });
+
+    [Fact]
+    public void ARoundedRectSaysWhyItWillNotConvert() => OnSta(() =>
+    {
+        var vm = Open();
+        var rect = new TemplateElement { Kind = ElementKind.Rect, X = 5, Y = 5, Width = 30, Height = 20 };
+        rect.SetCornerRadii(4, 0, 0, 0);
+        vm.Template.Elements.Add(rect);
+        vm.RefreshElements();
+        vm.SelectedRow = vm.Elements[0];
+
+        Assert.False(vm.TryConvertToCurve(out _));
+        Assert.Contains("圆角", vm.StatusText, StringComparison.Ordinal);              // 说清为什么不转，不是"点了没反应"
+        Assert.Equal(ElementKind.Rect, Assert.Single(vm.Template.Elements).Kind);       // 元素没被动过
+        return true;
+    });
+
+    [Fact]
+    public void DeletingTheLastAllowedPointIsRefusedOutLoud() => OnSta(() =>
+    {
+        var vm = Open();
+        var square = new TemplateElement
+        {
+            Kind = ElementKind.Line, X = 10, Y = 10, X2 = 10, Y2 = 10, Closed = true,
+            Nodes = new System.Collections.Generic.List<CurveNode>
+            {
+                new(30, 10, 0, 0, 0, 0), new(30, 30, 0, 0, 0, 0), new(10, 30, 0, 0, 0, 0),
+            },
+        };
+        vm.Template.Elements.Add(square);
+        vm.RefreshElements();
+        vm.SelectedRow = vm.Elements[0];
+        vm.IsNodeTool = true;
+        vm.CurrentNodeIndex = 1;                                              // 假装刚点住这个角
+        vm.RemoveCurrentNode();
+        Assert.Equal("点删掉了。", vm.StatusText);                                     // 3 个可见点还够：允许
+        vm.CurrentNodeIndex = 1;
+        vm.RemoveCurrentNode();
+        Assert.Contains("至少得留三个点", vm.StatusText, StringComparison.Ordinal);     // 再删就不许，且话说在明处
+        return true;
+    });
 }

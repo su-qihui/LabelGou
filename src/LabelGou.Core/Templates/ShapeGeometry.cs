@@ -1,3 +1,5 @@
+using LabelGou.Core.Editing;
+
 namespace LabelGou.Core.Templates;
 
 /// <summary>
@@ -43,4 +45,65 @@ public static class ShapeGeometry
     /// <summary>这元素是不是"有外观可谈"的盒状形状（矩形/椭圆/多边形共用填充、描边那几件字段）。</summary>
     public static bool IsBoxShape(TemplateElement element)
         => element.Kind is ElementKind.Rect or ElementKind.Ellipse or ElementKind.Polygon;
+
+    /// <summary>
+    /// 把多边形/矩形<strong>转成闭合曲线</strong>（第 53 棒，CorelDRAW 的「转换为曲线」——它自带文案写得很明白：
+    /// 「将选定对象转换为曲线，以便进行更灵活的编辑」）。转完就能用形状工具加点、删点、拖点。
+    /// <para>规则：顶点按当前形状现算（多边形含旋转烘焙——转完 <c>RotationDeg</c> 归零，因为点已是最终位置）；
+    /// 首尾重合 + <c>Closed</c>；填充 / 描边 / 线宽 / 笔色原样带走。<strong>带圆角的矩形拒绝转</strong>
+    /// （返回 null，调用方说人话）——圆角是四段弧，直转成四个尖点会静默丢圆角，那比不给转更坏。</para>
+    /// </summary>
+    public static TemplateElement? ToClosedCurve(TemplateElement element)
+    {
+        var pts = element.Kind switch
+        {
+            ElementKind.Polygon => PolygonPoints(element).ToList(),
+            ElementKind.Rect => RectCorners(element),
+            _ => null,
+        };
+        if (pts is null || pts.Count < 3) return null;
+        var radii = element.CornerRadii();
+        if (element.Kind == ElementKind.Rect
+            && (radii.TopLeft > 1e-9 || radii.TopRight > 1e-9 || radii.BottomRight > 1e-9 || radii.BottomLeft > 1e-9))
+            return null;
+
+        var baked = BakeRotation(element, pts);
+        var closed = element.CloneTemplate();
+        closed.Kind = ElementKind.Line;
+        closed.X = baked[0].X;
+        closed.Y = baked[0].Y;
+        closed.X2 = baked[^1].X;
+        closed.Y2 = baked[^1].Y;
+        closed.Nodes = baked.Skip(1).Take(baked.Count - 2)
+            .Select(p => new CurveNode(p.X, p.Y, 0, 0, 0, 0)).ToList();
+        closed.StartOut = null;
+        closed.EndIn = null;
+        closed.Closed = true;
+        closed.RotationDeg = 0;                     // 点已是最终位置，再带着角度就是转两遍
+        closed.Width = Math.Max(EditGeometry.MinSideMm, baked.Max(p => p.X) - baked.Min(p => p.X));
+        closed.Height = Math.Max(EditGeometry.MinSideMm, baked.Max(p => p.Y) - baked.Min(p => p.Y));
+        return closed;
+    }
+
+    private static List<(double X, double Y)> RectCorners(TemplateElement e) => new()
+    {
+        (e.X, e.Y), (e.X + e.Width, e.Y), (e.X + e.Width, e.Y + e.Height), (e.X, e.Y + e.Height),
+    };
+
+    /// <summary>元素带着旋转角时，转曲线要把每个点绕盒中心转到最终位置——曲线不认 RotationDeg（端点即形状，43 棒口径）。</summary>
+    private static List<(double X, double Y)> BakeRotation(TemplateElement e, List<(double X, double Y)> pts)
+    {
+        if (Math.Abs(e.RotationDeg) <= 1e-9) return pts;
+        var cx = e.X + e.Width / 2;
+        var cy = e.Y + e.Height / 2;
+        var rad = e.RotationDeg * Math.PI / 180;
+        var cos = Math.Cos(rad);
+        var sin = Math.Sin(rad);
+        return pts.Select(p =>
+        {
+            var dx = p.X - cx;
+            var dy = p.Y - cy;
+            return (cx + dx * cos - dy * sin, cy + dx * sin + dy * cos);
+        }).ToList();
+    }
 }

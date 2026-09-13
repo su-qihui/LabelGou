@@ -57,6 +57,8 @@
                               ToolTip="椭圆形工具（CorelDRAW 原文「绘制椭圆形和圆形」）：按下拖出一只、松手定形；按住 Ctrl 拖＝限制为正圆；按住 Shift 拖＝从中心张开。只点一下给一只默认 20mm 的圆。Esc 取消。" />
                 <ToggleButton Content="多边形" IsChecked="{Binding IsPolygonTool}" MinWidth="52" Margin="2,0"
                               ToolTip="多边形工具（CorelDRAW 原文「绘制多边形」）：同一种拖法，落下来是正多边形，首点朝上；默认五边，边数在属性面板改。按住 Ctrl＝外接盒保持正方。Esc 取消。" />
+                <ToggleButton Content="形状" IsChecked="{Binding IsNodeTool}" MinWidth="44" Margin="2,0"
+                              ToolTip="转换点工具（CorelDRAW 形状工具，原文「编辑对象的节点」）：&#10;曲线——拖节点/拖柄、双击线段加一个点、选中点按 Delete 删掉；&#10;多边形/矩形——抓顶点会先「转换为曲线」（CDR 同口径：自由编点的前提是转曲线），带圆角的矩形不给转并说原因；&#10;矩形的四角四边句柄本来就能拖角拖边，不另造一套。" />
                 <Button Content="图片" Command="{Binding AddImageCommand}" ToolTip="加 Logo 或条码图，会复制到模板目录" />
                 <Button Content="复制" Command="{Binding DuplicateCommand}" ToolTip="复制选中元素（偏移 2mm）" />
                 <Button Content="删除" Command="{Binding RemoveCommand}" ToolTip="删除选中元素，可撤销" />
@@ -619,6 +621,12 @@
                                         <TextBox Width="46" VerticalAlignment="Center"
                                                  Text="{Binding Editing.PolygonSides}"
                                                  ToolTip="正多边形的边数（3~100）。顶点首点朝正上，与 CorelDRAW 起手一致。" />
+                                    </WrapPanel>
+                                    <WrapPanel Margin="0,4,0,0" Visibility="{Binding Editing.ShowsConvertToCurve, Converter={StaticResource BoolVis}}">
+                                        <Button Content="转为曲线" Command="{Binding Editing.ConvertToCurveCommand}" Padding="6,1" HorizontalAlignment="Left"
+                                                ToolTip="CorelDRAW 同名命令「转换为曲线」：转成闭合曲线后，用「形状」工具就能拖点、双击段加点、选中点删点。&#10;带圆角的矩形不给转（会丢圆角），状态栏会说原因。" />
+                                        <TextBlock Text="转完不再是正多边形/参数矩形，Ctrl+Z 可退" VerticalAlignment="Center" Margin="8,0,0,0"
+                                                   FontSize="10" Foreground="#8A8F98" TextTrimming="CharacterEllipsis" />
                                     </WrapPanel>
                                     <StackPanel Visibility="{Binding Editing.IsRect, Converter={StaticResource BoolVis}}">
                                     <WrapPanel Margin="0,4,0,0">

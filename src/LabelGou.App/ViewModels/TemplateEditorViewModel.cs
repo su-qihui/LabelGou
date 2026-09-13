@@ -628,6 +628,9 @@ public sealed class TemplateEditorViewModel : ObservableObject
 
         /// <summary>正多边形：同上；边数在属性面板改（CDR「绘制多边形」+「多边形的边数」）。</summary>
         Polygon = 4,
+
+        /// <summary>形状工具（第 53 棒，CDR 原文「编辑对象的节点」）：拖点改形、双击段加点、选中点 Delete 删点。</summary>
+        Shape = 5,
     }
 
     public enum DragMode
@@ -659,10 +662,15 @@ public sealed class TemplateEditorViewModel : ObservableObject
             Raise(nameof(IsRectTool));
             Raise(nameof(IsEllipseTool));
             Raise(nameof(IsPolygonTool));
-            StatusText = value == EditorTool.Bezier
-                ? "曲线工具：点一下＝一个尖角（这一笔是直线）；按下拖开＝这一点带柄，刚画的那一段跟着弯。" +
-                  "接着点下一处续画，双击或回车收尾，Esc 取消。"
-                : "已切回选择工具。";
+            Raise(nameof(IsNodeTool));
+            StatusText = value switch
+            {
+                EditorTool.Bezier => "曲线工具：点一下＝一个尖角（这一笔是直线）；按下拖开＝这一点带柄，刚画的那一段跟着弯。" +
+                                      "接着点下一处续画，双击或回车收尾，Esc 取消。",
+                EditorTool.Shape => "形状工具：拖节点的方框改形；双击曲线段加一个点；点住一个点后按 Delete 删它。" +
+                                    "多边形/矩形抓顶点会先「转换为曲线」（可撤销）。",
+                _ => "已切回选择工具。",
+            };
             CanvasChanged?.Invoke();
         }
     }
@@ -694,6 +702,13 @@ public sealed class TemplateEditorViewModel : ObservableObject
     {
         get => Tool == EditorTool.Polygon;
         set => Tool = value ? EditorTool.Polygon : EditorTool.Select;
+    }
+
+    /// <summary>那颗「形状」按钮（第 53 棒，转换点工具）。</summary>
+    public bool IsNodeTool
+    {
+        get => Tool == EditorTool.Shape;
+        set => Tool = value ? EditorTool.Shape : EditorTool.Select;
     }
 
     /// <summary>是不是三种"按下拖出一只形状"的工具之一——画布的拖动/松手/Esc 走同一份机械，别再各判各的。</summary>
@@ -1010,6 +1025,132 @@ public sealed class TemplateEditorViewModel : ObservableObject
 
     public void CancelRect() => CancelShape();
 
+    // ---------- 形状工具：编辑对象的点（第 53 棒，CDR 原文「编辑对象的节点」）----------
+
+    /// <summary>形状工具下这一按的结果：None＝交给常规路径（选中/挪动/拖点本来就有）；Handled＝吃掉这一下；Drag＝开始拖点。</summary>
+    public enum NodeDown { None, Handled, Drag }
+
+    /// <summary>
+    /// 按下/双击（形状工具）。分工照 CDR 的语义：
+    /// <list type="bullet">
+    /// <item><description>曲线：双击段＝在最近的段上加一个点（分裂不改变形状）；单点拖点/拖柄走常规路径——那套第 49 棒就有了；</description></item>
+    /// <item><description>多边形：抓到顶点才<strong>先转成闭合曲线</strong>（CDR 的「转换为曲线，以便进行更灵活的编辑」就是这个前提），再拖这一点；
+    /// 双击边＝转完在落点补一个点；</description></item>
+    /// <item><description>矩形：直接交给常规路径——四角八向的句柄本来就是它的点编辑，不再造第二套机械。</description></item>
+    /// </list>
+    /// </summary>
+    public NodeDown ShapeDown(double xMm, double yMm, bool doubleClick, double radiusMm)
+    {
+        var element = SelectedRow?.Element;
+        if (element is null) return NodeDown.None;
+
+        if (doubleClick)
+        {
+            if (element.Kind == ElementKind.Line && CurveGeometry.IsCurved(element))
+                return AddNodeAt(element, xMm, yMm) ? NodeDown.Handled : NodeDown.None;
+            if (element.Kind == ElementKind.Polygon)
+            {
+                if (!TryConvertToCurve(out var converted)) return NodeDown.None;
+                return AddNodeAt(converted, xMm, yMm) ? NodeDown.Handled : NodeDown.None;
+            }
+            return NodeDown.None;
+        }
+
+        if (element.Kind == ElementKind.Polygon)
+        {
+            var verts = ShapeGeometry.PolygonPoints(element);
+            var near = false;
+            foreach (var v in verts)
+                if (Math.Max(Math.Abs(v.X - xMm), Math.Abs(v.Y - yMm)) <= radiusMm) { near = true; break; }
+            if (!near) return NodeDown.None;                       // 没抓到顶点就照常：整只挪动，不逼谁先转换
+            if (!TryConvertToCurve(out _)) return NodeDown.None;
+            // 转换已经录过快照——"抓顶点→转→拖这一点"是**一个手势**，撤销按手势数（第 49 棒立的口径），
+            // BeginDrag 里那次 Capture 必须压掉，否则 Ctrl+Z 只退回"刚转完"，退不回多边形。
+            var drag = DragMode.None;
+            WithoutCapture(() => drag = BeginDrag(xMm, yMm, radiusMm));
+            return drag == DragMode.None ? NodeDown.Handled : NodeDown.Drag;
+        }
+        return NodeDown.None;
+    }
+
+    /// <summary>在最近的一段上加一个点（de Castejau 分裂，原曲线逐点同形）。加不上就如实说。</summary>
+    private bool AddNodeAt(TemplateElement element, double xMm, double yMm)
+    {
+        Capture();
+        var index = CurveGeometry.AddNode(element, xMm, yMm);
+        if (index < 0)
+        {
+            ReleaseCapture();
+            StatusText = "没找到能加点的那一段——离曲线太远或它已到头。";
+            return false;
+        }
+        CurrentNodeIndex = index;
+        Touch();
+        RebuildSample();
+        RecomputeIssues();
+        StatusText = "加了一个点（曲线形状没变，新点落在原线上）。拖它改形，选中它按 Delete 撤掉。";
+        return true;
+    }
+
+    /// <summary>
+    /// 把选中的多边形/矩形<strong>转成闭合曲线</strong>（CDR「转换为曲线」同义，一步可撤销）。
+    /// 带圆角的矩形拒绝并说原因——圆角是四段弧，硬转会把圆角静默丢掉，那比不给转更坏。
+    /// </summary>
+    public bool TryConvertToCurve(out TemplateElement result)
+    {
+        result = null!;
+        var index = SelectedRow is null ? -1 : _template.Elements.IndexOf(SelectedRow.Element);
+        if (index < 0)
+        {
+            StatusText = "还没选中要转换的元素。";
+            return false;
+        }
+        var converted = ShapeGeometry.ToClosedCurve(_template.Elements[index]);
+        if (converted is null)
+        {
+            StatusText = _template.Elements[index].Kind == ElementKind.Rect && _template.Elements[index].CornerRadii() is var r
+                && (r.TopLeft > 1e-9 || r.TopRight > 1e-9 || r.BottomRight > 1e-9 || r.BottomLeft > 1e-9)
+                ? "带圆角的矩形暂不转换——圆角是四段弧，直接转会把圆角丢掉（先把四格圆角清 0 再转）。"
+                : "这个元素转不成曲线。";
+            return false;
+        }
+        Capture();
+        _template.Elements[index] = converted;
+        RefreshElements();
+        SelectedRow = Elements.FirstOrDefault(r => ReferenceEquals(r.Element, converted));
+        Touch();
+        RebuildSample();
+        RecomputeIssues();
+        StatusText = "已转为曲线：顶点可拖、双击段可加点、选中点可按 Delete 删（Ctrl+Z 退回转换前）。";
+        result = converted;
+        return true;
+    }
+
+    /// <summary>删掉当前节点（形状工具下的 Delete）。护栏说不许删就照实说，不闷头不动。</summary>
+    public void RemoveCurrentNode()
+    {
+        var element = SelectedRow?.Element;
+        if (element is null || element.Kind != ElementKind.Line || CurrentNodeIndex < 0)
+        {
+            StatusText = "还没选中要删的点——先点它一下。";
+            return;
+        }
+        Capture();
+        if (!CurveGeometry.RemoveNode(element, CurrentNodeIndex))
+        {
+            ReleaseCapture();
+            StatusText = CurveGeometry.IsClosed(element)
+                ? "闭合曲线至少得留三个点，首尾那个点也不能删。"
+                : "两端不能删——那条线就没方向了。";
+            return;
+        }
+        CurrentNodeIndex = -1;
+        Touch();
+        RebuildSample();
+        RecomputeIssues();
+        StatusText = "点删掉了。";
+    }
+
     // ---------- 当前节点与三态（CorelDRAW：使节点成为尖突 / 平滑节点 / 生成对称节点）----------
 
     /// <summary>
@@ -1019,7 +1160,7 @@ public sealed class TemplateEditorViewModel : ObservableObject
     public int CurrentNodeIndex
     {
         get => _currentNode;
-        private set
+        internal set
         {
             if (_currentNode == value) return;
             _currentNode = value;
@@ -1182,6 +1323,13 @@ public sealed class TemplateEditorViewModel : ObservableObject
             if (_dragMode == DragMode.Node)
             {
                 pts[hit.Index] = n with { X = n.X + dx, Y = n.Y + dy };
+                // 闭合曲线的首尾是同一个可见点：拖一个另一个跟着走（与 CurveGeometry.MoveNode 同口径，
+                // 不然"拖顶点转出来的闭合曲线"一拖就裂口——第 53 棒）。
+                if (CurveGeometry.IsClosed(element) && (hit.Index == 0 || hit.Index == pts.Count - 1))
+                {
+                    var twin = hit.Index == 0 ? pts.Count - 1 : 0;
+                    pts[twin] = pts[twin] with { X = n.X + dx, Y = n.Y + dy };
+                }
             }
             else
             {
@@ -1572,6 +1720,15 @@ public sealed class TemplateEditorViewModel : ObservableObject
         _history.Capture(_template);
     }
 
+    /// <summary>把这段操作里所有 <see cref="Capture"/> 压成"不录"——一个手势已经录过第一步时用它。</summary>
+    private void WithoutCapture(Action work)
+    {
+        var was = _suppressCapture;
+        _suppressCapture = true;
+        try { work(); }
+        finally { _suppressCapture = was; }
+    }
+
     /// <summary>操作发现做不下去时把刚录的快照丢掉，免得撤销时跳过一个空步。</summary>
     private void ReleaseCapture()
     {
@@ -1854,6 +2011,9 @@ public sealed class EditableElement : ObservableObject
         OpenFillEditorCommand = new RelayCommand(() => OpenInkEditor(true));
         StraightenCommand = new RelayCommand(() => CurveEdit(CurveGeometry.Straighten), () => IsCurve);
         FlattenToEndsCommand = new RelayCommand(() => CurveEdit(Flatten), () => IsCurve);
+        // 「转为曲线」（第 53 棒，CDR 同名命令）：多边形/矩形在面板上的显式入口，与形状工具抓顶点走同一个方法。
+        ConvertToCurveCommand = new RelayCommand(() => _owner?.TryConvertToCurve(out _),
+            () => _owner is not null && _element.Kind is ElementKind.Polygon or ElementKind.Rect);
         SyncPickerFromColour();   // 选中一行时调色盘要停在那支墨真正的位置，别默认给左上角
     }
 
@@ -2274,6 +2434,9 @@ public sealed class EditableElement : ObservableObject
     /// <summary>是不是多边形（第 51 棒，决定「边数」那一格显不显示）。</summary>
     public bool IsPolygon => _element.Kind == ElementKind.Polygon;
 
+    /// <summary>「转为曲线」那颗给谁看（第 53 棒）：多边形与矩形；椭圆这棒不给（转它要用四段弧，还没做）。</summary>
+    public bool ShowsConvertToCurve => _element.Kind is ElementKind.Polygon or ElementKind.Rect;
+
     /// <summary>填充 / 描边那两行对哪些元素开：矩形、椭圆、多边形共用同一套外观字段（第 51 棒）。</summary>
     public bool HasShapeAppearance => ShapeGeometry.IsBoxShape(_element);
 
@@ -2407,6 +2570,9 @@ public sealed class EditableElement : ObservableObject
 
     /// <summary>只留两端：删掉所有中间节点与柄，回到从前那条两点直线。</summary>
     public ICommand FlattenToEndsCommand { get; }
+
+    /// <summary>「转为曲线」（第 53 棒）：多边形/矩形 → 闭合曲线，之后才能自由拖点/加点/删点。</summary>
+    public ICommand ConvertToCurveCommand { get; }
 
     /// <summary>曲线编辑的撤销括号：与墨色、摆位那几处同一套（Prepare 录快照、Done 刷新并置脏）。</summary>
     private void CurveEdit(Action<TemplateElement> work)
@@ -2591,7 +2757,7 @@ public sealed class EditableElement : ObservableObject
             nameof(CornerRadiusTopLeftMm), nameof(CornerRadiusTopRightMm),
             nameof(CornerRadiusBottomRightMm), nameof(CornerRadiusBottomLeftMm),
             nameof(FillShowsSlash), nameof(PenShowsSlash), nameof(IsRect),
-            nameof(IsEllipse), nameof(IsPolygon), nameof(HasShapeAppearance), nameof(PolygonSides),
+            nameof(IsEllipse), nameof(IsPolygon), nameof(HasShapeAppearance), nameof(PolygonSides), nameof(ShowsConvertToCurve),
             nameof(PenSwatch), nameof(FillSwatch), nameof(PenSummary), nameof(FillSummary),
             nameof(InkTargetText), nameof(InkPopupOpen), nameof(ThicknessText),
         })

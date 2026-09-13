@@ -261,12 +261,16 @@ public static class LabelRenderer
 
     private static void DrawLine(DrawingContext dc, LineItem line, double scale, RenderTarget target)
     {
-        var pen = RenderRules.PenFor(RenderRules.InkOf(line.Ink), line.ThicknessMm, scale, target);
+        // 第 53 棒：闭合曲线与形状同口径——关描边又不填就什么都不画，校验器负责提醒，这里不猜。
+        var fill = line.Fill is null ? null : RenderRules.InkOf(line.Fill);
+        var pen = line.Stroked ? RenderRules.PenFor(RenderRules.InkOf(line.Ink), line.ThicknessMm, scale, target) : null;
         if (line.Arc is { Count: > 0 } arc)
         {
-            dc.DrawGeometry(null, pen, ArcGeometry(arc, scale));
+            var geo = ArcGeometry(arc, scale, line.Closed);
+            dc.DrawGeometry(fill, pen, geo);
             return;
         }
+        if (pen is null) return;
         var p1 = new Point(Mm.ToDiu(line.X1) * scale, Mm.ToDiu(line.Y1) * scale);
         var p2 = new Point(Mm.ToDiu(line.X2) * scale, Mm.ToDiu(line.Y2) * scale);
         dc.DrawLine(pen, p1, p2);
@@ -275,13 +279,15 @@ public static class LabelRenderer
     /// <summary>
     /// 曲线段序列 → WPF 几何（设备单位）。<strong>全项目只有这一份"弧怎么连"</strong>：画布、位图、打印
     /// 三条吃几何的出口与编辑器选择框都走这里，直线段退化成 <c>LineSegment</c>。
+    /// <paramref name="closed"/>（第 53 棒）＝把这条 figure 标成闭合——收口段本来就在段序列里，
+    /// 标闭合是为了填充与命中都按"圆上的圈"算；不传＝开口，逐字旧行为。
     /// </summary>
-    public static Geometry ArcGeometry(IReadOnlyList<Core.Templates.CurveSegment> arc, double scale)
+    public static Geometry ArcGeometry(IReadOnlyList<Core.Templates.CurveSegment> arc, double scale, bool closed = false)
     {
         var figure = new PathFigure
         {
             StartPoint = Diu(arc[0].X1, arc[0].Y1, scale),
-            IsClosed = false,
+            IsClosed = closed,
             // 不填充由下面 DrawGeometry 传 null 画刷表达，几何本身不管这件事。
         };
         foreach (var s in arc)

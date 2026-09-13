@@ -54,7 +54,10 @@ public sealed record PolygonItem(double X, double Y, double Width, double Height
 /// </summary>
 public sealed record LineItem(double X1, double Y1, double X2, double Y2, double ThicknessMm,
     Colors.LabelColor? Ink = null,
-    IReadOnlyList<Templates.CurveSegment>? Arc = null) : LayoutItem;
+    IReadOnlyList<Templates.CurveSegment>? Arc = null,
+    Colors.LabelColor? Fill = null,
+    bool Closed = false,
+    bool Stroked = true) : LayoutItem;
 
 /// <summary>
 /// 已解析好的文本项。
@@ -270,10 +273,15 @@ public static class LayoutEngine
             switch (element.Kind)
             {
                 case ElementKind.Line:
+                    var closedCurve = Templates.CurveGeometry.IsClosed(element);
                     items.Add(new LineItem(element.X, element.Y, element.X2, element.Y2, element.ThicknessMm,
                         Ink: InkOf(element.InkColor, context),
                         // 分不分色都画同一条弧，只是每一版上的墨量不同（Ink 那份已经按版折好了）。
-                        Arc: Templates.CurveGeometry.IsCurved(element) ? Templates.CurveGeometry.Segments(element) : null));
+                        Arc: Templates.CurveGeometry.IsCurved(element) ? Templates.CurveGeometry.Segments(element) : null,
+                        // 只有闭合的曲线才有"里面"可填；开口的给了也当没有（渲染端不猜）。
+                        Fill: closedCurve ? FillOf(element.FillColor, context) : null,
+                        Closed: closedCurve,
+                        Stroked: element.ShowsStroke));
                     break;
 
                 case ElementKind.Rect:

@@ -91,6 +91,10 @@ public static class CurveGeometry
     public static bool IsCurved(TemplateElement element) =>
         (element.Nodes is { Count: > 0 }) || (element.StartOut is { IsZero: false }) || (element.EndIn is { IsZero: false });
 
+    /// <summary>闭合曲线（第 53 棒）：终点回到起点补一段收口。只对 Line 有意义。</summary>
+    public static bool IsClosed(TemplateElement element) =>
+        element.Kind == ElementKind.Line && element.Closed;
+
     /// <summary>
     /// 这个节点是不是<strong>平滑</strong>的：两根柄都在、且方向大致成一条直线。
     /// <para>拖柄时靠它决定"另一侧跟不跟着镜像"——平滑节点跟着（这是 CDR 里调切线最常用的那半下），
@@ -183,15 +187,110 @@ public static class CurveGeometry
         }
     }
 
-    /// <summary>把某个节点挪到绝对坐标处（柄跟着走，弯度不变）。</summary>
+    /// <summary>把某个节点挪到绝对坐标处（柄跟着走，弯度不变）。闭合曲线的起点与终点是同一个可见点：拖一个，另一个跟着走。</summary>
     public static void MoveNode(TemplateElement element, int index, double xMm, double yMm)
     {
         var pts = NodesOf(element);
         if (index < 0 || index >= pts.Count) return;
         var n = pts[index];
         pts[index] = n with { X = xMm, Y = yMm };
+        if (IsClosed(element) && (index == 0 || index == pts.Count - 1))
+        {
+            var twin = index == 0 ? pts.Count - 1 : 0;
+            pts[twin] = pts[twin] with { X = xMm, Y = yMm };
+        }
         ApplyNodes(element, pts);
     }
+
+    /// <summary>
+    /// 删掉一个节点。首尾不许删（那条线就没方向了）；闭合曲线（第 53 棒）还要求<strong>剩下至少 3 个可见点</strong>
+    /// ——两个点的"闭合曲线"是一条来回的线段，那不是形状是 bug 现场。删成功与否交调用方说话。
+    /// </summary>
+    public static bool RemoveNode(TemplateElement element, int index)
+    {
+        var pts = NodesOf(element);
+        if (index <= 0 || index >= pts.Count - 1) return false;
+        if (IsClosed(element) && pts.Count - 1 < 4) return false;     // 可见点 = pts.Count-1（首尾重合），删后必须 ≥3
+        pts.RemoveAt(index);
+        ApplyNodes(element, pts);
+        return true;
+    }
+
+    /// <summary>
+    /// 在<strong>离给定点最近的那一段</strong>上加一个节点（第 53 棒，CorelDRAW 形状工具的「添加节点」：
+    /// 双击线段即可加点）。贝塞尔段用 de Casteljau 精确分裂——加完的曲线与原曲线逐点同形，
+    /// 新节点两根柄都从分裂出来的控制点里来，不是"拍脑袋给零柄"（那会把原弧当场掰折）。
+    /// </summary>
+    /// <returns>新节点在全节点表里的下标；没段可加（如开口曲线想加在两端之外）返回 -1。</returns>
+    public static int AddNode(TemplateElement element, double xMm, double yMm)
+    {
+        var pts = NodesOf(element);
+        if (pts.Count < 2) return -1;
+        var segs = Segments(element);
+        // 只在开口的那些段里找最近点（收口段是"首尾重合"的产物，往它上面加点等于往接缝上加，语义不清）。
+        var best = -1;
+        var bestT = 0d;
+        var bestGap = double.MaxValue;
+        for (var i = 0; i < pts.Count - 1 && i < segs.Count; i++)
+        {
+            var s = segs[i];
+            double px = s.X1, py = s.Y1;
+            for (var k = 1; k <= HitSamples; k++)
+            {
+                var t = (double)k / HitSamples;
+                var qx = Point(s.X1, s.CX1, s.CX2, s.X2, t);
+                var qy = Point(s.Y1, s.CY1, s.CY2, s.Y2, t);
+                var gap = SegmentDistance(xMm, yMm, px, py, qx, qy);
+                if (gap < bestGap)
+                {
+                    bestGap = gap;
+                    best = i;
+                    bestT = Math.Clamp(t - 0.5 / HitSamples, 0, 1);      // 折线中点对应的近似参数，够用（下一步还会精确化）
+                }
+                px = qx; py = qy;
+            }
+        }
+        if (best < 0) return -1;
+        // 用投影把参数精修一步：在 [bestT±1档] 里按 20 等分再细扫一次，落点贴住曲线。
+        var seg = segs[best];
+        var span = 1.0 / HitSamples;
+        for (var k = 0; k <= 20; k++)
+        {
+            var t = Math.Clamp(bestT - span + 2 * span * k / 20, 0, 1);
+            var gap = Math.Sqrt(
+                Math.Pow(Point(seg.X1, seg.CX1, seg.CX2, seg.X2, t) - xMm, 2) +
+                Math.Pow(Point(seg.Y1, seg.CY1, seg.CY2, seg.Y2, t) - yMm, 2));
+            if (gap < bestGap) { bestGap = gap; bestT = t; }
+        }
+        SplitSegment(seg, bestT, out var left, out var mid, out var right);
+        var a = pts[best];
+        var b = pts[best + 1];
+        pts[best] = a with { OutX = left.OutDx, OutY = left.OutDy };
+        pts[best + 1] = b with { InX = right.InDx, InY = right.InDy };
+        pts.Insert(best + 1, new CurveNode(mid.X, mid.Y, mid.InDx, mid.InDy, mid.OutDx, mid.OutDy));
+        if (pts.Count - 1 > MaxNodes) return -1;                    // 加了超上限的点等于造一条存不下的曲线：不动原样
+        ApplyNodes(element, pts);
+        return best + 1;
+    }
+
+    /// <summary>一段贝塞尔在 t 处分裂的三块结果（绝对点 + 相对柄）。de Casteljau 标准式：
+    /// q1/q2/q3 = 相邻线性插值，r1/r2 = 再插一层，B = lerp(r1,r2)；左段 (P0,q1,r1,B)、右段 (B,r2,q3,P3)。</summary>
+    private static void SplitSegment(CurveSegment s, double t,
+        out (double OutDx, double OutDy) left, out (double X, double Y, double InDx, double InDy, double OutDx, double OutDy) mid,
+        out (double InDx, double InDy) right)
+    {
+        var q1 = (Lerp(s.X1, s.CX1, t), Lerp(s.Y1, s.CY1, t));
+        var q2 = (Lerp(s.CX1, s.CX2, t), Lerp(s.CY1, s.CY2, t));
+        var q3 = (Lerp(s.CX2, s.X2, t), Lerp(s.CY2, s.Y2, t));
+        var r1 = (Lerp(q1.Item1, q2.Item1, t), Lerp(q1.Item2, q2.Item2, t));
+        var r2 = (Lerp(q2.Item1, q3.Item1, t), Lerp(q2.Item2, q3.Item2, t));
+        var sp = (Lerp(r1.Item1, r2.Item1, t), Lerp(r1.Item2, r2.Item2, t));
+        left = (q1.Item1 - s.X1, q1.Item2 - s.Y1);
+        mid = (sp.Item1, sp.Item2, r1.Item1 - sp.Item1, r1.Item2 - sp.Item2, r2.Item1 - sp.Item1, r2.Item2 - sp.Item2);
+        right = (q3.Item1 - s.X2, q3.Item2 - s.Y2);
+    }
+
+    private static double Lerp(double a, double b, double t) => a + (b - a) * t;
 
     /// <summary>拖某根控制柄（节点不动）。起点没有进柄、终点没有出柄，这两格会被忽略。</summary>
     public static void SetHandle(TemplateElement element, CurveHit hit, double dxMm, double dyMm)
@@ -206,16 +305,6 @@ public static class CurveGeometry
             _ => n,
         };
         ApplyNodes(element, pts);
-    }
-
-    /// <summary>删掉一个中间节点（首尾不许删——那条线就没方向了，也让"至少两个点"这条不变式成立）。</summary>
-    public static bool RemoveNode(TemplateElement element, int index)
-    {
-        var pts = NodesOf(element);
-        if (index <= 0 || index >= pts.Count - 1) return false;
-        pts.RemoveAt(index);
-        ApplyNodes(element, pts);
-        return true;
     }
 
     /// <summary>
@@ -285,6 +374,8 @@ public static class CurveGeometry
     /// <summary>
     /// 拆成段序列。没填曲线字段时交回<strong>恰好一段直线</strong>——所以调用方不必再分"直线/曲线"两套代码，
     /// 老的线条元素走的也是这条路，画法与从前逐字一致。
+    /// <para>闭合（第 53 棒）：末尾多补一段<strong>终点→起点的直线收口</strong>。外接框、命中距离、SVG 的
+    /// <c>d</c> 全从这里算，所以只在这一处补，五个出口就都跟着闭合——别在渲染端再判一遍 <c>Closed</c>。</para>
     /// </summary>
     public static IReadOnlyList<CurveSegment> Segments(TemplateElement element)
     {
@@ -297,6 +388,13 @@ public static class CurveGeometry
             segments.Add(new CurveSegment(
                 a.X, a.Y, a.X + a.OutX, a.Y + a.OutY,
                 b.X + b.InX, b.Y + b.InY, b.X, b.Y));
+        }
+        if (IsClosed(element) && pts.Count >= 2)
+        {
+            var last = pts[^1];
+            var first = pts[0];
+            if (Math.Abs(last.X - first.X) > 1e-9 || Math.Abs(last.Y - first.Y) > 1e-9)
+                segments.Add(new CurveSegment(last.X, last.Y, last.X, last.Y, first.X, first.Y, first.X, first.Y));
         }
         return segments;
     }
