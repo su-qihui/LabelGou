@@ -234,6 +234,20 @@ public static class SheetSvgWriter
                     WriteRect(builder, rect);
                     break;
 
+                case EllipseItem ellipse:
+                    // 第 51 棒：发原生 <ellipse>，圆心/半径由外接盒说话——与 LabelRenderer.DrawEllipse 同一个盒。
+                    builder.Ellipse(ellipse.X + ellipse.Width / 2, ellipse.Y + ellipse.Height / 2,
+                        ellipse.Width / 2, ellipse.Height / 2,
+                        FillPaint(ellipse.Fill),
+                        ellipse.Stroked ? Stroke(ellipse.ThicknessMm, RenderRules.InkHex(ellipse.Ink)) : null);
+                    break;
+
+                case PolygonItem polygon:
+                    // 点表是 Core 那份（ShapeGeometry），这里一个点都不自己算。
+                    builder.Polygon(polygon.Points, FillPaint(polygon.Fill),
+                        polygon.Stroked ? Stroke(polygon.ThicknessMm, RenderRules.InkHex(polygon.Ink)) : null);
+                    break;
+
                 case LineItem line:
                     if (line.Arc is { Count: > 0 } arc)
                     {

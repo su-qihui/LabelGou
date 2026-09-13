@@ -53,6 +53,10 @@
                               ToolTip="贝塞尔工具（类 CorelDRAW）：点一下就是一个尖角，这一笔是直线；按下拖开就给这一点带上控制柄，刚画出来的那一段跟着弯。&#10;接着点下一处继续画，双击或回车收尾；Ctrl+Z 退一个落点，Esc 丢掉整条。&#10;画好后选中它，节点和控制柄可以直接在画布上拖。" />
                 <ToggleButton Content="矩形框" IsChecked="{Binding IsRectTool}" MinWidth="56" Margin="2,0"
                               ToolTip="矩形工具（类 CorelDRAW）：在画布上按下拖出一只框、松手定形；只点一下不给一只默认尺寸（30×14mm）的框。Esc 取消拖到一半的框。" />
+                <ToggleButton Content="椭圆" IsChecked="{Binding IsEllipseTool}" MinWidth="44" Margin="2,0"
+                              ToolTip="椭圆形工具（CorelDRAW 原文「绘制椭圆形和圆形」）：按下拖出一只、松手定形；按住 Ctrl 拖＝限制为正圆；按住 Shift 拖＝从中心张开。只点一下给一只默认 20mm 的圆。Esc 取消。" />
+                <ToggleButton Content="多边形" IsChecked="{Binding IsPolygonTool}" MinWidth="52" Margin="2,0"
+                              ToolTip="多边形工具（CorelDRAW 原文「绘制多边形」）：同一种拖法，落下来是正多边形，首点朝上；默认五边，边数在属性面板改。按住 Ctrl＝外接盒保持正方。Esc 取消。" />
                 <Button Content="图片" Command="{Binding AddImageCommand}" ToolTip="加 Logo 或条码图，会复制到模板目录" />
                 <Button Content="复制" Command="{Binding DuplicateCommand}" ToolTip="复制选中元素（偏移 2mm）" />
                 <Button Content="删除" Command="{Binding RemoveCommand}" ToolTip="删除选中元素，可撤销" />
@@ -585,16 +589,16 @@
                                       ③ 圆角照 CorelDRAW 圆角泊坞窗：一颗「全部圆角」锁 + 四格各自填数
                                          （格名照它资源串原文：左上角圆滑度/右上角圆滑度/左下角圆滑度/右下角圆滑度）。
                                       描边（笔色）那颗色块住在上面「墨色」行，这里不抄第二份——同一份数据两处出现迟早各改各的。  -->
-                                <TextBlock Grid.Row="17" Text="矩形" Style="{StaticResource Caption}"
-                                           Visibility="{Binding Editing.IsRect, Converter={StaticResource BoolVis}}" />
+                                <TextBlock Grid.Row="17" Text="形状" Style="{StaticResource Caption}"
+                                           Visibility="{Binding Editing.HasShapeAppearance, Converter={StaticResource BoolVis}}" />
                                 <StackPanel Grid.Row="17" Grid.Column="1" Margin="0,4,0,4"
-                                            Visibility="{Binding Editing.IsRect, Converter={StaticResource BoolVis}}">
+                                            Visibility="{Binding Editing.HasShapeAppearance, Converter={StaticResource BoolVis}}">
                                     <WrapPanel>
                                         <TextBlock Text="填充" Width="52" VerticalAlignment="Center" FontSize="11" />
                                         <Button Width="30" Height="18" VerticalAlignment="Center"
                                                 Background="{Binding Editing.FillSwatch}" BorderBrush="#8A8F98"
                                                 Command="{Binding Editing.OpenFillEditorCommand}"
-                                                ToolTip="矩形内部上色：点开挑一支墨就有了。&#10;要取消：点开它，用弹层里那颗斜杠的「无颜色」；没填充时这颗本身就是斜杠块。" />
+                                                ToolTip="内部上色（矩形/椭圆/多边形共用这一支填充墨）：点开挑一支墨就有了。&#10;要取消：点开它，用弹层里那颗斜杠的「无颜色」；没填充时这颗本身就是斜杠块。" />
                                         <TextBlock Text="{Binding Editing.FillSummary}" VerticalAlignment="Center" Margin="6,0,0,0"
                                                    FontSize="11" TextTrimming="CharacterEllipsis" />
                                     </WrapPanel>
@@ -609,6 +613,14 @@
                                                   ToolTip="描边粗细（毫米）。直接打字——0.35、0.35 mm、0.35毫米 都认；下拉里是常用档。&#10;认不出的写法退回上一个数，不会把框悄悄清成 0。&#10;描边关掉时这颗置灰：改了也看不见，不给骗人的旋钮。" />
                                         <TextBlock Text="线宽(mm)" VerticalAlignment="Center" Margin="5,0,0,0" FontSize="11" Foreground="#8A8F98" />
                                     </WrapPanel>
+                                    <WrapPanel Margin="0,4,0,0" Visibility="{Binding Editing.IsPolygon, Converter={StaticResource BoolVis}}">
+                                        <TextBlock Text="边数" Width="52" VerticalAlignment="Center" FontSize="11"
+                                                   ToolTip="CorelDRAW 的「多边形的边数」：3 起步，100 封顶（再多画出来就是圆）。" />
+                                        <TextBox Width="46" VerticalAlignment="Center"
+                                                 Text="{Binding Editing.PolygonSides}"
+                                                 ToolTip="正多边形的边数（3~100）。顶点首点朝正上，与 CorelDRAW 起手一致。" />
+                                    </WrapPanel>
+                                    <StackPanel Visibility="{Binding Editing.IsRect, Converter={StaticResource BoolVis}}">
                                     <WrapPanel Margin="0,4,0,0">
                                         <TextBlock Text="圆角(mm)" Style="{StaticResource Caption}" VerticalAlignment="Center" Margin="0,0,4,0" />
                                         <ToggleButton Content="全部圆角" MinWidth="64" VerticalAlignment="Center"
@@ -647,6 +659,7 @@
                                                  Text="{Binding Editing.CornerRadiusBottomRightMm, StringFormat={}{0:0.##}}"
                                                  ToolTip="右下角圆滑度（毫米），0 = 直角。" />
                                     </Grid>
+                                    </StackPanel>
                                 </StackPanel>
                             </Grid>
 

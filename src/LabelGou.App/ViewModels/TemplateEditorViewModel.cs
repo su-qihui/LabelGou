@@ -622,6 +622,12 @@ public sealed class TemplateEditorViewModel : ObservableObject
 
         /// <summary>矩形：按下拖出一只框（CorelDRAW 的矩形工具原文就是"绘制矩形"），松手定形。</summary>
         Rect = 2,
+
+        /// <summary>椭圆/圆：同一套拖动机械，只是落下来的 kind 不同（CDR「绘制椭圆形和圆形」）。</summary>
+        Ellipse = 3,
+
+        /// <summary>正多边形：同上；边数在属性面板改（CDR「绘制多边形」+「多边形的边数」）。</summary>
+        Polygon = 4,
     }
 
     public enum DragMode
@@ -646,10 +652,13 @@ public sealed class TemplateEditorViewModel : ObservableObject
             if (_tool == value) return;
             // 切走之前把没画完的这条收尾：不然画布上会留一条半截曲线/一只零尺寸框，而人已经去点别的东西了。
             if (_tool == EditorTool.Bezier && IsDrawingPath) FinishPath();
-            if (_tool == EditorTool.Rect && IsDrawingRect) EndRect();
+            if (IsDrawShapeTool(_tool) && IsDrawingShape) EndShape();
             _tool = value;
             Raise(nameof(Tool));
             Raise(nameof(IsBezierTool));
+            Raise(nameof(IsRectTool));
+            Raise(nameof(IsEllipseTool));
+            Raise(nameof(IsPolygonTool));
             StatusText = value == EditorTool.Bezier
                 ? "曲线工具：点一下＝一个尖角（这一笔是直线）；按下拖开＝这一点带柄，刚画的那一段跟着弯。" +
                   "接着点下一处续画，双击或回车收尾，Esc 取消。"
@@ -672,6 +681,25 @@ public sealed class TemplateEditorViewModel : ObservableObject
         get => Tool == EditorTool.Rect;
         set => Tool = value ? EditorTool.Rect : EditorTool.Select;
     }
+
+    /// <summary>那颗「椭圆」按钮（第 51 棒）。</summary>
+    public bool IsEllipseTool
+    {
+        get => Tool == EditorTool.Ellipse;
+        set => Tool = value ? EditorTool.Ellipse : EditorTool.Select;
+    }
+
+    /// <summary>那颗「多边形」按钮（第 51 棒）。</summary>
+    public bool IsPolygonTool
+    {
+        get => Tool == EditorTool.Polygon;
+        set => Tool = value ? EditorTool.Polygon : EditorTool.Select;
+    }
+
+    /// <summary>是不是三种"按下拖出一只形状"的工具之一——画布的拖动/松手/Esc 走同一份机械，别再各判各的。</summary>
+    public bool IsShapeTool => IsDrawShapeTool(Tool);
+
+    private static bool IsDrawShapeTool(EditorTool tool) => tool is EditorTool.Rect or EditorTool.Ellipse or EditorTool.Polygon;
 
     // ---------- 贝塞尔：正在画的那条路径（第 49 棒）----------
 
@@ -855,18 +883,24 @@ public sealed class TemplateEditorViewModel : ObservableObject
     /// <summary>新画曲线的默认线宽（与「添加线条」那颗按钮同源，不另定一份）。</summary>
     public const double DefaultLineThicknessMm = 0.35;
 
-    // ---------- 矩形：按下拖出一只框（第 50 棒）----------
+    // ---------- 形状：按下拖出一只矩形/椭圆/多边形（第 50 棒矩形，第 51 棒泛化成三种，机械只有一份）----------
 
-    /// <summary>正在画的矩形在模板里的下标（-1 = 没在画）。</summary>
-    private int _rectIndex = -1;
+    /// <summary>正在画的形状在模板里的下标（-1 = 没在画）。</summary>
+    private int _shapeIndex = -1;
 
-    private double _rectAnchorX;
-    private double _rectAnchorY;
+    private double _shapeAnchorX;
+    private double _shapeAnchorY;
+    private EditorTool _shapeTool = EditorTool.Rect;
+    private bool _shapeFromCenter;      // Shift＝从中心绘制（CorelDRAW「按住 Shift 键并拖动可从中心绘制」）
+    private bool _shapeSquare;          // Ctrl＝限制为圆/正方（「按住 Ctrl 键拖动可限制为圆形」）
 
-    /// <summary>画布上是否有一只拖到一半的矩形（决定 Esc 归谁）。</summary>
-    public bool IsDrawingRect => _rectIndex >= 0;
+    /// <summary>画布上是否有一只拖到一半的形状（决定 Esc 归谁）。</summary>
+    public bool IsDrawingShape => _shapeIndex >= 0;
 
-    /// <summary>拖动小于这个距离就按"只点了一下"算，给一只默认尺寸的框，别留一只看不见的零尺寸矩形。</summary>
+    /// <summary>旧名照用（第 50 棒那些钉子与 Esc 路还在叫它）：正在画的是不是矩形。</summary>
+    public bool IsDrawingRect => IsDrawingShape && _shapeTool == EditorTool.Rect;
+
+    /// <summary>拖动小于这个距离就按"只点了一下"算，给一只默认尺寸的形状，别留一只看不见的零尺寸元素。</summary>
     public const double MinDragToSizeMm = 2;
 
     /// <summary>默认框尺寸（点一下不拖时用，与从前那颗按钮给的尺寸同源）。</summary>
@@ -874,11 +908,20 @@ public sealed class TemplateEditorViewModel : ObservableObject
 
     public const double DefaultRectHeightMm = 14;
 
-    /// <summary>按下：落下这只矩形（第一个点）。撤销快照必须在加入之前录，否则 Esc/撤销退不干净。</summary>
-    public bool BeginRect(double xMm, double yMm)
+    /// <summary>椭圆/多边形的默认边长：点一下就给一只看得见的圆——形状不比矩形写死 30×14 那个扁样。</summary>
+    public const double DefaultShapeSideMm = 20;
+
+    /// <summary>按下：落下这只形状（第一个点）。撤销快照必须在加入之前录，否则 Esc/撤销退不干净。</summary>
+    public bool BeginShape(EditorTool tool, double xMm, double yMm, bool fromCenter = false, bool square = false)
     {
         Capture();
-        var element = TemplateFactory.NewRect(xMm, yMm, EditGeometry.MinSideMm, EditGeometry.MinSideMm);
+        var kind = tool switch
+        {
+            EditorTool.Ellipse => ElementKind.Ellipse,
+            EditorTool.Polygon => ElementKind.Polygon,
+            _ => ElementKind.Rect,
+        };
+        var element = TemplateFactory.NewShape(kind, xMm, yMm, EditGeometry.MinSideMm, EditGeometry.MinSideMm);
         var outcome = TemplateFactory.AddElement(_template, element, xMm, yMm);
         if (outcome is null)
         {
@@ -886,22 +929,28 @@ public sealed class TemplateEditorViewModel : ObservableObject
             ReleaseCapture();
             return false;
         }
-        _rectIndex = outcome.Index;
+        _shapeIndex = outcome.Index;
+        _shapeTool = tool;
+        _shapeFromCenter = fromCenter;
+        _shapeSquare = square;
         var placed = _template.Elements[outcome.Index];
-        _rectAnchorX = placed.X;
-        _rectAnchorY = placed.Y;
+        _shapeAnchorX = placed.X;
+        _shapeAnchorY = placed.Y;
         RefreshElements();
         SelectedRow = Elements.FirstOrDefault(r => ReferenceEquals(r.Element, placed));
-        DragRect(xMm, yMm);
+        DragShape(xMm, yMm);
         return true;
     }
 
-    /// <summary>拖动中：以按下的那一角为锚，实时改这只框（本体走 SampleLayout，所以必须重建，见 §五-148）。</summary>
-    public void DragRect(double xMm, double yMm)
+    /// <summary>旧名：矩形工具按下起画（第 50 棒的钉子还在直接叫它）。</summary>
+    public bool BeginRect(double xMm, double yMm) => BeginShape(EditorTool.Rect, xMm, yMm);
+
+    /// <summary>拖动中：按下那刻定好的锚点/中心与修饰键说了算，实时改这只形状（本体走 SampleLayout，所以必须重建，见 §五-148）。</summary>
+    public void DragShape(double xMm, double yMm)
     {
-        if (_rectIndex < 0 || _rectIndex >= _template.Elements.Count) return;
-        var element = _template.Elements[_rectIndex];
-        var (x, y, w, h) = TemplateFactory.RectFromCorners(_rectAnchorX, _rectAnchorY, xMm, yMm);
+        if (_shapeIndex < 0 || _shapeIndex >= _template.Elements.Count) return;
+        var element = _template.Elements[_shapeIndex];
+        var (x, y, w, h) = TemplateFactory.BoxFromCorners(_shapeAnchorX, _shapeAnchorY, xMm, yMm, _shapeFromCenter, _shapeSquare);
         element.X = x;
         element.Y = y;
         element.Width = w;
@@ -909,38 +958,57 @@ public sealed class TemplateEditorViewModel : ObservableObject
         RebuildSample();
     }
 
-    /// <summary>松手定形；只点没拖就给一只默认尺寸的框（不留一只零尺寸的东西让人以为没画上）。</summary>
-    public void EndRect()
+    public void DragRect(double xMm, double yMm) => DragShape(xMm, yMm);
+
+    /// <summary>松手定形；只点没拖就给一只默认尺寸的形状（不留一只零尺寸的东西让人以为没画上）。</summary>
+    public void EndShape()
     {
-        if (_rectIndex < 0) return;
-        if (_rectIndex < _template.Elements.Count)
+        if (_shapeIndex < 0) return;
+        if (_shapeIndex < _template.Elements.Count)
         {
-            var element = _template.Elements[_rectIndex];
+            var element = _template.Elements[_shapeIndex];
             if (element.Width < MinDragToSizeMm || element.Height < MinDragToSizeMm)
             {
-                element.Width = DefaultRectWidthMm;
-                element.Height = DefaultRectHeightMm;
+                if (_shapeTool == EditorTool.Rect)
+                {
+                    element.Width = DefaultRectWidthMm;
+                    element.Height = DefaultRectHeightMm;
+                }
+                else
+                {
+                    element.Width = DefaultShapeSideMm;
+                    element.Height = DefaultShapeSideMm;
+                }
             }
         }
-        _rectIndex = -1;
+        StatusText = _shapeTool switch
+        {
+            EditorTool.Rect => "矩形画好了。属性面板可以改线宽、填充和圆角。",
+            EditorTool.Ellipse => "椭圆画好了。属性面板可以改线宽和填充；要正圆，重画时按住 Ctrl。",
+            _ => "多边形画好了。属性面板可以改边数、线宽和填充。",
+        };
+        _shapeIndex = -1;
         Touch();
         RebuildSample();
         RecomputeIssues();
-        StatusText = "矩形画好了。属性面板可以改线宽、填充和圆角。";
     }
 
-    /// <summary>Esc：丢掉这只拖到一半的框（连元素一起撤，撤销栈同步收回）。</summary>
-    public void CancelRect()
+    public void EndRect() => EndShape();
+
+    /// <summary>Esc：丢掉这只拖到一半的形状（连元素一起撤，撤销栈同步收回）。</summary>
+    public void CancelShape()
     {
-        if (_rectIndex < 0) return;
-        if (_rectIndex < _template.Elements.Count) _template.Elements.RemoveAt(_rectIndex);
-        _rectIndex = -1;
+        if (_shapeIndex < 0) return;
+        if (_shapeIndex < _template.Elements.Count) _template.Elements.RemoveAt(_shapeIndex);
+        _shapeIndex = -1;
         ReleaseCapture();
         RefreshElements();
         RebuildSample();
         RecomputeIssues();
-        StatusText = "取消这个矩形。";
+        StatusText = "取消这个形状。";
     }
+
+    public void CancelRect() => CancelShape();
 
     // ---------- 当前节点与三态（CorelDRAW：使节点成为尖突 / 平滑节点 / 生成对称节点）----------
 
@@ -1710,6 +1778,8 @@ public sealed class ElementRow
         ElementKind.Barcode => "条码",
         ElementKind.Line => "线条",
         ElementKind.Rect => "矩形框",
+        ElementKind.Ellipse => "椭圆",
+        ElementKind.Polygon => "多边形",
         ElementKind.Image => "图片",
         _ => "元素",
     };
@@ -1859,7 +1929,7 @@ public sealed class EditableElement : ObservableObject
                 _element.InkColor = value;
                 // 关掉的描边又被选了一支墨＝重新画边框（CorelDRAW 对 X 掉的线框盒选色就是这个行为）。
                 // 不这样就是"选了色却什么都没画"的骗人按钮。
-                if (value is not null && _element.Kind == ElementKind.Rect && !_element.ShowsStroke)
+                if (value is not null && ShapeGeometry.IsBoxShape(_element) && !_element.ShowsStroke)
                     _element.Stroked = null;
             }
         }
@@ -1896,11 +1966,11 @@ public sealed class EditableElement : ObservableObject
     public Brush PenSwatch => PenShowsSlash ? System.Windows.Media.Brushes.White : RenderRules.InkOf(_element.InkColor);
     public Brush FillSwatch => FillShowsSlash ? System.Windows.Media.Brushes.White : RenderRules.InkOf(_element.FillColor);
 
-    /// <summary>填充那颗该画斜杠＝矩形且没填充。</summary>
-    public bool FillShowsSlash => _element.Kind == ElementKind.Rect && _element.FillColor is null;
+    /// <summary>填充那颗该画斜杠＝盒状形状（矩形/椭圆/多边形）且没填充。</summary>
+    public bool FillShowsSlash => ShapeGeometry.IsBoxShape(_element) && _element.FillColor is null;
 
-    /// <summary>笔色那颗该画斜杠＝矩形且描边被关掉（文本/线/条码的 null 笔色是"黑"，不是"无颜色"）。</summary>
-    public bool PenShowsSlash => _element.Kind == ElementKind.Rect && !_element.ShowsStroke;
+    /// <summary>笔色那颗该画斜杠＝盒状形状且描边被关掉（文本/线/条码的 null 笔色是"黑"，不是"无颜色"）。</summary>
+    public bool PenShowsSlash => ShapeGeometry.IsBoxShape(_element) && !_element.ShowsStroke;
 
     public string PenSummary => PenShowsSlash ? "不描边" : InkText(_element.InkColor, "黑（默认）");
     public string FillSummary => InkText(_element.FillColor, "不填充");
@@ -2195,8 +2265,35 @@ public sealed class EditableElement : ObservableObject
 
     // ---------- 矩形外观：填充 / 描边 / 圆角（第 50 棒；补正四把圆角改成逐角）----------
 
-    /// <summary>这只元素是不是矩形（决定那几格显不显示）。</summary>
+    /// <summary>这只元素是不是矩形（决定圆角那一块显不显示）。</summary>
     public bool IsRect => _element.Kind == ElementKind.Rect;
+
+    /// <summary>是不是椭圆（第 51 棒）。</summary>
+    public bool IsEllipse => _element.Kind == ElementKind.Ellipse;
+
+    /// <summary>是不是多边形（第 51 棒，决定「边数」那一格显不显示）。</summary>
+    public bool IsPolygon => _element.Kind == ElementKind.Polygon;
+
+    /// <summary>填充 / 描边那两行对哪些元素开：矩形、椭圆、多边形共用同一套外观字段（第 51 棒）。</summary>
+    public bool HasShapeAppearance => ShapeGeometry.IsBoxShape(_element);
+
+    /// <summary>
+    /// 多边形的边数（第 51 棒，CorelDRAW 的「多边形的边数」）。夹进 3~100：
+    /// 少于三条不叫多边形，多于 100 条画出来就是圆——认不出的输入退回上一个数，不悄悄清 0。
+    /// </summary>
+    public int PolygonSides
+    {
+        get => _element.PolygonSides ?? TemplateElement.DefaultPolygonSides;
+        set
+        {
+            var v = Math.Clamp(value, ShapeGeometry.MinSides, ShapeGeometry.MaxSides);
+            if ((v == TemplateElement.DefaultPolygonSides ? (int?)null : v) == _element.PolygonSides) return;
+            Prepare(nameof(PolygonSides));
+            // 填回 5 就存 null：默认值不占一行，与"全圆角回到缺 RoundedCorners"同一条纪律。
+            _element.PolygonSides = v == TemplateElement.DefaultPolygonSides ? null : v;
+            Done();
+        }
+    }
 
     /// <summary>
     /// 描边开不开。默认开；关掉时存 <c>"stroked": false</c>（开着不写，老文件不变多一行）。
@@ -2341,6 +2438,8 @@ public sealed class EditableElement : ObservableObject
         ElementKind.Barcode => "条码",
         ElementKind.Line => "线条",
         ElementKind.Rect => "矩形框",
+        ElementKind.Ellipse => "椭圆",
+        ElementKind.Polygon => "多边形",
         ElementKind.Image => "图片",
         _ => "元素",
     };
@@ -2440,7 +2539,8 @@ public sealed class EditableElement : ObservableObject
     /// <para>图片与矢量底图自带颜色（一张 Logo、一份 CDR 底稿），给它们一支笔色只会让人以为能改，
     /// 而改了什么都没发生，那种格子宁可不给。</para>
     /// </summary>
-    public bool CanTintInk => _element.Kind is ElementKind.Text or ElementKind.Line or ElementKind.Rect or ElementKind.Barcode;
+    public bool CanTintInk => _element.Kind is ElementKind.Text or ElementKind.Line or ElementKind.Rect
+        or ElementKind.Ellipse or ElementKind.Polygon or ElementKind.Barcode;
 
     private bool Near(double value, double current)
         => Math.Abs(value - current) < 1e-6 || double.IsNaN(value);
@@ -2490,6 +2590,7 @@ public sealed class EditableElement : ObservableObject
             nameof(CornerRadiusTopLeftMm), nameof(CornerRadiusTopRightMm),
             nameof(CornerRadiusBottomRightMm), nameof(CornerRadiusBottomLeftMm),
             nameof(FillShowsSlash), nameof(PenShowsSlash), nameof(IsRect),
+            nameof(IsEllipse), nameof(IsPolygon), nameof(HasShapeAppearance), nameof(PolygonSides),
             nameof(PenSwatch), nameof(FillSwatch), nameof(PenSummary), nameof(FillSummary),
             nameof(InkTargetText), nameof(InkPopupOpen), nameof(ThicknessText),
         })

@@ -170,9 +170,44 @@ public static class TemplateFactory
     /// </summary>
     public static (double X, double Y, double Width, double Height) RectFromCorners(
         double anchorX, double anchorY, double xMm, double yMm)
-        => (Math.Min(anchorX, xMm), Math.Min(anchorY, yMm),
-            Math.Max(EditGeometry.MinSideMm, Math.Abs(xMm - anchorX)),
-            Math.Max(EditGeometry.MinSideMm, Math.Abs(yMm - anchorY)));
+        => BoxFromCorners(anchorX, anchorY, xMm, yMm);
+
+    /// <summary>
+    /// 两点算盒的<strong>唯一出处</strong>（矩形/椭圆/多边形共用，第 51 棒把矩形那条泛化过来）。
+    /// <para>CorelDRAW 的两个修饰键照它自带文案实现：<strong>Ctrl＝限制为圆/正方</strong>
+    /// （「按住 Ctrl 键拖动可限制为圆形」——两轴取更大的那个拖幅，方向照拖的那边走）；
+    /// <strong>Shift＝从中心绘制</strong>（「按住 Shift 键并拖动可从中心绘制」——按下的点是中心，四向对称张开）。</para>
+    /// </summary>
+    public static (double X, double Y, double Width, double Height) BoxFromCorners(
+        double anchorX, double anchorY, double xMm, double yMm, bool fromCenter = false, bool square = false)
+    {
+        double dx = xMm - anchorX, dy = yMm - anchorY;
+        if (square)
+        {
+            // 两轴同幅：取拖得更远的那一轴为准（另一轴跟上），符号保留——往哪拖还往哪长。
+            var side = Math.Max(Math.Abs(dx), Math.Abs(dy));
+            dx = Math.Sign(dx == 0 ? 1 : dx) * side;
+            dy = Math.Sign(dy == 0 ? 1 : dy) * side;
+        }
+        if (fromCenter)
+            return (anchorX - Math.Abs(dx), anchorY - Math.Abs(dy),
+                Math.Max(EditGeometry.MinSideMm, Math.Abs(dx) * 2), Math.Max(EditGeometry.MinSideMm, Math.Abs(dy) * 2));
+        return (Math.Min(anchorX, anchorX + dx), Math.Min(anchorY, anchorY + dy),
+            Math.Max(EditGeometry.MinSideMm, Math.Abs(dx)), Math.Max(EditGeometry.MinSideMm, Math.Abs(dy)));
+    }
+
+    /// <summary>新形状元素（第 51 棒）：矩形/椭圆/多边形都住外接盒，外观字段（填充/描边/线宽）三者共用。</summary>
+    public static TemplateElement NewShape(ElementKind kind, double x, double y, double width, double height,
+        double thicknessMm = 0.35)
+        => new()
+        {
+            Kind = kind,
+            X = x,
+            Y = y,
+            Width = Math.Max(EditGeometry.MinSideMm, width),
+            Height = Math.Max(EditGeometry.MinSideMm, height),
+            ThicknessMm = thicknessMm,
+        };
 
     /// <summary>找不到空位时的兜底落点：把偏好位置夹进纸内，<strong>不拒绝、不丢弃</strong>。
     /// <para>元素本身比标签还大时夹到 (0,0) 并交给校验器报越界 —— 那种情况看得见、说得清，

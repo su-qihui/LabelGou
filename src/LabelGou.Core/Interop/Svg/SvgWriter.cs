@@ -124,6 +124,31 @@ public sealed class SvgBuilder
         return this;
     }
 
+    /// <summary>椭圆/圆（第 51 棒）：发原生 <c>&lt;ellipse&gt;</c>——CDR 认它，也比四段 kappa 贝塞尔少一层近似。</summary>
+    public SvgBuilder Ellipse(double centerXmm, double centerYmm, double radiusXmm, double radiusYmm, SvgPaint? fill, SvgPaint? stroke)
+    {
+        _body.Append(Indent()).Append("<ellipse cx=\"").Append(N(centerXmm)).Append("\" cy=\"").Append(N(centerYmm))
+            .Append("\" rx=\"").Append(N(radiusXmm)).Append("\" ry=\"").Append(N(radiusYmm))
+            .Append("\" ").Append(PaintAttributes(fill, stroke, false)).Append("/>\n");
+        ElementCount++;
+        return this;
+    }
+
+    /// <summary>正多边形（第 51 棒）：发原生 <c>&lt;polygon&gt;</c>，点表由调用方给（Core 是唯一出处，这里只格式化，不再算一个点）。</summary>
+    public SvgBuilder Polygon(IReadOnlyList<(double X, double Y)> points, SvgPaint? fill, SvgPaint? stroke)
+    {
+        var list = new System.Text.StringBuilder();
+        foreach (var (px, py) in points)
+        {
+            if (list.Length > 0) list.Append(' ');
+            list.Append(N(px)).Append(',').Append(N(py));
+        }
+        _body.Append(Indent()).Append("<polygon points=\"").Append(list).Append("\" ")
+            .Append(PaintAttributes(fill, stroke, false)).Append("/>\n");
+        ElementCount++;
+        return this;
+    }
+
     /// <summary>一段矢量轮廓文字（<paramref name="pathData"/> 由调用方用 <c>FormattedText.BuildGeometry()</c> 现算）。</summary>
     public SvgBuilder GlyphPath(string pathData, SvgPaint fill, double opacityOverride = 1)
     {

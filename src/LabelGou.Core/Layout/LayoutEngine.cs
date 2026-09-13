@@ -23,6 +23,25 @@ public sealed record RectItem(double X, double Y, double Width, double Height, d
     double RadiusBottomLeftMm = 0) : LayoutItem;
 
 /// <summary>
+/// 已解析好的椭圆（毫米，第 51 棒）：外接盒 + 那套与矩形共用的外观（<paramref name="Fill"/> null = 不填充、
+/// <paramref name="Stroked"/>、<paramref name="Ink"/>）。渲染端不许自己判"圆不圆得下"。
+/// </summary>
+public sealed record EllipseItem(double X, double Y, double Width, double Height, double ThicknessMm,
+    Colors.LabelColor? Ink = null,
+    Colors.LabelColor? Fill = null,
+    bool Stroked = true) : LayoutItem;
+
+/// <summary>
+/// 已解析好的正多边形（毫米，第 51 棒）。<paramref name="Points"/> 是 Core <c>ShapeGeometry</c> 数出来的
+/// 顶点表（绝对毫米）——<strong>出口只照着连点</strong>，谁自己再推一遍角度就是第二套口径。
+/// </summary>
+public sealed record PolygonItem(double X, double Y, double Width, double Height, double ThicknessMm,
+    System.Collections.Generic.IReadOnlyList<(double X, double Y)> Points,
+    Colors.LabelColor? Ink = null,
+    Colors.LabelColor? Fill = null,
+    bool Stroked = true) : LayoutItem;
+
+/// <summary>
 /// 已解析好的线段（毫米）。<paramref name="Ink"/> 同 <see cref="RectItem"/>：null = 黑。
 /// <para><paramref name="Arc"/> 非 null 时是曲线的段序列（第 49 棒），渲染端必须画这份而不是连两端：
 /// 预览、位图、打印、PDF、SVG 五个出口共用 Core 算好的这一份，谁自己再解释一遍"曲线怎么连"
@@ -262,6 +281,21 @@ public static class LayoutEngine
                         RadiusTopRightMm: radii.TopRight,
                         RadiusBottomRightMm: radii.BottomRight,
                         RadiusBottomLeftMm: radii.BottomLeft));
+                    break;
+
+                case ElementKind.Ellipse:
+                    items.Add(new EllipseItem(element.X, element.Y, element.Width, element.Height, element.ThicknessMm,
+                        Ink: InkOf(element.InkColor, context),
+                        Fill: FillOf(element.FillColor, context),
+                        Stroked: element.ShowsStroke));
+                    break;
+
+                case ElementKind.Polygon:
+                    items.Add(new PolygonItem(element.X, element.Y, element.Width, element.Height, element.ThicknessMm,
+                        Templates.ShapeGeometry.PolygonPoints(element),
+                        Ink: InkOf(element.InkColor, context),
+                        Fill: FillOf(element.FillColor, context),
+                        Stroked: element.ShowsStroke));
                     break;
 
                 case ElementKind.Vector:

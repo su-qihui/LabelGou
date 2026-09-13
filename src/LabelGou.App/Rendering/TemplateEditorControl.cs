@@ -349,7 +349,7 @@ public sealed class TemplateEditorControl : FrameworkElement
     /// <strong>矩形那条从前被写成"在贝塞尔那个 if 块里再判一次 IsRectTool"，而两个开关互斥，于是永远进不去，
     /// 用户看到的就是"勾了矩形框、在画布上拖，什么都不画"</strong>（第 50 棒，VM 层 16 条测试全绿也照不出来）。
     /// </summary>
-    internal static ToolDown TryToolDown(TemplateEditorViewModel vm, double xMm, double yMm, bool doubleClick, bool ctrl)
+    internal static ToolDown TryToolDown(TemplateEditorViewModel vm, double xMm, double yMm, bool doubleClick, bool ctrl, bool shift = false)
     {
         switch (vm.Tool)
         {
@@ -365,8 +365,12 @@ public sealed class TemplateEditorControl : FrameworkElement
                 return vm.BeginPath(xMm, yMm, ctrl) ? ToolDown.Drag : ToolDown.Handled;
 
             case TemplateEditorViewModel.EditorTool.Rect:
-                // 矩形工具：按下落一只框，拖到哪算哪，松手定形（CorelDRAW 的矩形工具原文就是「绘制矩形」）。
-                return vm.BeginRect(xMm, yMm) ? ToolDown.Drag : ToolDown.Handled;
+            case TemplateEditorViewModel.EditorTool.Ellipse:
+            case TemplateEditorViewModel.EditorTool.Polygon:
+                // 形状工具（第 50 棒矩形、第 51 棒椭圆/多边形）：按下落一只，拖到哪算哪，松手定形——三种共用同一份机械。
+                // 修饰键照 CorelDRAW 自带文案：Ctrl＝限制为圆/正方（「按住 Ctrl 键拖动可限制为圆形」），
+                // Shift＝从中心绘制（「按住 Shift 键并拖动可从中心绘制」）。
+                return vm.BeginShape(vm.Tool, xMm, yMm, shift, ctrl) ? ToolDown.Drag : ToolDown.Handled;
 
             default:
                 return ToolDown.None;
@@ -386,7 +390,7 @@ public sealed class TemplateEditorControl : FrameworkElement
         // 不需要键）；**Ctrl = 移动时锁水平或垂直**。44 棒把 Shift 实现成"等比"是错的，已翻案。
         var shift = Keyboard.Modifiers.HasFlag(ModifierKeys.Shift);
         switch (TryToolDown(vm, ToMmX(point.X), ToMmY(point.Y), e.ClickCount == 2,
-                    Keyboard.Modifiers.HasFlag(ModifierKeys.Control)))
+                    Keyboard.Modifiers.HasFlag(ModifierKeys.Control), shift))
         {
             case ToolDown.Drag:
                 _dragging = true;
@@ -428,13 +432,13 @@ public sealed class TemplateEditorControl : FrameworkElement
         var point = e.GetPosition(this);
         if (_dragging)
         {
-            if (vm.IsRectTool) vm.DragRect(ToMmX(point.X), ToMmY(point.Y));
+            if (vm.IsShapeTool) vm.DragShape(ToMmX(point.X), ToMmY(point.Y));
             else if (vm.IsBezierTool) vm.DragPath(ToMmX(point.X), ToMmY(point.Y), Keyboard.Modifiers.HasFlag(ModifierKeys.Control));
             else vm.DragTo(ToMmX(point.X), ToMmY(point.Y));
             return;
         }
 
-        if (vm.IsBezierTool || vm.IsRectTool)
+        if (vm.IsBezierTool || vm.IsShapeTool)
         {
             Cursor = Cursors.Cross;
             return;
@@ -470,7 +474,7 @@ public sealed class TemplateEditorControl : FrameworkElement
         if (!_dragging) return;
         _dragging = false;
         ReleaseMouseCapture();
-        if (_vm is { IsRectTool: true }) _vm.EndRect();
+        if (_vm is { IsShapeTool: true }) _vm.EndShape();
         else if (_vm is { IsBezierTool: true }) _vm.EndPathSegment();
         else _vm?.EndDrag();
     }
@@ -525,11 +529,11 @@ public sealed class TemplateEditorControl : FrameworkElement
             e.Handled = true;
             return;
         }
-        if (e.Key == Key.Escape && _vm?.IsDrawingRect == true)
+        if (e.Key == Key.Escape && _vm?.IsDrawingShape == true)
         {
             _dragging = false;
             ReleaseMouseCapture();
-            _vm.CancelRect();
+            _vm.CancelShape();
             e.Handled = true;
             return;
         }

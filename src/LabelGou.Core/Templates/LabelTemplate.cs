@@ -31,6 +31,19 @@ public enum ElementKind
     /// <para>数据表达式仍放在 <see cref="TemplateElement.Text"/>；制式与显不显数字用下面两个字段。</para>
     /// </summary>
     Barcode = 5,
+
+    /// <summary>
+    /// 椭圆/圆（第 51 棒，CorelDRAW 原文「绘制椭圆形和圆形」）。住在外接盒 <c>X/Y/Width/Height</c> 里，
+    /// 填充、描边、笔色与 <see cref="Rect"/> 同一套字段、同一套画法分派。
+    /// </summary>
+    Ellipse = 6,
+
+    /// <summary>
+    /// 正多边形（第 51 棒，「绘制多边形」）。边数在 <see cref="TemplateElement.PolygonSides"/>，
+    /// 顶点由 <c>ShapeGeometry</c> 从外接盒算出（内切于该盒的椭圆映射，首点朝上），
+    /// 与椭圆、矩形共用那套外观字段。
+    /// </summary>
+    Polygon = 7,
 }
 
 public enum HorizontalAlign
@@ -159,6 +172,17 @@ public sealed class TemplateElement
 
     /// <summary>哪几个角要圆。<strong>null = 四个角全圆</strong>；单独勾某几个角时才写。</summary>
     public Corner? RoundedCorners { get; set; }
+
+    /// <summary>
+    /// 正多边形的边数（第 51 棒，CorelDRAW 的「多边形的边数」）。<strong>null = 默认 5（五边形）</strong>，
+    /// 缺字段与老文件同形——这里不用 <c>WhenWritingDefault</c>：它对 int 的"默认"是<em>类型的</em> 0，
+    /// 不是属性的 5，写出去每个多边形都白占一行（§五 同族：参数的语义要按实现核对，别按名字想当然）。
+    /// 渲染端一律按 <c>ShapeGeometry.SidesOf</c> 取值并夹进 3~100，坏文件也不崩。
+    /// </summary>
+    public int? PolygonSides { get; set; }
+
+    /// <summary>多边形默认边数：五边形（CorelDRAW 多边形工具起手就是这个）。</summary>
+    public const int DefaultPolygonSides = 5;
 
     /// <summary>
     /// 逐角圆角半径（毫米），顺序 <c>[左上, 右上, 右下, 左下]</c>（第 50 棒补正四，照 CorelDRAW
@@ -330,7 +354,10 @@ public sealed class LabelTemplate
     /// <see cref="TemplateElement.CornerRadiiMm"/>。<strong>缺这个字段 = 按 v8 那对老字段（半径 + 角名单）折出来 =
     /// 逐字旧行为</strong>，现有模板文件还是一个都不用更新；反过来，四角相等的圆角仍然只写老字段
     /// （见 <see cref="TemplateElement.SetCornerRadii"/>），新文件里的"均匀圆角"与 v8 长一个样子。</remarks>
-    public const int CurrentSchemaVersion = 9;
+    /// <remarks>v10 = 第 51 棒加两种形状元素 <c>Ellipse</c> / <c>Polygon</c> 与 <see cref="TemplateElement.PolygonSides"/>
+    /// （默认 5，非默认才写盘）。<strong>老文件里既没有这两种 kind 也没有这个字段，读进来行为逐字不变</strong>；
+    /// 它们的填充 / 描边 / 笔色用的就是 v8 那几件字段，不新造第二套外观。</remarks>
+    public const int CurrentSchemaVersion = 10;
 
     /// <summary>稳定标识，如 <c>builtin.standard-100x80</c>。用户模板用 <c>user.xxx</c>。</summary>
     public string Id { get; set; } = "user." + Guid.NewGuid().ToString("N")[..8];
@@ -583,10 +610,13 @@ public static class TemplateValidator
                     $"{tag} 的文字拉伸 {e.TextScaleX:0.##} × {e.TextScaleY:0.##} 不在 {MinStretch:0.#}~{MaxStretch:0.#} 之间。", i));
             // 旋转/拉伸探出纸的越界，上面 OccupiedBoundsOf 那条已经一并拦了（不在这重复判）。
 
-            // —— 第 50 棒：矩形的填充 / 描边 / 圆角 ——
-            if (e.Kind == ElementKind.Rect && !e.ShowsStroke && e.FillColor is null)
+            // —— 第 50 棒：矩形的填充 / 描边 / 圆角；第 51 棒：椭圆与多边形共用这套外观 ——
+            if (ShapeGeometry.IsBoxShape(e) && !e.ShowsStroke && e.FillColor is null)
                 issues.Add(new TemplateIssue(IssueLevel.Warning,
                     $"{tag} 既不描边也不填充，纸上看不到任何东西（要隐形占位的话，留描边把线宽设小更稳）。", i));
+            if (e.Kind == ElementKind.Polygon && e.PolygonSides is { } sides && (sides < ShapeGeometry.MinSides || sides > ShapeGeometry.MaxSides))
+                issues.Add(new TemplateIssue(IssueLevel.Error,
+                    $"{tag} 多边形边数 {sides} 不在 {ShapeGeometry.MinSides}~{ShapeGeometry.MaxSides} 之间（少于三条不叫多边形，多于 {ShapeGeometry.MaxSides} 条画出来就是圆）。", i));
             if (e.Kind == ElementKind.Rect)
             {
                 // 逐角判（补正四）：哪个角超了短边一半点哪个角的名，别拿一个数替四个角说话。

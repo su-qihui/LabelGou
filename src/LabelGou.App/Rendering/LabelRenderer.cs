@@ -83,6 +83,12 @@ public static class LabelRenderer
                     case RectItem rect:
                         DrawRect(dc, rect, scale, showGuides, target);
                         break;
+                    case Core.Layout.EllipseItem ellipse:
+                        DrawEllipse(dc, ellipse, scale, showGuides, target);
+                        break;
+                    case Core.Layout.PolygonItem polygon:
+                        DrawPolygon(dc, polygon, scale, showGuides, target);
+                        break;
                     case LineItem line:
                         DrawLine(dc, line, scale, target);
                         break;
@@ -191,6 +197,50 @@ public static class LabelRenderer
             c.LineTo(new Point(box.Left, box.Top + tl), true, false);
             if (tl > 0) c.ArcTo(new Point(box.Left + tl, box.Top), new Size(tl, tl), 0, false, SweepDirection.Clockwise, true, false);
         }
+        geometry.Freeze();
+        return geometry;
+    }
+
+    /// <summary>椭圆（第 51 棒）：与矩形同一句口径——描边关掉又没填充就什么都不画，校验器负责说话，这里不猜。</summary>
+    private static void DrawEllipse(DrawingContext dc, Core.Layout.EllipseItem ellipse, double scale, bool showGuides, RenderTarget target)
+    {
+        var fill = ellipse.Fill is null ? null : RenderRules.InkOf(ellipse.Fill);
+        var pen = ellipse.Stroked ? RenderRules.PenFor(RenderRules.InkOf(ellipse.Ink), ellipse.ThicknessMm, scale, target) : null;
+        var center = new Point(
+            Mm.ToDiu(ellipse.X + ellipse.Width / 2) * scale,
+            Mm.ToDiu(ellipse.Y + ellipse.Height / 2) * scale);
+        var geometry = new EllipseGeometry(center, Mm.ToDiu(ellipse.Width) / 2 * scale, Mm.ToDiu(ellipse.Height) / 2 * scale);
+        dc.DrawGeometry(fill, pen, geometry);
+
+        if (showGuides)
+            dc.DrawRectangle(null, GuidePen, new Rect(Mm.ToDiu(ellipse.X) * scale, Mm.ToDiu(ellipse.Y) * scale,
+                Mm.ToDiu(ellipse.Width) * scale, Mm.ToDiu(ellipse.Height) * scale));
+    }
+
+    /// <summary>正多边形（第 51 棒）：点表是 Core 数好的那份，这里只把毫米换算成设备单位再连闭线，一个角度都不自己推。</summary>
+    private static void DrawPolygon(DrawingContext dc, Core.Layout.PolygonItem polygon, double scale, bool showGuides, RenderTarget target)
+    {
+        var fill = polygon.Fill is null ? null : RenderRules.InkOf(polygon.Fill);
+        var pen = polygon.Stroked ? RenderRules.PenFor(RenderRules.InkOf(polygon.Ink), polygon.ThicknessMm, scale, target) : null;
+        dc.DrawGeometry(fill, pen, PolygonGeometry(polygon.Points, scale));
+
+        if (showGuides)
+            dc.DrawRectangle(null, GuidePen, new Rect(Mm.ToDiu(polygon.X) * scale, Mm.ToDiu(polygon.Y) * scale,
+                Mm.ToDiu(polygon.Width) * scale, Mm.ToDiu(polygon.Height) * scale));
+    }
+
+    /// <summary>顶点表 → 闭合几何（设备单位）。SVG 出口连的是同一份点表，跨出口逐格比对钉着这件事。</summary>
+    public static Geometry PolygonGeometry(IReadOnlyList<(double X, double Y)> points, double scale)
+    {
+        var figure = new PathFigure { IsClosed = true, IsFilled = true };
+        if (points.Count > 0)
+        {
+            figure.StartPoint = new Point(Mm.ToDiu(points[0].X) * scale, Mm.ToDiu(points[0].Y) * scale);
+            foreach (var p in points.Skip(1))
+                figure.Segments.Add(new LineSegment(new Point(Mm.ToDiu(p.X) * scale, Mm.ToDiu(p.Y) * scale), true));
+        }
+        var geometry = new PathGeometry();
+        geometry.Figures.Add(figure);
         geometry.Freeze();
         return geometry;
     }
