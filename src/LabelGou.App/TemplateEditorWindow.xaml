@@ -5,6 +5,7 @@
         xmlns:tm="clr-namespace:LabelGou.Core.Templates;assembly=LabelGou.Core"
         xmlns:vm="clr-namespace:LabelGou.App.ViewModels"
         xmlns:sys="clr-namespace:System;assembly=mscorlib"
+        xmlns:scm="clr-namespace:System.ComponentModel;assembly=WindowsBase"
         Title="{Binding Title}"
         Width="1180" Height="760" MinWidth="980" MinHeight="620"
         WindowStartupLocation="CenterOwner"
@@ -13,6 +14,13 @@
         Background="#F4F5F7">
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BoolVis" />
+        <!--  图层列表的视图（第 54 棒照 CorelDRAW 对象管理器）：最上面的排最上面。
+              只改显示顺序——VM 里 Elements 仍按落位下标存（0=最下层），命令与测试都不受影响。  -->
+        <CollectionViewSource x:Key="LayerView" Source="{Binding Elements}">
+            <CollectionViewSource.SortDescriptions>
+                <scm:SortDescription PropertyName="Ordinal" Direction="Descending" />
+            </CollectionViewSource.SortDescriptions>
+        </CollectionViewSource>
         <local:InverseBooleanToVisibilityConverter x:Key="BoolVisInv"
                                                    xmlns:local="clr-namespace:LabelGou.App.Mvvm" />
         <!--
@@ -40,28 +48,24 @@
     </Window.Resources>
 
     <DockPanel>
-        <!-- 工具条：按"加元素 → 摆位置 → 存起来"的操作顺序排，不按功能分类排 -->
+        <!--  顶栏（第 54 棒照 CorelDRAW 的property docker 排法）：全是"数值与命令"——模板名、标签尺寸、对齐、吸附、撤销重做、保存。
+              加元素的工具不在这里——它们在左侧竖栏（CDR 的工具箱在左边）。  -->
         <Border DockPanel.Dock="Top" Background="White" BorderBrush="#DDDDDD" BorderThickness="0,0,0,1" Padding="10,8">
             <WrapPanel>
                 <TextBlock Text="模板名：" Style="{StaticResource Caption}" />
                 <TextBox Width="170" Text="{Binding Name, UpdateSourceTrigger=LostFocus}" />
                 <Separator Width="14" Background="Transparent" />
 
-                <TextBlock Text="加元素：" Style="{StaticResource Caption}" />
-                <Button Content="文本" Command="{Binding AddTextCommand}" ToolTip="加一个文本元素（可含字段占位符）" />
-                <ToggleButton Content="曲线" IsChecked="{Binding IsBezierTool}" MinWidth="56" Margin="2,0"
-                              ToolTip="贝塞尔工具（类 CorelDRAW）：点一下就是一个尖角，这一笔是直线；按下拖开就给这一点带上控制柄，刚画出来的那一段跟着弯。&#10;接着点下一处继续画，双击或回车收尾；Ctrl+Z 退一个落点，Esc 丢掉整条。&#10;画好后选中它，节点和控制柄可以直接在画布上拖。" />
-                <ToggleButton Content="矩形框" IsChecked="{Binding IsRectTool}" MinWidth="56" Margin="2,0"
-                              ToolTip="矩形工具（类 CorelDRAW）：在画布上按下拖出一只框、松手定形；只点一下不给一只默认尺寸（30×14mm）的框。Esc 取消拖到一半的框。" />
-                <ToggleButton Content="椭圆" IsChecked="{Binding IsEllipseTool}" MinWidth="44" Margin="2,0"
-                              ToolTip="椭圆形工具（CorelDRAW 原文「绘制椭圆形和圆形」）：按下拖出一只、松手定形；按住 Ctrl 拖＝限制为正圆；按住 Shift 拖＝从中心张开。只点一下给一只默认 20mm 的圆。Esc 取消。" />
-                <ToggleButton Content="多边形" IsChecked="{Binding IsPolygonTool}" MinWidth="52" Margin="2,0"
-                              ToolTip="多边形工具（CorelDRAW 原文「绘制多边形」）：同一种拖法，落下来是正多边形，首点朝上；默认五边，边数在属性面板改。按住 Ctrl＝外接盒保持正方。Esc 取消。" />
-                <ToggleButton Content="形状" IsChecked="{Binding IsNodeTool}" MinWidth="44" Margin="2,0"
-                              ToolTip="转换点工具（CorelDRAW 形状工具，原文「编辑对象的节点」）：&#10;曲线——拖节点/拖柄、双击线段加一个点、选中点按 Delete 删掉；&#10;多边形/矩形——抓顶点会先「转换为曲线」（CDR 同口径：自由编点的前提是转曲线），带圆角的矩形不给转并说原因；&#10;矩形的四角四边句柄本来就能拖角拖边，不另造一套。" />
-                <Button Content="图片" Command="{Binding AddImageCommand}" ToolTip="加 Logo 或条码图，会复制到模板目录" />
-                <Button Content="复制" Command="{Binding DuplicateCommand}" ToolTip="复制选中元素（偏移 2mm）" />
-                <Button Content="删除" Command="{Binding RemoveCommand}" ToolTip="删除选中元素，可撤销" />
+                <TextBlock Text="宽(mm)" Style="{StaticResource Caption}" />
+                <TextBox Width="56" Text="{Binding WidthMm, StringFormat={}{0:0.##}}" ToolTip="标签宽（毫米）" />
+                <TextBlock Text="高(mm)" Style="{StaticResource Caption}" Margin="8,0,4,0" />
+                <TextBox Width="56" Text="{Binding HeightMm, StringFormat={}{0:0.##}}" ToolTip="标签高（毫米）" />
+                <TextBlock Text="内边距" Style="{StaticResource Caption}" Margin="8,0,4,0" />
+                <TextBox Width="44" Text="{Binding PaddingMm, StringFormat={}{0:0.##}}" ToolTip="内容区与纸边的距离（毫米），黄虚线就是它" />
+                <TextBlock Text="外框线" Style="{StaticResource Caption}" Margin="8,0,4,0" />
+                <TextBox Width="44" Text="{Binding BorderMm, StringFormat={}{0:0.##}}" ToolTip="0 表示不画外框" />
+                <TextBlock Text="备注" Style="{StaticResource Caption}" Margin="8,0,4,0" />
+                <TextBox Width="120" Text="{Binding Note}" ToolTip="这份模板是给谁用的、什么版式——存进模板文件里" />
                 <Separator Width="14" Background="Transparent" />
 
                 <TextBlock Text="对齐标签：" Style="{StaticResource Caption}" />
@@ -73,10 +77,6 @@
                 <Button Content="贴底" Command="{Binding AlignCommand}" CommandParameter="Bottom" />
                 <Separator Width="14" Background="Transparent" />
 
-                <Button Content="缩回纸内" Command="{Binding ShrinkIntoLabelCommand}"
-                        ToolTip="选中的文字排到纸外时，按内容区能容下的比例把字号与盒高一起缩小并挪回纸内（撤销可退）" />
-                <Separator Width="14" Background="Transparent" />
-
                 <TextBlock Text="内边距：" Style="{StaticResource Caption}" />
                 <Button Content="左" Command="{Binding PaddingCommand}" CommandParameter="Left" ToolTip="贴到内边距线（黄虚线）" />
                 <Button Content="中" Command="{Binding PaddingCommand}" CommandParameter="Center" />
@@ -84,10 +84,8 @@
                 <Button Content="底" Command="{Binding PaddingCommand}" CommandParameter="Bottom" />
                 <Separator Width="14" Background="Transparent" />
 
-                <Button Content="上移一层" Command="{Binding MoveUpCommand}" ToolTip="往上一层层挪；原来只有「置最上/置最下」一步到顶，想微调一层只能整个弹到头，看着像图层动不了" />
-                <Button Content="下移一层" Command="{Binding MoveDownCommand}" ToolTip="往下一层层挪" />
-                <Button Content="置最上" Command="{Binding BringToFrontCommand}" ToolTip="压在别的元素上面" />
-                <Button Content="置最下" Command="{Binding SendToBackCommand}" ToolTip="垫到别的元素下面" />
+                <Button Content="缩回纸内" Command="{Binding ShrinkIntoLabelCommand}"
+                        ToolTip="选中的文字排到纸外时，按内容区能容下的比例把字号与盒高一起缩小并挪回纸内（撤销可退）" />
                 <Button Content="撤销" Command="{Binding UndoCommand}" ToolTip="Ctrl+Z" />
                 <Button Content="重做" Command="{Binding RedoCommand}" ToolTip="Ctrl+Y" />
                 <Separator Width="14" Background="Transparent" />
@@ -140,15 +138,15 @@
 
         <Grid Margin="10">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="250" />
+                <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="300" />
+                <ColumnDefinition Width="320" />
             </Grid.ColumnDefinitions>
 
-            <!-- 左：元素列表 + 插入字段 -->
-            <GroupBox Grid.Column="0" Margin="0,0,10,0">
+            <!-- 左：工具箱（第 54 棒照 CorelDRAW——加元素的工具在左边竖排）。默认态就是"挑选"：再点一次选中的工具即收起。 -->
+            <GroupBox x:Name="ToolboxBox" Grid.Column="0" Margin="0,0,10,0" Width="86">
                 <GroupBox.Header>
-                    <TextBlock Text="元素（末尾=最上层）" Style="{StaticResource StepTitle}" />
+                    <TextBlock Text="工具" Style="{StaticResource StepTitle}" />
                 </GroupBox.Header>
                 <DockPanel>
                     <StackPanel DockPanel.Dock="Bottom" Margin="0,8,0,0">
@@ -157,19 +155,26 @@
                                   SelectedItem="{Binding SelectedFieldOption}"
                                   DisplayMemberPath="Display" MaxDropDownHeight="320" Margin="0,4,0,0" />
                         <Button Content="插入选中字段" Command="{Binding InsertFieldCommand}"
-                                CommandParameter="{Binding SelectedFieldOption.Token}" Margin="0,6,0,0" MinWidth="110" />
+                                CommandParameter="{Binding SelectedFieldOption.Token}" Margin="0,6,0,0" MinWidth="72" />
                     </StackPanel>
-                    <ListBox ItemsSource="{Binding Elements}" SelectedItem="{Binding SelectedRow}"
-                             HorizontalContentAlignment="Stretch" FontFamily="Consolas, Microsoft YaHei">
-                        <ListBox.ItemTemplate>
-                            <DataTemplate>
-                                <StackPanel>
-                                    <TextBlock Text="{Binding Display}" TextTrimming="CharacterEllipsis" />
-                                    <TextBlock Text="{Binding GeometryText}" FontSize="10" Foreground="#888888" />
-                                </StackPanel>
-                            </DataTemplate>
-                        </ListBox.ItemTemplate>
-                    </ListBox>
+                    <StackPanel>
+                        <Button Content="文本" Command="{Binding AddTextCommand}" Margin="2,2"
+                                ToolTip="加一个文本元素（可含字段占位符）" />
+                        <ToggleButton Content="曲线" IsChecked="{Binding IsBezierTool}" Margin="2,2"
+                                      ToolTip="贝塞尔工具（类 CorelDRAW）：点一下就是一个尖角，这一笔是直线；按下拖开就给这一点带上控制柄，刚画出来的那一段跟着弯。&#10;接着点下一处继续画，双击或回车收尾；Ctrl+Z 退一个落点，Esc 丢掉整条。" />
+                        <ToggleButton Content="矩形框" IsChecked="{Binding IsRectTool}" Margin="2,2"
+                                      ToolTip="矩形工具（类 CorelDRAW）：在画布上按下拖出一只框、松手定形；只点一下给一只默认尺寸（30×14mm）的框。Esc 取消拖到一半的框。" />
+                        <ToggleButton Content="椭圆" IsChecked="{Binding IsEllipseTool}" Margin="2,2"
+                                      ToolTip="椭圆形工具（CorelDRAW 原文「绘制椭圆形和圆形」）：按下拖出一只、松手定形；按住 Ctrl 拖＝限制为正圆；按住 Shift 拖＝从中心张开。只点一下给一只默认 20mm 的圆。Esc 取消。" />
+                        <ToggleButton Content="多边形" IsChecked="{Binding IsPolygonTool}" Margin="2,2"
+                                      ToolTip="多边形工具（CorelDRAW 原文「绘制多边形」）：同一种拖法，落下来是正多边形，首点朝上；默认五边，边数在属性面板改。按住 Ctrl＝外接盒保持正方。Esc 取消。" />
+                        <ToggleButton Content="形状" IsChecked="{Binding IsNodeTool}" Margin="2,2"
+                                      ToolTip="转换点工具（CorelDRAW 形状工具，原文「编辑对象的节点」）：&#10;曲线——拖节点/拖柄、双击线段加一个点、选中点按 Delete 删掉；&#10;多边形/矩形——抓顶点会先「转换为曲线」（CDR 同口径），带圆角的矩形不给转并说原因。" />
+                        <Separator Margin="2,6" Background="#DDDDDD" />
+                        <Button Content="图片" Command="{Binding AddImageCommand}" Margin="2,2" ToolTip="加 Logo 或条码图，会复制到模板目录" />
+                        <Button Content="复制" Command="{Binding DuplicateCommand}" Margin="2,2" ToolTip="复制选中元素（偏移 2mm）" />
+                        <Button Content="删除" Command="{Binding RemoveCommand}" Margin="2,2" ToolTip="删除选中元素，可撤销" />
+                    </StackPanel>
                 </DockPanel>
             </GroupBox>
 
@@ -186,41 +191,37 @@
                 </Grid>
             </Border>
 
-            <!-- 右：属性 + 校验 -->
+            <!-- 右：图层 + 选中元素（第 54 棒照 CorelDRAW：对象管理器在右边，最上的对象排最上面） -->
             <Grid Grid.Column="2" Margin="10,0,0,0">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
 
-                <GroupBox>
+                <GroupBox x:Name="LayerBox">
                     <GroupBox.Header>
-                        <TextBlock Text="标签尺寸" Style="{StaticResource StepTitle}" />
+                        <TextBlock Text="图层（最上在上）" Style="{StaticResource StepTitle}" />
                     </GroupBox.Header>
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="Auto" />
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                            <ColumnDefinition Width="*" />
-                        </Grid.ColumnDefinitions>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                        </Grid.RowDefinitions>
-                        <TextBlock Text="宽(mm)" Style="{StaticResource Caption}" />
-                        <TextBox Grid.Column="1" Text="{Binding WidthMm, StringFormat={}{0:0.##}}" Margin="0,0,6,4" />
-                        <TextBlock Grid.Column="2" Text="高(mm)" Style="{StaticResource Caption}" />
-                        <TextBox Grid.Column="3" Text="{Binding HeightMm, StringFormat={}{0:0.##}}" Margin="0,0,0,4" />
-                        <TextBlock Grid.Row="1" Text="内边距" Style="{StaticResource Caption}" />
-                        <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding PaddingMm, StringFormat={}{0:0.##}}" Margin="0,0,6,4" />
-                        <TextBlock Grid.Row="1" Grid.Column="2" Text="外框线" Style="{StaticResource Caption}" />
-                        <TextBox Grid.Row="1" Grid.Column="3" Text="{Binding BorderMm, StringFormat={}{0:0.##}}" Margin="0,0,0,4"
-                                 ToolTip="0 表示不画外框" />
-                        <TextBlock Grid.Row="2" Text="备注" Style="{StaticResource Caption}" />
-                        <TextBox Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="3" Text="{Binding Note}" />
-                    </Grid>
+                    <DockPanel>
+                        <UniformGrid DockPanel.Dock="Bottom" Rows="1" Columns="4" Margin="0,6,0,0">
+                            <Button Content="上移一层" Command="{Binding MoveUpCommand}" MinWidth="0" Margin="0,0,3,0"
+                                    ToolTip="往上一层层挪（列表里往上走一行）；想微调一层不用一下子弹到顶" />
+                            <Button Content="下移一层" Command="{Binding MoveDownCommand}" MinWidth="0" Margin="0,0,3,0" ToolTip="往下一层层挪" />
+                            <Button Content="置最上" Command="{Binding BringToFrontCommand}" MinWidth="0" Margin="0,0,3,0" ToolTip="压在别的元素上面" />
+                            <Button Content="置最下" Command="{Binding SendToBackCommand}" MinWidth="0" ToolTip="垫到别的元素下面" />
+                        </UniformGrid>
+                        <ListBox x:Name="LayerList" ItemsSource="{Binding Source={StaticResource LayerView}}" SelectedItem="{Binding SelectedRow}"
+                                 HorizontalContentAlignment="Stretch" FontFamily="Consolas, Microsoft YaHei" MaxHeight="260">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel>
+                                        <TextBlock Text="{Binding Display}" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Text="{Binding GeometryText}" FontSize="10" Foreground="#888888" />
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </DockPanel>
                 </GroupBox>
 
                 <GroupBox Grid.Row="1">
@@ -229,7 +230,7 @@
                     </GroupBox.Header>
                     <ScrollViewer VerticalScrollBarVisibility="Auto">
                         <StackPanel>
-                            <TextBlock Text="点画布上的元素或左边列表选一个，就能改它的属性。"
+                            <TextBlock Text="点画布上的元素或右边图层列表选一个，就能改它的属性。"
                                        Style="{StaticResource Hint}"
                                        Visibility="{Binding HasSelection, Converter={StaticResource BoolVisInv}}" />
                             <Grid x:Name="PropsGrid" Visibility="{Binding HasSelection, Converter={StaticResource BoolVis}}">

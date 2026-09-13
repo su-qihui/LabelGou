@@ -199,7 +199,7 @@ public class TemplateEditorFlowTests
         Assert.Equal(3, vm.Template.Elements.Count);
         Assert.Equal(3, vm.Elements.Count);
         Assert.NotNull(vm.SelectedRow);
-        Assert.StartsWith("03", vm.Elements[^1].Display);
+        Assert.StartsWith("01", vm.Elements[^1].Display);                   // 第 54 棒：编号从上数——新加的就是最上面那层
         Assert.Contains("文本", vm.Elements[^1].Display);
 
         vm.RemoveCommand.Execute(null);

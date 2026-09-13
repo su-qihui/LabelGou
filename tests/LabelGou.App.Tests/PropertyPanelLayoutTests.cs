@@ -80,4 +80,38 @@ public sealed class PropertyPanelLayoutTests
             }
         }
     }
+
+    /// <summary>
+    /// 第 54 棒照 CorelDRAW 重排的拓扑判据（反向断言钉死，防"顺手挪回去"）：
+    /// 工具箱贴左、图层面板贴右、画布居中；图层列表<strong>第一行 = 最上层元素</strong>（对象管理器反序读法）。
+    /// </summary>
+    [Fact]
+    public void TheToolboxSitsLeftTheLayerPanelRightAndTheTopLayerIsFirst() => OnSta(() =>
+    {
+        var template = new LabelTemplate
+        {
+            Id = "user.topo", Name = "拓扑看样", WidthMm = 100, HeightMm = 80, PaddingMm = 4, BorderMm = 0,
+        };
+        template.Elements.Add(new TemplateElement { Kind = ElementKind.Rect, X = 10, Y = 10, Width = 40, Height = 20 });
+        template.Elements.Add(new TemplateElement { Kind = ElementKind.Text, X = 20, Y = 30, Width = 30, Height = 8, FontSizePt = 10 });
+        var vm = new TemplateEditorViewModel(template,
+            new TemplateStore(Path.Combine(Path.GetTempPath(), "labelgou-topo-" + Guid.NewGuid().ToString("N")[..6])));
+
+        var window = new TemplateEditorWindow(vm);
+        var root = (FrameworkElement)window.Content;
+        root.Measure(new Size(1180, 820));
+        root.Arrange(new Rect(0, 0, 1180, 820));
+        window.UpdateLayout();
+
+        var toolbox = (FrameworkElement)window.FindName("ToolboxBox")!;
+        var layerBox = (FrameworkElement)window.FindName("LayerBox")!;
+        var list = (ListBox)window.FindName("LayerList")!;
+
+        Assert.True(toolbox.TranslatePoint(new Point(0, 0), root).X < 30, "工具箱不在最左");
+        Assert.True(layerBox.TranslatePoint(new Point(0, 0), root).X > 700, "图层面板不在右侧");
+        Assert.True(list.Items.Count == 2, $"图层列表没吃到数据（{list.Items.Count} 行）——视图绑定断了，反序也就无从谈起");
+        var first = Assert.IsType<ElementRow>(list.Items[0]);
+        Assert.Same(template.Elements[^1], first.Element);            // 最上层的排第一行；从前"末尾=最上"藏在列表底部，逻辑反了
+        return true;
+    });
 }

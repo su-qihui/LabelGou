@@ -1770,7 +1770,7 @@ public sealed class TemplateEditorViewModel : ObservableObject
     {
         var keep = SelectedRow?.Element;
         Elements.Clear();
-        for (var i = 0; i < _template.Elements.Count; i++) Elements.Add(new ElementRow(i, _template.Elements[i]));
+        for (var i = 0; i < _template.Elements.Count; i++) Elements.Add(new ElementRow(i, _template.Elements[i], _template.Elements.Count));
         SelectedRow = keep is null ? null : Elements.FirstOrDefault(r => ReferenceEquals(r.Element, keep)) ?? Elements.LastOrDefault();
         CanvasChanged?.Invoke();
     }
@@ -1916,16 +1916,20 @@ public sealed record FieldOption(string Token, string Display)
     public override string ToString() => Display;
 }
 
-/// <summary>左侧元素列表的一行（按引用认元素，重排后仍能保持选中）。</summary>
+/// <summary>右侧图层列表的一行（按引用认元素，重排后仍能保持选中）。列表显示顺序由视图按 Ordinal 倒序排——最上层的排最上面，与 CorelDRAW 对象管理器同读法；Ordinal 本身仍是模板里的落位下标（0=最下层），VM 内部按它寻行。</summary>
 public sealed class ElementRow
 {
-    public ElementRow(int ordinal, TemplateElement element)
+    public ElementRow(int ordinal, TemplateElement element, int total)
     {
         Ordinal = ordinal;
         Element = element;
+        TopNumber = total - ordinal;
     }
 
     public int Ordinal { get; internal set; }
+
+    /// <summary>从上往下数第几层（1 = 最上层）——给人看的编号。</summary>
+    public int TopNumber { get; internal set; }
 
     public TemplateElement Element { get; }
 
@@ -1941,7 +1945,7 @@ public sealed class ElementRow
         _ => "元素",
     };
 
-    public string Display => $"{Ordinal + 1:00}　{KindText}　{Summary}";
+    public string Display => $"{TopNumber:00}　{KindText}　{Summary}";
 
     private string Summary
     {
