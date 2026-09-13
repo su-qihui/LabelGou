@@ -149,31 +149,34 @@ public static class LabelRenderer
         // 描边关掉又没填充＝什么都不画。那是用户自己两下都关掉的，校验器负责提醒，这里不猜。
         var fill = rect.Fill is null ? null : RenderRules.InkOf(rect.Fill);
         var pen = rect.Stroked ? RenderRules.PenFor(RenderRules.InkOf(rect.Ink), rect.ThicknessMm, scale, target) : null;
-        var radius = Mm.ToDiu(rect.RadiusMm) * scale;
+        // 逐角半径（补正四）：Core 已按 CornerRadii() 折好，这里只夹到短边一半（超了画不出更圆的，只画成胶囊）。
+        var cap = Math.Min(r.Width, r.Height) / 2;
+        double D(double mm) => Math.Min(Mm.ToDiu(mm) * scale, cap);
+        var tl = D(rect.RadiusTopLeftMm);
+        var tr = D(rect.RadiusTopRightMm);
+        var br = D(rect.RadiusBottomRightMm);
+        var bl = D(rect.RadiusBottomLeftMm);
 
-        if (radius <= 1e-6 || rect.Corners == Core.Templates.Corner.None) dc.DrawRectangle(fill, pen, r);
-        else if (rect.Corners == Core.Templates.Corner.All)
-        {
-            var capped = Math.Min(radius, Math.Min(r.Width, r.Height) / 2);
-            dc.DrawRoundedRectangle(fill, pen, r, capped, capped);
-        }
-        else dc.DrawGeometry(fill, pen, RoundedRect(r, radius, rect.Corners));
+        if (tl <= 1e-6 && tr <= 1e-6 && br <= 1e-6 && bl <= 1e-6) dc.DrawRectangle(fill, pen, r);
+        else if (Math.Abs(tl - tr) < 1e-6 && Math.Abs(tr - br) < 1e-6 && Math.Abs(br - bl) < 1e-6)
+            dc.DrawRoundedRectangle(fill, pen, r, tl, tl);
+        else dc.DrawGeometry(fill, pen, RoundedRect(r, tl, tr, br, bl));
 
         if (showGuides) dc.DrawRectangle(null, GuidePen, r);
     }
 
     /// <summary>
     /// 逐角圆角矩形（设备单位）：<strong>半径夹到短边的一半</strong>，否则 ArcTo 会自己翻出去画出怪形状；
-    /// 没被选中的角半径按 0 处理，于是"只圆左上和右下"这类是画得出来的。
+    /// 半径为 0 的角就是直角，于是"左上圆 6、右下圆 2、其余直角"这类是画得出来的（补正四）。
     /// </summary>
-    public static Geometry RoundedRect(Rect box, double radiusMm, Core.Templates.Corner corners)
+    public static Geometry RoundedRect(Rect box, double radiusTopLeft, double radiusTopRight,
+        double radiusBottomRight, double radiusBottomLeft)
     {
         var cap = Math.Min(box.Width, box.Height) / 2;
-        double R(Core.Templates.Corner which) => (corners & which) != 0 ? Math.Min(radiusMm, cap) : 0;
-        var tl = R(Core.Templates.Corner.TopLeft);
-        var tr = R(Core.Templates.Corner.TopRight);
-        var br = R(Core.Templates.Corner.BottomRight);
-        var bl = R(Core.Templates.Corner.BottomLeft);
+        var tl = Math.Min(radiusTopLeft, cap);
+        var tr = Math.Min(radiusTopRight, cap);
+        var br = Math.Min(radiusBottomRight, cap);
+        var bl = Math.Min(radiusBottomLeft, cap);
 
         var geometry = new StreamGeometry();
         using (var c = geometry.Open())

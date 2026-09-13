@@ -8,17 +8,19 @@ public abstract record LayoutItem;
 
 /// <summary>
 /// 已解析好的矩形框（毫米）。<paramref name="Ink"/> 是笔色（null = 黑）；模板外框那一条故意不填（它不属于任何元素）。
-/// <para>第 50 棒另带四件外观：<paramref name="Fill"/>（null = 不填充）、<paramref name="Stroked"/>、
-/// <paramref name="RadiusMm"/> 与 <paramref name="Corners"/>（哪几个角圆）。
-/// 和 <c>Arc</c> 一样：<strong>这些判断全在 Core 做完</strong>，五个出口只照着画，
-/// 不许在渲染端各写一套"什么时候该有填充"。</para>
+/// <para>第 50 棒另带外观：<paramref name="Fill"/>（null = 不填充）、<paramref name="Stroked"/>；
+/// 圆角是<strong>逐角四个半径</strong>（补正四，照 CorelDRAW 的圆角泊坞窗）。
+/// 和 <c>Arc</c> 一样：<strong>这些判断全在 Core 做完</strong>（<c>TemplateElement.CornerRadii()</c> 是唯一读出口），
+/// 五个出口只照着画，不许在渲染端各写一套"什么时候该有填充、哪个角圆多少"。</para>
 /// </summary>
 public sealed record RectItem(double X, double Y, double Width, double Height, double ThicknessMm,
     Colors.LabelColor? Ink = null,
     Colors.LabelColor? Fill = null,
     bool Stroked = true,
-    double RadiusMm = 0,
-    Templates.Corner Corners = Templates.Corner.All) : LayoutItem;
+    double RadiusTopLeftMm = 0,
+    double RadiusTopRightMm = 0,
+    double RadiusBottomRightMm = 0,
+    double RadiusBottomLeftMm = 0) : LayoutItem;
 
 /// <summary>
 /// 已解析好的线段（毫米）。<paramref name="Ink"/> 同 <see cref="RectItem"/>：null = 黑。
@@ -251,12 +253,15 @@ public static class LayoutEngine
                     break;
 
                 case ElementKind.Rect:
+                    var radii = element.CornerRadii();
                     items.Add(new RectItem(element.X, element.Y, element.Width, element.Height, element.ThicknessMm,
                         Ink: InkOf(element.InkColor, context),
                         Fill: FillOf(element.FillColor, context),
                         Stroked: element.ShowsStroke,
-                        RadiusMm: element.CornerRadiusMm,
-                        Corners: element.CornersToRound));
+                        RadiusTopLeftMm: radii.TopLeft,
+                        RadiusTopRightMm: radii.TopRight,
+                        RadiusBottomRightMm: radii.BottomRight,
+                        RadiusBottomLeftMm: radii.BottomLeft));
                     break;
 
                 case ElementKind.Vector:

@@ -279,7 +279,7 @@ public sealed class TemplateEditorViewModel : ObservableObject
         {
             if (Set(ref _selectedRow, value))
             {
-                Editing = value is null ? null : new EditableElement(value.Element, Capture, OnElementEdited);
+                Editing = value is null ? null : new EditableElement(value.Element, Capture, OnElementEdited, this);
                 Raise(nameof(Editing));
                 Raise(nameof(HasSelection));
                 CanvasChanged?.Invoke();
@@ -291,6 +291,12 @@ public sealed class TemplateEditorViewModel : ObservableObject
 
     /// <summary>右侧属性面板的绑定源。</summary>
     public EditableElement? Editing { get; private set; }
+
+    /// <summary>
+    /// 圆角泊坞窗那颗「全部圆角」锁（补正四）。这是**面板状态**，不住元素也不进 JSON：
+    /// 窗口活着就记得，换选一只框再换回来不必重新开锁。默认锁上（＝四个角一起调）。
+    /// </summary>
+    public bool CornersLinked { get; set; } = true;
 
     // ---------- 命令实现 ----------
 
@@ -1762,11 +1768,15 @@ public sealed class EditableElement : ObservableObject
 
     private bool _inkPopupOpen;
 
-    public EditableElement(TemplateElement element, Action capture, Action changed)
+    /// <summary>宿主编辑器 VM：只为放「全部圆角」锁（面板状态，重选元素不该把它清掉）。单测直接构造时可空，锁退回本行自带的一份。</summary>
+    private readonly TemplateEditorViewModel? _owner;
+
+    public EditableElement(TemplateElement element, Action capture, Action changed, TemplateEditorViewModel? owner = null)
     {
         _element = element ?? throw new ArgumentNullException(nameof(element));
         _capture = capture;
         _changed = changed;
+        _owner = owner;
         ApplyInkPresetCommand = new RelayCommand(p => { if (p is InkPreset preset) InkColor = preset.Color; });
         ResetInkCommand = new RelayCommand(() => InkColor = null, () => TargetInk is not null);
         OpenPenEditorCommand = new RelayCommand(() => OpenInkEditor(false));
@@ -1844,7 +1854,14 @@ public sealed class EditableElement : ObservableObject
         set
         {
             if (_editingFill) _element.FillColor = value;
-            else _element.InkColor = value;
+            else
+            {
+                _element.InkColor = value;
+                // 关掉的描边又被选了一支墨＝重新画边框（CorelDRAW 对 X 掉的线框盒选色就是这个行为）。
+                // 不这样就是"选了色却什么都没画"的骗人按钮。
+                if (value is not null && _element.Kind == ElementKind.Rect && !_element.ShowsStroke)
+                    _element.Stroked = null;
+            }
         }
     }
 
@@ -1873,11 +1890,19 @@ public sealed class EditableElement : ObservableObject
     /// <summary>
     /// 面板上那两颗色块与它们旁边那行字，<strong>永远各自显示自己那支墨</strong>（描边那颗看 <c>InkColor</c>、
     /// 填充那颗看 <c>FillColor</c>），与"弹层此刻在编辑谁"无关——否则两行会同时变成同一个颜色。
+    /// <para>补正四（照 CorelDRAW）：矩形<strong>没填充就白底叠一颗斜杠"无颜色"块</strong>，不再画一支
+    /// 骗人的黑；关掉描边同理。斜杠本体在 XAML 里（与弹层那颗同款），这里只给"该不该画斜杠"。</para>
     /// </summary>
-    public Brush PenSwatch => RenderRules.InkOf(_element.InkColor);
-    public Brush FillSwatch => RenderRules.InkOf(_element.FillColor);
+    public Brush PenSwatch => PenShowsSlash ? System.Windows.Media.Brushes.White : RenderRules.InkOf(_element.InkColor);
+    public Brush FillSwatch => FillShowsSlash ? System.Windows.Media.Brushes.White : RenderRules.InkOf(_element.FillColor);
 
-    public string PenSummary => InkText(_element.InkColor, "黑（默认）");
+    /// <summary>填充那颗该画斜杠＝矩形且没填充。</summary>
+    public bool FillShowsSlash => _element.Kind == ElementKind.Rect && _element.FillColor is null;
+
+    /// <summary>笔色那颗该画斜杠＝矩形且描边被关掉（文本/线/条码的 null 笔色是"黑"，不是"无颜色"）。</summary>
+    public bool PenShowsSlash => _element.Kind == ElementKind.Rect && !_element.ShowsStroke;
+
+    public string PenSummary => PenShowsSlash ? "不描边" : InkText(_element.InkColor, "黑（默认）");
     public string FillSummary => InkText(_element.FillColor, "不填充");
 
     private static string InkText(LabelColor? ink, string whenNone)
@@ -2128,7 +2153,7 @@ public sealed class EditableElement : ObservableObject
 
     private void ApplyNoInk()
     {
-        if (EditingFill) FillEnabled = false;
+        if (EditingFill) ClearFill();
         else ShowsStroke = false;
     }
     public ICommand OpenFillEditorCommand { get; }
@@ -2168,26 +2193,17 @@ public sealed class EditableElement : ObservableObject
         return double.TryParse(t, NumberStyles.Float, CultureInfo.InvariantCulture, out var v) && v > 0 ? v : null;
     }
 
-    // ---------- 矩形外观：填充 / 描边 / 圆角（第 50 棒）----------
+    // ---------- 矩形外观：填充 / 描边 / 圆角（第 50 棒；补正四把圆角改成逐角）----------
 
     /// <summary>这只元素是不是矩形（决定那几格显不显示）。</summary>
     public bool IsRect => _element.Kind == ElementKind.Rect;
 
-    /// <summary>填充开关：关掉＝把填充色清空（= 不填充，与老模板同形）；打开＝没填过时给一支黑。</summary>
-    public bool FillEnabled
-    {
-        get => _element.FillColor is not null;
-        set
-        {
-            if (value == (_element.FillColor is not null)) return;
-            Prepare(nameof(FillEnabled));
-            _element.FillColor = value ? LabelColor.Black : null;
-            EditingFill = value;
-            Done();
-        }
-    }
-
-    /// <summary>描边开关。默认开；关掉时存 <c>"stroked": false</c>（开着不写，老文件不变多一行）。</summary>
+    /// <summary>
+    /// 描边开不开。默认开；关掉时存 <c>"stroked": false</c>（开着不写，老文件不变多一行）。
+    /// <para>补正四起面板上没有勾选框了：关掉＝笔色那颗显示斜杠"无颜色"，从弹层再选一支墨
+    /// 就自动把描边叫回来（<c>TargetInk</c> 里那条）。它现在只剩弹层"无颜色"一个消费者，
+    /// 但仍是那份数据的唯一写入口。</para>
+    /// </summary>
     public bool ShowsStroke
     {
         get => _element.ShowsStroke;
@@ -2200,47 +2216,84 @@ public sealed class EditableElement : ObservableObject
         }
     }
 
-    /// <summary>圆角半径（毫米）。0＝直角。</summary>
-    public double CornerRadiusMm
+    /// <summary>关掉填充（弹层那颗"无颜色"从填充进来走这里）。斜杠块就是它的全部 UI，不再有勾选框。</summary>
+    private void ClearFill()
     {
-        get => _element.CornerRadiusMm;
-        set
-        {
-            var v = Math.Max(0, Math.Round(value, 2));
-            if (Near(v, _element.CornerRadiusMm)) return;
-            Prepare(nameof(CornerRadiusMm));
-            _element.CornerRadiusMm = v;
-            Done();
-        }
+        if (_element.FillColor is null) return;
+        Prepare(nameof(FillSwatch));
+        _element.FillColor = null;
+        Done();
     }
 
-    /// <summary>四个角是否全圆（那颗「全部圆角」锁，照 CorelDRAW 的写法）。</summary>
-    public bool CornersAll
+    // ---------- 逐角圆角（补正四，照 CorelDRAW 圆角泊坞窗：四格各填数 + 一颗「全部圆角」锁）----------
+
+    /// <summary>
+    /// 「全部圆角」锁：锁上＝改任何一格，四格同数；打开＝四角各管各的。
+    /// <para>这是面板状态，不是元素数据——存在编辑器 VM 里（窗口活着就记得，重选同一只框不必再开一次锁），
+    /// 不进 JSON、不影响出纸。</para>
+    /// </summary>
+    public bool CornersLinked
     {
-        get => _element.CornersToRound == Corner.All;
+        get => _owner?.CornersLinked ?? _cornersLinkedLocal;
         set
         {
-            if (value == (_element.CornersToRound == Corner.All)) return;
-            Prepare(nameof(CornersAll));
-            _element.RoundedCorners = value ? Corner.All : Corner.None;
-            Done();
+            if (CornersLinked == value) return;
+            if (_owner is not null) _owner.CornersLinked = value;
+            else _cornersLinkedLocal = value;
+            Done();       // 锁一跳，四格数字与"改一格带动不带得动四格"一起刷新
         }
     }
+    private bool _cornersLinkedLocal;
 
-    public bool CornerTopLeft { get => Has(Corner.TopLeft); set => Set(Corner.TopLeft, value); }
-    public bool CornerTopRight { get => Has(Corner.TopRight); set => Set(Corner.TopRight, value); }
-    public bool CornerBottomRight { get => Has(Corner.BottomRight); set => Set(Corner.BottomRight, value); }
-    public bool CornerBottomLeft { get => Has(Corner.BottomLeft); set => Set(Corner.BottomLeft, value); }
-
-    private bool Has(Corner which) => (_element.CornersToRound & which) != 0;
-
-    private void Set(Corner which, bool on)
+    /// <summary>左上角圆滑度（毫米）。锁上时改这里＝四个角一起改成这个数。</summary>
+    public double CornerRadiusTopLeftMm
     {
-        var now = _element.CornersToRound;
-        var next = on ? now | which : now & ~which;
-        if (next == now) return;
-        Prepare(nameof(CornersAll));
-        _element.RoundedCorners = next == Corner.All ? null : next;      // 全圆时回到"缺字段"，与老文件同形
+        get => _element.CornerRadii().TopLeft;
+        set => SetCornerRadii(nameof(CornerRadiusTopLeftMm), value, null, null, null);
+    }
+
+    /// <summary>右上角圆滑度（毫米）。</summary>
+    public double CornerRadiusTopRightMm
+    {
+        get => _element.CornerRadii().TopRight;
+        set => SetCornerRadii(nameof(CornerRadiusTopRightMm), null, value, null, null);
+    }
+
+    /// <summary>右下角圆滑度（毫米）。</summary>
+    public double CornerRadiusBottomRightMm
+    {
+        get => _element.CornerRadii().BottomRight;
+        set => SetCornerRadii(nameof(CornerRadiusBottomRightMm), null, null, value, null);
+    }
+
+    /// <summary>左下角圆滑度（毫米）。</summary>
+    public double CornerRadiusBottomLeftMm
+    {
+        get => _element.CornerRadii().BottomLeft;
+        set => SetCornerRadii(nameof(CornerRadiusBottomLeftMm), null, null, null, value);
+    }
+
+    /// <summary>
+    /// 四格里某一格改了：算出新的四角半径（锁上＝以这格的数四角同数；打开＝只动这一角），
+    /// 交 <c>TemplateElement.SetCornerRadii</c> 那份唯一写入口落盘——均匀时仍写老字段，
+    /// 面板改手势不该把老文件撑成新形态。
+    /// </summary>
+    private void SetCornerRadii(string source, double? topLeft, double? topRight, double? bottomRight, double? bottomLeft)
+    {
+        var now = _element.CornerRadii();
+        static double Clamp(double? v, double current) => v is null ? current : Math.Max(0, Math.Round(v.Value, 2));
+        var tl = Clamp(topLeft, now.TopLeft);
+        var tr = Clamp(topRight, now.TopRight);
+        var br = Clamp(bottomRight, now.BottomRight);
+        var bl = Clamp(bottomLeft, now.BottomLeft);
+        if (CornersLinked)
+        {
+            var v = topLeft ?? topRight ?? bottomRight ?? bottomLeft ?? now.TopLeft;
+            tl = tr = br = bl = v;
+        }
+        if (Near(tl, now.TopLeft) && Near(tr, now.TopRight) && Near(br, now.BottomRight) && Near(bl, now.BottomLeft)) return;
+        Prepare(source);
+        _element.SetCornerRadii(tl, tr, br, bl);
         Done();
     }
 
@@ -2432,9 +2485,11 @@ public sealed class EditableElement : ObservableObject
             nameof(InkR), nameof(InkG), nameof(InkB), nameof(InkHex),
             nameof(IsCurve), nameof(NodeCount),
             // 第 50 棒：矩形外观那一组（填充/描边/圆角）。漏一个就是一格显示在骗人。
-            nameof(EditingFill), nameof(FillEnabled), nameof(ShowsStroke), nameof(CornerRadiusMm),
-            nameof(CornerTopLeft), nameof(CornerTopRight), nameof(CornerBottomRight), nameof(CornerBottomLeft),
-            nameof(CornersAll), nameof(IsRect),
+            // 补正四：勾选框与"单半径+四颗角开关"没了，换成逐角四格 + 一颗锁 + 两颗斜杠判据。
+            nameof(EditingFill), nameof(ShowsStroke), nameof(CornersLinked),
+            nameof(CornerRadiusTopLeftMm), nameof(CornerRadiusTopRightMm),
+            nameof(CornerRadiusBottomRightMm), nameof(CornerRadiusBottomLeftMm),
+            nameof(FillShowsSlash), nameof(PenShowsSlash), nameof(IsRect),
             nameof(PenSwatch), nameof(FillSwatch), nameof(PenSummary), nameof(FillSummary),
             nameof(InkTargetText), nameof(InkPopupOpen), nameof(ThicknessText),
         })

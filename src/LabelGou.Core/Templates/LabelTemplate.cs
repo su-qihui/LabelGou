@@ -160,11 +160,73 @@ public sealed class TemplateElement
     /// <summary>哪几个角要圆。<strong>null = 四个角全圆</strong>；单独勾某几个角时才写。</summary>
     public Corner? RoundedCorners { get; set; }
 
+    /// <summary>
+    /// 逐角圆角半径（毫米），顺序 <c>[左上, 右上, 右下, 左下]</c>（第 50 棒补正四，照 CorelDRAW
+    /// 圆角泊坞窗"四格各自填数 + 一颗全部圆角锁"的样子）。
+    /// <para><strong>只有四角半径真的不相等时才写这一格</strong>；四角相同（含全直角）折回
+    /// <see cref="CornerRadiusMm"/> + <see cref="RoundedCorners"/> 那份老形态——
+    /// 所以 v8 文件不碰就存字节不变，"均匀圆角"在新老文件里长一个样子。缺字段 = 按老字段算 = 逐字旧行为。</para>
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public double[]? CornerRadiiMm { get; set; }
+
     /// <summary>这框到底该不该描边（null 视作开，与老文件同形）。</summary>
     public bool ShowsStroke => Stroked ?? true;
 
     /// <summary>这只框圆了哪几个角（null 视作四角全圆）。</summary>
     public Corner CornersToRound => RoundedCorners ?? Corner.All;
+
+    /// <summary>
+    /// 四个角各圆到多少毫米——<strong>全项目读圆角只走这一个口</strong>。
+    /// 逐角数组优先；没有数组就从老字段（半径 + 角名单）折出来。
+    /// </summary>
+    public (double TopLeft, double TopRight, double BottomRight, double BottomLeft) CornerRadii()
+    {
+        if (CornerRadiiMm is { Length: 4 } a) return (a[0], a[1], a[2], a[3]);
+        var r = CornerRadiusMm;
+        var c = CornersToRound;
+        return (
+            (c & Corner.TopLeft) != 0 ? r : 0,
+            (c & Corner.TopRight) != 0 ? r : 0,
+            (c & Corner.BottomRight) != 0 ? r : 0,
+            (c & Corner.BottomLeft) != 0 ? r : 0);
+    }
+
+    /// <summary>
+    /// 一次写全四角半径——<strong>全项目写圆角只走这一个口</strong>（读写同口径，才不会出现
+    /// "面板显示一套、落盘另一套"）。落盘形态取最省的一种：
+    /// 四角相等 → 只写 <see cref="CornerRadiusMm"/>（全直角时它按 WhenWritingDefault 不上盘）；
+    /// 非零值相等、其余角为 0 → 老半径 + 角名单；真的逐角不同 → 才写 <see cref="CornerRadiiMm"/> 数组。
+    /// </summary>
+    public void SetCornerRadii(double topLeft, double topRight, double bottomRight, double bottomLeft)
+    {
+        topLeft = Math.Max(0, topLeft);
+        topRight = Math.Max(0, topRight);
+        bottomRight = Math.Max(0, bottomRight);
+        bottomLeft = Math.Max(0, bottomLeft);
+
+        CornerRadiiMm = null;
+        CornerRadiusMm = 0;
+        RoundedCorners = null;
+        if (topLeft == topRight && topRight == bottomRight && bottomRight == bottomLeft)
+        {
+            CornerRadiusMm = topLeft;                       // 0 = 直角，不写进文件；全圆 = 老形态的缺 RoundedCorners
+            return;
+        }
+        var nonZero = new[] { topLeft, topRight, bottomRight, bottomLeft }.Where(v => v > 0).Distinct().ToArray();
+        if (nonZero.Length == 1)
+        {
+            CornerRadiusMm = nonZero[0];
+            var flags = Corner.None;
+            if (topLeft > 0) flags |= Corner.TopLeft;
+            if (topRight > 0) flags |= Corner.TopRight;
+            if (bottomRight > 0) flags |= Corner.BottomRight;
+            if (bottomLeft > 0) flags |= Corner.BottomLeft;
+            RoundedCorners = flags;                         // 这里到不了 All（全等那支已经先走），不必再省成 null
+            return;
+        }
+        CornerRadiiMm = new[] { topLeft, topRight, bottomRight, bottomLeft };
+    }
 
     /// <summary>文本框内容放不下时是否允许自动缩字号（渲染端执行，引擎只带标志）。</summary>
     public bool ShrinkToFit { get; set; } = true;
@@ -264,7 +326,11 @@ public sealed class LabelTemplate
     /// <see cref="TemplateElement.CornerRadiusMm"/> / <see cref="TemplateElement.RoundedCorners"/>。<strong>四个字段全缺 =
     /// 不填充、有描边、四角直角 = 逐字旧行为</strong>，现有模板文件还是一个都不用更新；填充色与笔色一样是
     /// <c>LabelColor</c> 那个字符串写法（<c>"#c62828"</c> / <c>"cmyk(0 91 90 0)"</c>）。</remarks>
-    public const int CurrentSchemaVersion = 8;
+    /// <remarks>v9 = 第 50 棒补正四：圆角照 CorelDRAW 的圆角泊坞窗改成<strong>逐角各一个半径</strong>，新增
+    /// <see cref="TemplateElement.CornerRadiiMm"/>。<strong>缺这个字段 = 按 v8 那对老字段（半径 + 角名单）折出来 =
+    /// 逐字旧行为</strong>，现有模板文件还是一个都不用更新；反过来，四角相等的圆角仍然只写老字段
+    /// （见 <see cref="TemplateElement.SetCornerRadii"/>），新文件里的"均匀圆角"与 v8 长一个样子。</remarks>
+    public const int CurrentSchemaVersion = 9;
 
     /// <summary>稳定标识，如 <c>builtin.standard-100x80</c>。用户模板用 <c>user.xxx</c>。</summary>
     public string Id { get; set; } = "user." + Guid.NewGuid().ToString("N")[..8];
@@ -521,9 +587,20 @@ public static class TemplateValidator
             if (e.Kind == ElementKind.Rect && !e.ShowsStroke && e.FillColor is null)
                 issues.Add(new TemplateIssue(IssueLevel.Warning,
                     $"{tag} 既不描边也不填充，纸上看不到任何东西（要隐形占位的话，留描边把线宽设小更稳）。", i));
-            if (e.Kind == ElementKind.Rect && e.CornerRadiusMm > Math.Min(e.Width, e.Height) / 2 + 0.01)
-                issues.Add(new TemplateIssue(IssueLevel.Warning,
-                    $"{tag} 圆角半径 {e.CornerRadiusMm:0.##} mm 超过短边一半，实际按 {Math.Min(e.Width, e.Height) / 2:0.##} mm 画（再大就成了胶囊，不是更圆）。", i));
+            if (e.Kind == ElementKind.Rect)
+            {
+                // 逐角判（补正四）：哪个角超了短边一半点哪个角的名，别拿一个数替四个角说话。
+                var cap = Math.Min(e.Width, e.Height) / 2;
+                var (rTl, rTr, rBr, rBl) = e.CornerRadii();
+                var over = new List<string>();
+                if (rTl > cap + 0.01) over.Add($"左上 {rTl:0.##}");
+                if (rTr > cap + 0.01) over.Add($"右上 {rTr:0.##}");
+                if (rBr > cap + 0.01) over.Add($"右下 {rBr:0.##}");
+                if (rBl > cap + 0.01) over.Add($"左下 {rBl:0.##}");
+                if (over.Count > 0)
+                    issues.Add(new TemplateIssue(IssueLevel.Warning,
+                        $"{tag} 圆角 {string.Join('、', over)} mm 超过短边一半，实际按 {cap:0.##} mm 画（再大就成了胶囊，不是更圆）。", i));
+            }
 
             if (e.ThicknessMm <= 0)
                 issues.Add(new TemplateIssue(IssueLevel.Warning, $"{tag} 线宽为 0，打印时不会显示。", i));

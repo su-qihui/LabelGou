@@ -601,9 +601,9 @@ public static class SheetSvgWriter
 
     /// <summary>
     /// 矩形出口：填充、描边开关、圆角各归各的写法。
-    /// <para>四角同半径用 <c>&lt;rect rx ry&gt;</c>；<strong>只圆某几个角</strong>时 <c>rx</c> 表达不了，
+    /// <para>四角同半径用 <c>&lt;rect rx ry&gt;</c>；<strong>逐角不同半径</strong>（补正四）时 <c>rx</c> 表达不了，
     /// 改发 <c>&lt;path&gt;</c>，四分之一圆用 kappa 换算成三次贝塞尔——不依赖各家导入器对
-    /// <c>A</c> 命令的支持差异（CorelDRAW 的 SVG 滤镜本来就够挑三拣四）。半径夹到短边一半，
+    /// <c>A</c> 命令的支持差异（CorelDRAW 的 SVG 滤镜本来就够挑三拣四）。每个半径各夹到短边一半，
     /// 与 WPF 那份 <c>LabelRenderer.RoundedRect</c> 同一个口径，免得屏上一套、SVG 一套。</para>
     /// </summary>
     private static void WriteRect(SvgBuilder builder, RectItem rect)
@@ -611,25 +611,31 @@ public static class SheetSvgWriter
         var fill = FillPaint(rect.Fill);
         var stroke = rect.Stroked ? Stroke(rect.ThicknessMm, RenderRules.InkHex(rect.Ink)) : null;
         var cap = Math.Min(rect.Width, rect.Height) / 2;
-        var radius = Math.Min(rect.RadiusMm, cap);
+        double R(double mm) => Math.Min(mm, cap);
+        var tl = R(rect.RadiusTopLeftMm);
+        var tr = R(rect.RadiusTopRightMm);
+        var br = R(rect.RadiusBottomRightMm);
+        var bl = R(rect.RadiusBottomLeftMm);
 
-        if (radius <= 1e-6 || rect.Corners is Corner.None or Corner.All)
+        if (tl <= 1e-6 && tr <= 1e-6 && br <= 1e-6 && bl <= 1e-6)
         {
-            builder.Rect(rect.X, rect.Y, rect.Width, rect.Height, fill, stroke,
-                rect.Corners == Corner.All ? radius : 0);
+            builder.Rect(rect.X, rect.Y, rect.Width, rect.Height, fill, stroke, 0);
             return;
         }
-        builder.Path(RoundedRectCommands(rect.X, rect.Y, rect.Width, rect.Height, radius, rect.Corners), fill, stroke);
+        if (Math.Abs(tl - tr) < 1e-6 && Math.Abs(tr - br) < 1e-6 && Math.Abs(br - bl) < 1e-6)
+        {
+            builder.Rect(rect.X, rect.Y, rect.Width, rect.Height, fill, stroke, tl);
+            return;
+        }
+        builder.Path(RoundedRectCommands(rect.X, rect.Y, rect.Width, rect.Height, tl, tr, br, bl), fill, stroke);
     }
 
     private const double ArcKappa = 0.5522847498307936;
 
-    /// <summary>逐角圆角矩形 → 路径命令（毫米、绝对）：直线段 + 每个被圆化的角一段三次贝塞尔。</summary>
+    /// <summary>逐角圆角矩形 → 路径命令（毫米、绝对）：直线段 + 每个角按自己的半径一段三次贝塞尔（半径 0 就只剩直角）。</summary>
     private static List<SvgPathCommand> RoundedRectCommands(
-        double x, double y, double w, double h, double r, Corner corners)
+        double x, double y, double w, double h, double tl, double tr, double br, double bl)
     {
-        double R(Corner which) => (corners & which) != 0 ? r : 0;
-        var (tl, tr, br, bl) = (R(Corner.TopLeft), R(Corner.TopRight), R(Corner.BottomRight), R(Corner.BottomLeft));
         var right = x + w;
         var bottom = y + h;
         var commands = new List<SvgPathCommand> { new('M', new[] { x + tl, y }) };
