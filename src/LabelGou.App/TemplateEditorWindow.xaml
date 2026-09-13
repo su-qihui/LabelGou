@@ -50,7 +50,7 @@
                 <TextBlock Text="加元素：" Style="{StaticResource Caption}" />
                 <Button Content="文本" Command="{Binding AddTextCommand}" ToolTip="加一个文本元素（可含字段占位符）" />
                 <ToggleButton Content="曲线" IsChecked="{Binding IsBezierTool}" MinWidth="56" Margin="2,0"
-                              ToolTip="贝塞尔工具（类 CorelDRAW）：点一下就是一个尖角，这一笔是直线；按下拖开就给这一点带上控制柄，刚画出来的那一段跟着弯。&#10;接着点下一处继续画，双击或回车收尾，Esc 取消这一条。&#10;画好后选中它，节点和控制柄可以直接在画布上拖。" />
+                              ToolTip="贝塞尔工具（类 CorelDRAW）：点一下就是一个尖角，这一笔是直线；按下拖开就给这一点带上控制柄，刚画出来的那一段跟着弯。&#10;接着点下一处继续画，双击或回车收尾；Ctrl+Z 退一个落点，Esc 丢掉整条。&#10;画好后选中它，节点和控制柄可以直接在画布上拖。" />
                 <Button Content="矩形框" Command="{Binding AddRectCommand}" ToolTip="加边框/表格线" />
                 <Button Content="图片" Command="{Binding AddImageCommand}" ToolTip="加 Logo 或条码图，会复制到模板目录" />
                 <Button Content="复制" Command="{Binding DuplicateCommand}" ToolTip="复制选中元素（偏移 2mm）" />

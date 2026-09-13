@@ -120,17 +120,29 @@ public class CurveToolTests
         Assert.False(vm.IsDrawingPath);
         return true;
     });
-
     [Fact]
-    public void OneDrawnCurveUndoesAsOneStep() => OnSta(() =>
+    public void CtrlZTakesBackOnePointNotTheWholeCurve() => OnSta(() =>
     {
+        // 用户口径：「调整撤回就是 ctrl+z，目前一撤直接删除了而不是撤回到上一个点」。
+        // CorelDRAW 也是退一个落点，所以每个点各录一步撤销。
         var vm = Open();
         vm.IsBezierTool = true;
-        DrawAnArc(vm, 10, 40, 45, 20, 80, 40);
-        Assert.Single(vm.Template.Elements);
+        vm.BeginPath(10, 40);
+        vm.EndPathSegment();
+        vm.BeginPath(45, 20);
+        vm.EndPathSegment();
+        vm.BeginPath(80, 40);
+        vm.EndPathSegment();
+        vm.FinishPath();
+        Assert.Equal(3, CurveGeometry.NodesOf(Assert.Single(vm.Template.Elements)).Count);
 
         vm.Undo();
-        Assert.Empty(vm.Template.Elements);                                 // 画一条线不该要人按五次撤销
+        var backOne = Assert.Single(vm.Template.Elements);              // 元素还在，只是少了一个落点
+        Assert.Equal((45d, 20d), (backOne.X2, backOne.Y2));
+
+        vm.Undo();
+        vm.Undo();
+        Assert.Empty(vm.Template.Elements);                             // 退到第一个点之前，才算"没画过"
         return true;
     });
 

@@ -710,6 +710,8 @@ public sealed class TemplateEditorViewModel : ObservableObject
         {
             // 新节点一律先当"单击＝尖角"。刻意不把上一节点的出柄镜像过来：那样等于替用户决定"这段要平滑"，
             // 几笔下来柄互相牵着走，画出来的就是乱绕的圈（2026-09-13 用户实拍的那张乱画）。
+              // 每一个点录一步撤销：Ctrl+Z 该退一个落点（CorelDRAW 就是这样），而不是把整条线删掉。
+            Capture();
             _path.Add(new CurveNode(xMm, yMm, 0, 0, 0, 0));
         }
         CurrentNodeIndex = _path.Count - 1;  // 画的过程中也要看得见方向线，否则"这一拖会把上一段弯成什么样"全靠猜
