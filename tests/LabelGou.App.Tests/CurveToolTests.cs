@@ -226,6 +226,26 @@ public class CurveToolTests
     });
 
     [Fact]
+    public void TheCanvasPreviewFollowsTheCurveWhileDragging() => OnSta(() =>
+    {
+        // 画布上那条曲线吃的是 SampleLayout，节点/方向线吃的是模板。
+        // 只刷后者的话就是用户报的现象：拖的时候线是空的，一松手才出现。
+        var vm = Open();
+        vm.IsBezierTool = true;
+        vm.BeginPath(10, 10);
+        vm.EndPathSegment();
+        vm.BeginPath(90, 10);
+        vm.DragPath(60, 45);                                   // 还在拖，没松手
+
+        var arc = Assert.Single(vm.SampleLayout.Items.OfType<LineItem>()).Arc;
+        Assert.NotNull(arc);
+        Assert.False(arc![0].IsStraight);
+        var element = Assert.Single(vm.Template.Elements);
+        Assert.Equal(CurveGeometry.Segments(element)[0].CY2, arc[0].CY2);   // 与模板同一条弧，不是上一帧那条直的
+        return true;
+    });
+
+    [Fact]
     public void GrabbingANodeMakesItTheCurrentNodeForTheThreeCommands() => OnSta(() =>
     {
         var element = Line(10, 50, 90, 50, new CurveNode(50, 20, -8, 0, 2, 0));

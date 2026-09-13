@@ -815,7 +815,9 @@ public sealed class TemplateEditorViewModel : ObservableObject
             ? new List<CurveNode> { _path[0], _path[0] }          // 只点了一下：零长度线，等下一个点
             : new List<CurveNode>(_path);
         CurveGeometry.ApplyNodes(_template.Elements[PathIndex], pts);
-        CanvasChanged?.Invoke();
+          // 画布上那条曲线吃的是 SampleLayout（覆盖层吃的是模板），只刷 CanvasChanged 的话
+          // 节点和方向线会跟着动、线本身不动——用户看到的就是"拖的时候是空的，松手才出现"。
+        RebuildSample();
     }
 
     private void SnapPathForStorage()
