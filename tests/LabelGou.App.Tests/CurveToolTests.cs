@@ -70,6 +70,8 @@ public class CurveToolTests
 
         var element = Assert.Single(vm.Template.Elements);
         Assert.Equal(ElementKind.Line, element.Kind);                       // 还是那类元素，只是会弯了
+        Assert.Same(element, vm.SelectedRow?.Element);       // 画的过程中它必须是被选中的那一个：不然节点与方向线一律不画（用户报的"没预览"）
+        Assert.Equal(2, vm.CurrentNodeIndex);                                // 收尾后当前节点停在最后落的那一点
         Assert.True(CurveGeometry.IsCurved(element));
         Assert.Equal(2, CurveGeometry.Segments(element).Count);             // 三个点 = 两段
         Assert.False(vm.IsDrawingPath);

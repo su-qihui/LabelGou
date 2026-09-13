@@ -698,8 +698,11 @@ public sealed class TemplateEditorViewModel : ObservableObject
                 return false;
             }
             PathIndex = outcome.Index;
+            // 行列表得先刷新，否则下面这句查不到新建的那一行：查不到就不选，
+            // 而节点与方向线只在"选中"时才画——用户看到的就是"拖第二下什么预览都没有"。
+            RefreshElements();
             var placed = _template.Elements[outcome.Index];
-            SelectedRow = Elements.FirstOrDefault(r => ReferenceEquals(r.Element, placed)) ?? SelectedRow;
+            SelectedRow = Elements.FirstOrDefault(r => ReferenceEquals(r.Element, placed));
             // 落点以元素为准：AddElement 找不到原位时会把它挪到最近的空位，拿点击坐标当第一个节点就会与元素对不上。
             _path.Add(new CurveNode(placed.X, placed.Y, 0, 0, 0, 0));
         }

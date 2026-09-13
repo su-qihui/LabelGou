@@ -221,7 +221,10 @@ public sealed class TemplateEditorControl : FrameworkElement
             if (!selected) return;
             if (element.Kind == ElementKind.Line)
             {
-                if (CurveGeometry.IsCurved(element))
+                // 画到一半的那条也要有节点方块（哪怕还没拖出柄）：CDR 就是点一下就看到点落住了。
+                var drawing = _vm is { IsDrawingPath: true, PathIndex: >= 0 }
+                    && ReferenceEquals(_vm.Template.Elements[_vm.PathIndex], element);
+                if (CurveGeometry.IsCurved(element) || drawing)
                 {
                     DrawCurveNodes(dc, element);
                     return;
