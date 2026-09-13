@@ -4,6 +4,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using LabelGou.App.Rendering;
 using LabelGou.App.ViewModels;
+using LabelGou.Core.Barcodes;
 using LabelGou.Core.Editing;
 using LabelGou.Core.Templates;
 using LabelGou.Core.Units;
@@ -199,7 +200,7 @@ public class TemplateEditorFlowTests
         Assert.Equal(3, vm.Template.Elements.Count);
         Assert.Equal(3, vm.Elements.Count);
         Assert.NotNull(vm.SelectedRow);
-        Assert.StartsWith("01", vm.Elements[^1].Display);                   // 第 54 棒：编号从上数——新加的就是最上面那层
+        Assert.StartsWith("03", vm.Elements[^1].Display);                   // 第 55 棒按用户要求换回落位顺序编号（01=最下层）
         Assert.Contains("文本", vm.Elements[^1].Display);
 
         vm.RemoveCommand.Execute(null);
@@ -771,4 +772,81 @@ public class TemplateEditorFlowTests
         }
         return darkest;
     }
+
+    // ---------- 第 55 棒：图层拖排、条码工具、未保存关闭 ----------
+
+    [Fact]
+    public void DraggingALayerRowToAnotherSlotMovesItInOneUndoStep() => OnStaThread(() =>
+    {
+        var vm = NewVm(Path.GetTempPath() + Guid.NewGuid().ToString("N")[..6]);
+        vm.AddTextCommand.Execute(null);                       // 3 个元素
+        var bottom = vm.Template.Elements[0];
+        var bottomWas = vm.Elements[0].Display;                // Undo 走快照深拷贝会换实例——断言用行内容而不是引用
+
+        vm.CaptureLayerDrag();                                 // 窗口在拖起那一刻录一次
+        Assert.True(vm.MoveLayerTo(bottom, 2));                // 一路拖到最上层
+        Assert.Same(bottom, vm.Template.Elements[2]);
+        Assert.Same(bottom, vm.SelectedRow!.Element);          // 拖完选中的还是它
+        vm.Undo();
+        Assert.Equal(bottomWas, vm.Elements[0].Display);       // 一步退回拖之前——撤销按手势数
+    });
+
+    [Fact]
+    public void MovingALayerToItsOwnSlotDoesNothing() => OnStaThread(() =>
+    {
+        var vm = NewVm(Path.GetTempPath() + Guid.NewGuid().ToString("N")[..6]);
+        var first = vm.Template.Elements[0];
+        Assert.False(vm.MoveLayerTo(first, 0));                // 原地：不动、不脏、不进撤销
+        Assert.False(vm.IsDirty);
+    });
+
+    [Fact]
+    public void TheBarcodeToolPlacesOnePlaceholderThenJustSelectsIt() => OnStaThread(() =>
+    {
+        var vm = NewVm(Path.GetTempPath() + Guid.NewGuid().ToString("N")[..6]);
+        vm.AddBarcodeCommand.Execute(null);
+
+        var bar = Assert.Single(vm.Template.Elements, e => e.Kind == ElementKind.Barcode);
+        Assert.Equal(TemplateEditorViewModel.BarcodePlaceholder, bar.Text);
+        Assert.Equal(BarcodeSymbology.Code128, bar.Symbology);
+        Assert.Contains("占位条码", vm.StatusText, StringComparison.Ordinal);
+        Assert.Same(bar, vm.SelectedRow!.Element);              // 放进图层列表也选上：位置在右侧图层里看得见
+
+        vm.AddBarcodeCommand.Execute(null);                    // 再按：不放第二只，选中已有的来调
+        Assert.Equal(1, vm.Template.Elements.Count(e => e.Kind == ElementKind.Barcode));
+        Assert.Same(bar, vm.SelectedRow!.Element);
+        Assert.Contains("已经有一条条码", vm.StatusText, StringComparison.Ordinal);
+    });
+
+    [Fact]
+    public void AnsweringNoKeepsTheEditorOpenWithItsChanges() => OnStaThread(() =>
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "labelgou-close-no-" + Guid.NewGuid().ToString("N")[..6]);
+        Directory.CreateDirectory(folder);
+        var vm = NewVm(folder);
+        vm.AddTextCommand.Execute(null);                       // 弄脏
+        var count = vm.Template.Elements.Count;
+        var window = new TemplateEditorWindow(vm) { AskSaveBeforeClose = () => false };
+
+        window.Close();
+        Assert.True(vm.IsDirty);                               // 「否」＝留下继续编辑，改动没丢
+        Assert.Equal(count, vm.Template.Elements.Count);
+    });
+
+    [Fact]
+    public void AnsweringSaveStoresAndLetsTheWindowClose() => OnStaThread(() =>
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "labelgou-close-yes-" + Guid.NewGuid().ToString("N")[..6]);
+        Directory.CreateDirectory(folder);
+        var vm = NewVm(folder);
+        vm.AddTextCommand.Execute(null);                       // 弄脏
+        var window = new TemplateEditorWindow(vm) { AskSaveBeforeClose = () => true };
+
+        window.Close();
+        // "保存"走 BeginInvoke（Normal）：外层 STA 帧是 Send 优先级，泵必须用更低优先级才会把它消化掉
+        System.Windows.Threading.Dispatcher.CurrentDispatcher.Invoke(() => { },
+            System.Windows.Threading.DispatcherPriority.Background);
+        Assert.False(vm.IsDirty);                              // 「保存」＝存盘并放行关闭
+        Assert.True(Directory.GetFiles(folder, "*.json").Length > 0, "说好了保存，模板库里却没有文件");
+    });
 }

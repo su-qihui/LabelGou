@@ -82,11 +82,12 @@ public sealed class PropertyPanelLayoutTests
     }
 
     /// <summary>
-    /// 第 54 棒照 CorelDRAW 重排的拓扑判据（反向断言钉死，防"顺手挪回去"）：
-    /// 工具箱贴左、图层面板贴右、画布居中；图层列表<strong>第一行 = 最上层元素</strong>（对象管理器反序读法）。
+    /// 编辑器重排的拓扑判据（反向断言钉死，防"顺手挪回去"）：工具箱贴左、图层面板贴右、画布居中。
+    /// <para>第 55 棒按用户要求把图层顺序换回落位序（01=最下层在最上，"最上在上"那版他说讲错了）；
+    /// 换位交互改成按住行上下拖（VM 侧 MoveLayerTo 有独立钉子，这里只钉拓扑）。</para>
     /// </summary>
     [Fact]
-    public void TheToolboxSitsLeftTheLayerPanelRightAndTheTopLayerIsFirst() => OnSta(() =>
+    public void TheToolboxSitsLeftAndTheLayerPanelRight() => OnSta(() =>
     {
         var template = new LabelTemplate
         {
@@ -109,9 +110,9 @@ public sealed class PropertyPanelLayoutTests
 
         Assert.True(toolbox.TranslatePoint(new Point(0, 0), root).X < 30, "工具箱不在最左");
         Assert.True(layerBox.TranslatePoint(new Point(0, 0), root).X > 700, "图层面板不在右侧");
-        Assert.True(list.Items.Count == 2, $"图层列表没吃到数据（{list.Items.Count} 行）——视图绑定断了，反序也就无从谈起");
+        Assert.True(list.Items.Count == 2, $"图层列表没吃到数据（{list.Items.Count} 行）");
         var first = Assert.IsType<ElementRow>(list.Items[0]);
-        Assert.Same(template.Elements[^1], first.Element);            // 最上层的排第一行；从前"末尾=最上"藏在列表底部，逻辑反了
+        Assert.Same(template.Elements[0], first.Element);            // 落位顺序：第一行是最下层（第 55 棒换回原样）
         return true;
     });
 }

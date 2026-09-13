@@ -7,6 +7,7 @@ using System.Windows.Media;
 using LabelGou.App.Mvvm;
 using LabelGou.App.Rendering;
 using LabelGou.App.Services;
+using LabelGou.Core.Barcodes;
 using LabelGou.Core.Colors;
 using LabelGou.Core.Editing;
 using LabelGou.Core.Layout;
@@ -115,6 +116,9 @@ public sealed class TemplateEditorViewModel : ObservableObject
     public LabelLayout SampleLayout { get; private set; } = new();
 
     public ICommand AddTextCommand { get; private set; } = null!;
+
+    /// <summary>「条码」工具（第 55 棒）：没有条码就放一只 Code128 占位供摆位，已有就选中来调。</summary>
+    public ICommand AddBarcodeCommand { get; private set; } = null!;
     public ICommand AddImageCommand { get; private set; } = null!;
     public ICommand RemoveCommand { get; private set; } = null!;
     public ICommand DuplicateCommand { get; private set; } = null!;
@@ -304,6 +308,7 @@ public sealed class TemplateEditorViewModel : ObservableObject
     public void BuildCommands()
     {
         AddTextCommand = new RelayCommand(() => AddElement(TemplateFactory.NewText("新文本", _template.PaddingMm, _template.PaddingMm, 30, 6), "文本"));
+        AddBarcodeCommand = new RelayCommand(AddBarcode);
         BuildNodeCommands();
         AddImageCommand = new RelayCommand(AddImage);
         RemoveCommand = new RelayCommand(RemoveSelected, () => SelectedRow is not null);
@@ -347,6 +352,42 @@ public sealed class TemplateEditorViewModel : ObservableObject
             ? $"已添加{kindText}（第 {added.Index + 1} 个），它叠在现有内容上，拖到想要的位置即可。"
             : $"已添加{kindText}（第 {added.Index + 1} 个），拖动即可摆位置。";
     }
+
+    /// <summary>
+    /// 条码工具（第 55 棒，融入左侧工具箱）：模板里还没有条码就放一只 <strong>Code128 / 123456789 占位条码</strong>
+    /// ——它只为先把位置摆对；等 ③ 步把条码列对接（或在「内容」栏填 <c>{{col:条码列}}</c>），换的就是真条码。
+    /// 已有条码的不重复放，直接选中那一只来调整——工具箱里这颗按钮因此永远"有的调、没有的给"。
+    /// </summary>
+    private void AddBarcode()
+    {
+        var existing = _template.Elements.FirstOrDefault(e => e.Kind == ElementKind.Barcode);
+        if (existing is not null)
+        {
+            RefreshElements();
+            SelectedRow = Elements.FirstOrDefault(r => ReferenceEquals(r.Element, existing));
+            StatusText = "这份模板已经有一条条码，已选中它——要换内容就在右边「内容」栏改（对接条码列后填那列的字段）。";
+            return;
+        }
+        var margin = Math.Min(4, _template.WidthMm * 0.04);
+        var element = new TemplateElement
+        {
+            Kind = ElementKind.Barcode,
+            Text = BarcodePlaceholder,
+            Symbology = BarcodeSymbology.Code128,
+            ShowBarcodeText = true,
+            FontSizePt = 8,
+            ThicknessMm = 0.35,
+            X = margin,
+            Y = Math.Max(margin, _template.HeightMm - 12 - margin),
+            Width = Math.Max(20, _template.WidthMm - margin * 2),
+            Height = Math.Min(12, Math.Max(6, _template.HeightMm - margin * 2)),
+        };
+        AddElement(element, "条码（Code128 占位）");
+        StatusText = $"已放一只 {BarcodeSymbology.Code128} 占位条码（{BarcodePlaceholder}）：先摆位置，条码列对接后把「内容」改成那一列的字段就是真条码。";
+    }
+
+    /// <summary>占位条码的内容——只为摆位，不代表任何真货。</summary>
+    public const string BarcodePlaceholder = "123456789";
 
     private void AddImage()
     {
@@ -434,6 +475,29 @@ public sealed class TemplateEditorViewModel : ObservableObject
         Touch();
         RebuildSample();
         StatusText = LayerStatus(delta, before, target);
+    }
+
+    /// <summary>图层拖动起手录一次撤销快照（第 55 棒：一次越过几行也只退一步——撤销按手势数，第 49 棒口径）。</summary>
+    public void CaptureLayerDrag() => Capture();
+
+    /// <summary>
+    /// 把某个元素直接挪到指定的落位下标（第 55 棒：图层行按住上下拖——拖到哪一层就落到哪一层）。
+    /// <para>一次拖动里每越过一行调一次这里；撤销快照由调用方在拖起时录一次——
+    /// 撤销按手势数不按越过次数（第 49 棒立的口径）。返回值只说"这次真的动了没有"。</para>
+    /// </summary>
+    public bool MoveLayerTo(TemplateElement element, int targetIndex)
+    {
+        var from = _template.Elements.IndexOf(element);
+        if (from < 0) return false;
+        targetIndex = Math.Clamp(targetIndex, 0, _template.Elements.Count - 1);
+        if (targetIndex == from) return false;
+        var moved = EditGeometry.MoveLayer(_template, from, targetIndex - from);
+        RefreshElements();
+        SelectedRow = Elements.FirstOrDefault(r => ReferenceEquals(r.Element, element));
+        Touch();
+        RebuildSample();
+        StatusText = moved > from ? "已把这一层往下挪。" : "已把这一层往上挪。";
+        return true;
     }
 
     private static string LayerStatus(int delta, int from, int to)
@@ -1770,7 +1834,7 @@ public sealed class TemplateEditorViewModel : ObservableObject
     {
         var keep = SelectedRow?.Element;
         Elements.Clear();
-        for (var i = 0; i < _template.Elements.Count; i++) Elements.Add(new ElementRow(i, _template.Elements[i], _template.Elements.Count));
+        for (var i = 0; i < _template.Elements.Count; i++) Elements.Add(new ElementRow(i, _template.Elements[i]));
         SelectedRow = keep is null ? null : Elements.FirstOrDefault(r => ReferenceEquals(r.Element, keep)) ?? Elements.LastOrDefault();
         CanvasChanged?.Invoke();
     }
@@ -1916,20 +1980,16 @@ public sealed record FieldOption(string Token, string Display)
     public override string ToString() => Display;
 }
 
-/// <summary>右侧图层列表的一行（按引用认元素，重排后仍能保持选中）。列表显示顺序由视图按 Ordinal 倒序排——最上层的排最上面，与 CorelDRAW 对象管理器同读法；Ordinal 本身仍是模板里的落位下标（0=最下层），VM 内部按它寻行。</summary>
+/// <summary>右侧图层列表的一行（按引用认元素，重排后仍能保持选中）。列表按落位顺序显示（01=最下层在最上，第 55 棒按用户要求换回原序），行可以直接按住上下拖换位。</summary>
 public sealed class ElementRow
 {
-    public ElementRow(int ordinal, TemplateElement element, int total)
+    public ElementRow(int ordinal, TemplateElement element)
     {
         Ordinal = ordinal;
         Element = element;
-        TopNumber = total - ordinal;
     }
 
     public int Ordinal { get; internal set; }
-
-    /// <summary>从上往下数第几层（1 = 最上层）——给人看的编号。</summary>
-    public int TopNumber { get; internal set; }
 
     public TemplateElement Element { get; }
 
@@ -1945,7 +2005,7 @@ public sealed class ElementRow
         _ => "元素",
     };
 
-    public string Display => $"{TopNumber:00}　{KindText}　{Summary}";
+    public string Display => $"{Ordinal + 1:00}　{KindText}　{Summary}";
 
     private string Summary
     {

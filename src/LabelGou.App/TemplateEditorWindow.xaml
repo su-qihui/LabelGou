@@ -5,7 +5,6 @@
         xmlns:tm="clr-namespace:LabelGou.Core.Templates;assembly=LabelGou.Core"
         xmlns:vm="clr-namespace:LabelGou.App.ViewModels"
         xmlns:sys="clr-namespace:System;assembly=mscorlib"
-        xmlns:scm="clr-namespace:System.ComponentModel;assembly=WindowsBase"
         Title="{Binding Title}"
         Width="1180" Height="760" MinWidth="980" MinHeight="620"
         WindowStartupLocation="CenterOwner"
@@ -14,13 +13,6 @@
         Background="#F4F5F7">
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BoolVis" />
-        <!--  图层列表的视图（第 54 棒照 CorelDRAW 对象管理器）：最上面的排最上面。
-              只改显示顺序——VM 里 Elements 仍按落位下标存（0=最下层），命令与测试都不受影响。  -->
-        <CollectionViewSource x:Key="LayerView" Source="{Binding Elements}">
-            <CollectionViewSource.SortDescriptions>
-                <scm:SortDescription PropertyName="Ordinal" Direction="Descending" />
-            </CollectionViewSource.SortDescriptions>
-        </CollectionViewSource>
         <local:InverseBooleanToVisibilityConverter x:Key="BoolVisInv"
                                                    xmlns:local="clr-namespace:LabelGou.App.Mvvm" />
         <!--
@@ -143,8 +135,8 @@
                 <ColumnDefinition Width="320" />
             </Grid.ColumnDefinitions>
 
-            <!-- 左：工具箱（第 54 棒照 CorelDRAW——加元素的工具在左边竖排）。默认态就是"挑选"：再点一次选中的工具即收起。 -->
-            <GroupBox x:Name="ToolboxBox" Grid.Column="0" Margin="0,0,10,0" Width="86">
+            <!-- 左：工具箱（第 54 棒照 CorelDRAW——加元素的工具在左边竖排；第 55 棒加宽一档，底部"插入字段"那颗不再被裁）。默认态就是"挑选"：再点一次选中的工具即收起。 -->
+            <GroupBox x:Name="ToolboxBox" Grid.Column="0" Margin="0,0,10,0" Width="112">
                 <GroupBox.Header>
                     <TextBlock Text="工具" Style="{StaticResource StepTitle}" />
                 </GroupBox.Header>
@@ -155,7 +147,8 @@
                                   SelectedItem="{Binding SelectedFieldOption}"
                                   DisplayMemberPath="Display" MaxDropDownHeight="320" Margin="0,4,0,0" />
                         <Button Content="插入选中字段" Command="{Binding InsertFieldCommand}"
-                                CommandParameter="{Binding SelectedFieldOption.Token}" Margin="0,6,0,0" MinWidth="72" />
+                                CommandParameter="{Binding SelectedFieldOption.Token}" Margin="0,6,0,0"
+                                HorizontalAlignment="Stretch" MinWidth="0" />
                     </StackPanel>
                     <StackPanel>
                         <Button Content="文本" Command="{Binding AddTextCommand}" Margin="2,2"
@@ -170,6 +163,8 @@
                                       ToolTip="多边形工具（CorelDRAW 原文「绘制多边形」）：同一种拖法，落下来是正多边形，首点朝上；默认五边，边数在属性面板改。按住 Ctrl＝外接盒保持正方。Esc 取消。" />
                         <ToggleButton Content="形状" IsChecked="{Binding IsNodeTool}" Margin="2,2"
                                       ToolTip="转换点工具（CorelDRAW 形状工具，原文「编辑对象的节点」）：&#10;曲线——拖节点/拖柄、双击线段加一个点、选中点按 Delete 删掉；&#10;多边形/矩形——抓顶点会先「转换为曲线」（CDR 同口径），带圆角的矩形不给转并说原因。" />
+                        <Button Content="条码" Command="{Binding AddBarcodeCommand}" Margin="2,2"
+                                ToolTip="放一只 Code128 占位条码（123456789）用来摆位置——条码列对接后，把右边「内容」栏改成那一列的字段就是真条码。&#10;模板里已有条码时，这颗直接选中它来调整，不放第二只。" />
                         <Separator Margin="2,6" Background="#DDDDDD" />
                         <Button Content="图片" Command="{Binding AddImageCommand}" Margin="2,2" ToolTip="加 Logo 或条码图，会复制到模板目录" />
                         <Button Content="复制" Command="{Binding DuplicateCommand}" Margin="2,2" ToolTip="复制选中元素（偏移 2mm）" />
@@ -200,7 +195,7 @@
 
                 <GroupBox x:Name="LayerBox">
                     <GroupBox.Header>
-                        <TextBlock Text="图层（最上在上）" Style="{StaticResource StepTitle}" />
+                        <TextBlock Text="图层（按住行上下拖＝换位）" Style="{StaticResource StepTitle}" />
                     </GroupBox.Header>
                     <DockPanel>
                         <UniformGrid DockPanel.Dock="Bottom" Rows="1" Columns="4" Margin="0,6,0,0">
@@ -210,8 +205,11 @@
                             <Button Content="置最上" Command="{Binding BringToFrontCommand}" MinWidth="0" Margin="0,0,3,0" ToolTip="压在别的元素上面" />
                             <Button Content="置最下" Command="{Binding SendToBackCommand}" MinWidth="0" ToolTip="垫到别的元素下面" />
                         </UniformGrid>
-                        <ListBox x:Name="LayerList" ItemsSource="{Binding Source={StaticResource LayerView}}" SelectedItem="{Binding SelectedRow}"
-                                 HorizontalContentAlignment="Stretch" FontFamily="Consolas, Microsoft YaHei" MaxHeight="260">
+                        <ListBox x:Name="LayerList" ItemsSource="{Binding Elements}" SelectedItem="{Binding SelectedRow}"
+                                 HorizontalContentAlignment="Stretch" FontFamily="Consolas, Microsoft YaHei" MaxHeight="260"
+                                 PreviewMouseLeftButtonDown="LayerList_PreviewMouseLeftButtonDown"
+                                 PreviewMouseMove="LayerList_PreviewMouseMove"
+                                 PreviewMouseLeftButtonUp="LayerList_PreviewMouseLeftButtonUp">
                             <ListBox.ItemTemplate>
                                 <DataTemplate>
                                     <StackPanel>
