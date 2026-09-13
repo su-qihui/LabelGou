@@ -196,14 +196,13 @@ public sealed class TemplateEditorControl : FrameworkElement
     {
         // 第 44 棒：文本按 VM 量出的【墨迹盒】画（选中框贴着字走，不再框整条行带——用户圈的红框）；
         // 其余元素退回 VisualBoxOf（含拉伸的视觉盒）。量不到版面项时（隐藏/异常）也退回默认盒。
-        // 转过的元素连框带句柄一起绕【排版盒中心】转——命中与句柄判据（ToLocal）锚的就是这个中心，
-        // 画成轴对齐会出现"看得见句柄、点不中"的错位（43 棒遗留，这条一并收掉）。
+        // 第 52 棒：转过的元素连框带句柄绕【看得见那块自己的中心】转——与渲染端 PushGeometry 同一个锚点
+        // （从前绕排版盒中心，左对齐短字的框会绕到字外面去）。命中判据（HandleAt→ToLocal）吃同一个盒。
         var box = _vm?.DisplayBoxOf(element) ?? EditGeometry.VisualBoxOf(element);
-        var anchor = EditGeometry.BoxOf(element);
         var rotated = Math.Abs(element.RotationDeg) > 1e-6 && element.Kind != ElementKind.Line;
         if (rotated)
             dc.PushTransform(new RotateTransform(element.RotationDeg,
-                ToDiuX(anchor.X + anchor.Width / 2), ToDiuY(anchor.Y + anchor.Height / 2)));
+                ToDiuX(box.X + box.Width / 2), ToDiuY(box.Y + box.Height / 2)));
         try
         {
             var rect = new Rect(ToDiuX(box.X), ToDiuY(box.Y), Math.Max(1, Mm.ToDiu(box.Width) * _zoom), Math.Max(1, Mm.ToDiu(box.Height) * _zoom));

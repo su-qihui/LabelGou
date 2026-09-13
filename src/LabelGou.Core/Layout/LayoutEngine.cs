@@ -20,26 +20,31 @@ public sealed record RectItem(double X, double Y, double Width, double Height, d
     double RadiusTopLeftMm = 0,
     double RadiusTopRightMm = 0,
     double RadiusBottomRightMm = 0,
-    double RadiusBottomLeftMm = 0) : LayoutItem;
+    double RadiusBottomLeftMm = 0,
+    double RotationDeg = 0) : LayoutItem;
 
 /// <summary>
 /// 已解析好的椭圆（毫米，第 51 棒）：外接盒 + 那套与矩形共用的外观（<paramref name="Fill"/> null = 不填充、
 /// <paramref name="Stroked"/>、<paramref name="Ink"/>）。渲染端不许自己判"圆不圆得下"。
+/// <paramref name="RotationDeg"/>（第 52 棒）＝绕外接盒中心顺时针转——形状本体与选择框/越界判据同一个中心。
 /// </summary>
 public sealed record EllipseItem(double X, double Y, double Width, double Height, double ThicknessMm,
     Colors.LabelColor? Ink = null,
     Colors.LabelColor? Fill = null,
-    bool Stroked = true) : LayoutItem;
+    bool Stroked = true,
+    double RotationDeg = 0) : LayoutItem;
 
 /// <summary>
 /// 已解析好的正多边形（毫米，第 51 棒）。<paramref name="Points"/> 是 Core <c>ShapeGeometry</c> 数出来的
 /// 顶点表（绝对毫米）——<strong>出口只照着连点</strong>，谁自己再推一遍角度就是第二套口径。
+/// <paramref name="RotationDeg"/>（第 52 棒）＝绕外接盒中心转；点表本身仍是未旋转的本地形状。
 /// </summary>
 public sealed record PolygonItem(double X, double Y, double Width, double Height, double ThicknessMm,
     System.Collections.Generic.IReadOnlyList<(double X, double Y)> Points,
     Colors.LabelColor? Ink = null,
     Colors.LabelColor? Fill = null,
-    bool Stroked = true) : LayoutItem;
+    bool Stroked = true,
+    double RotationDeg = 0) : LayoutItem;
 
 /// <summary>
 /// 已解析好的线段（毫米）。<paramref name="Ink"/> 同 <see cref="RectItem"/>：null = 黑。
@@ -280,14 +285,16 @@ public static class LayoutEngine
                         RadiusTopLeftMm: radii.TopLeft,
                         RadiusTopRightMm: radii.TopRight,
                         RadiusBottomRightMm: radii.BottomRight,
-                        RadiusBottomLeftMm: radii.BottomLeft));
+                        RadiusBottomLeftMm: radii.BottomLeft,
+                        RotationDeg: element.RotationDeg));
                     break;
 
                 case ElementKind.Ellipse:
                     items.Add(new EllipseItem(element.X, element.Y, element.Width, element.Height, element.ThicknessMm,
                         Ink: InkOf(element.InkColor, context),
                         Fill: FillOf(element.FillColor, context),
-                        Stroked: element.ShowsStroke));
+                        Stroked: element.ShowsStroke,
+                        RotationDeg: element.RotationDeg));
                     break;
 
                 case ElementKind.Polygon:
@@ -295,7 +302,8 @@ public static class LayoutEngine
                         Templates.ShapeGeometry.PolygonPoints(element),
                         Ink: InkOf(element.InkColor, context),
                         Fill: FillOf(element.FillColor, context),
-                        Stroked: element.ShowsStroke));
+                        Stroked: element.ShowsStroke,
+                        RotationDeg: element.RotationDeg));
                     break;
 
                 case ElementKind.Vector:

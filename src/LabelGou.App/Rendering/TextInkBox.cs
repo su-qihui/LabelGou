@@ -43,10 +43,11 @@ public static class TextInkBox
             Math.Max(EditGeometry.MinSideMm, mh * item.TextScaleY));
     }
 
-    /// <summary>墨迹转完之后的外接矩形（纸面毫米）。没转就等于墨迹盒本身。</summary>
+    /// <summary>墨迹转完之后的外接矩形（纸面毫米）。没转就等于墨迹盒本身。
+    /// 旋转中心＝<strong>墨迹盒自己的中心</strong>（第 52 棒改口径：从前绕排版盒中心，与渲染端一起偏）。</summary>
     public static (double X, double Y, double Right, double Bottom) RotatedOf(TextItem item,
         (double X, double Y, double Width, double Height) ink)
-        => EditGeometry.RotatedBoundsOf(ink, item.RotationDeg, item.X + item.Width / 2, item.Y + item.Height / 2);
+        => EditGeometry.RotatedBoundsOf(ink, item.RotationDeg, ink.X + ink.Width / 2, ink.Y + ink.Height / 2);
 
     /// <summary>
     /// 这一版版面里<strong>文字墨迹探出纸边</strong>最多几毫米（含旋转后的外接、含字面拉伸）。

@@ -163,12 +163,22 @@ public static class LabelRenderer
         var br = D(rect.RadiusBottomRightMm);
         var bl = D(rect.RadiusBottomLeftMm);
 
-        if (tl <= 1e-6 && tr <= 1e-6 && br <= 1e-6 && bl <= 1e-6) dc.DrawRectangle(fill, pen, r);
+        if (tl <= 1e-6 && tr <= 1e-6 && br <= 1e-6 && bl <= 1e-6) DrawRotated(dc, r, rect.RotationDeg, () => dc.DrawRectangle(fill, pen, r));
         else if (Math.Abs(tl - tr) < 1e-6 && Math.Abs(tr - br) < 1e-6 && Math.Abs(br - bl) < 1e-6)
-            dc.DrawRoundedRectangle(fill, pen, r, tl, tl);
-        else dc.DrawGeometry(fill, pen, RoundedRect(r, tl, tr, br, bl));
+            DrawRotated(dc, r, rect.RotationDeg, () => dc.DrawRoundedRectangle(fill, pen, r, tl, tl));
+        else DrawRotated(dc, r, rect.RotationDeg, () => dc.DrawGeometry(fill, pen, RoundedRect(r, tl, tr, br, bl)));
 
         if (showGuides) dc.DrawRectangle(null, GuidePen, r);
+    }
+
+    /// <summary>把一次绘制绕盒中心转 <paramref name="rotationDeg"/>（0 时零开销直过）。形状与图片共用；
+    /// 文字的锚点不是盒心，走 <see cref="PushGeometry"/> 带旋转中心那条。</summary>
+    private static void DrawRotated(DrawingContext dc, Rect box, double rotationDeg, Action draw)
+    {
+        if (Math.Abs(rotationDeg) <= 1e-6) { draw(); return; }
+        var pushed = PushGeometry(dc, box, rotationDeg, 1, 1);
+        try { draw(); }
+        finally { if (pushed) dc.Pop(); }
     }
 
     /// <summary>
@@ -210,7 +220,9 @@ public static class LabelRenderer
             Mm.ToDiu(ellipse.X + ellipse.Width / 2) * scale,
             Mm.ToDiu(ellipse.Y + ellipse.Height / 2) * scale);
         var geometry = new EllipseGeometry(center, Mm.ToDiu(ellipse.Width) / 2 * scale, Mm.ToDiu(ellipse.Height) / 2 * scale);
-        dc.DrawGeometry(fill, pen, geometry);
+        DrawRotated(dc, new Rect(Mm.ToDiu(ellipse.X) * scale, Mm.ToDiu(ellipse.Y) * scale,
+            Mm.ToDiu(ellipse.Width) * scale, Mm.ToDiu(ellipse.Height) * scale), ellipse.RotationDeg,
+            () => dc.DrawGeometry(fill, pen, geometry));
 
         if (showGuides)
             dc.DrawRectangle(null, GuidePen, new Rect(Mm.ToDiu(ellipse.X) * scale, Mm.ToDiu(ellipse.Y) * scale,
@@ -222,7 +234,9 @@ public static class LabelRenderer
     {
         var fill = polygon.Fill is null ? null : RenderRules.InkOf(polygon.Fill);
         var pen = polygon.Stroked ? RenderRules.PenFor(RenderRules.InkOf(polygon.Ink), polygon.ThicknessMm, scale, target) : null;
-        dc.DrawGeometry(fill, pen, PolygonGeometry(polygon.Points, scale));
+        DrawRotated(dc, new Rect(Mm.ToDiu(polygon.X) * scale, Mm.ToDiu(polygon.Y) * scale,
+            Mm.ToDiu(polygon.Width) * scale, Mm.ToDiu(polygon.Height) * scale), polygon.RotationDeg,
+            () => dc.DrawGeometry(fill, pen, PolygonGeometry(polygon.Points, scale)));
 
         if (showGuides)
             dc.DrawRectangle(null, GuidePen, new Rect(Mm.ToDiu(polygon.X) * scale, Mm.ToDiu(polygon.Y) * scale,
@@ -298,7 +312,16 @@ public static class LabelRenderer
         if (fit is null) return;
 
         var box = fit.BoxDiu;
-        var pushed = PushGeometry(dc, box, text.RotationDeg, text.TextScaleX, text.TextScaleY);
+        // 旋转锚点（第 52 棒）＝拉伸后的墨迹中心：短字在宽行带里绕带心转会"飞出去"（用户报的偏移），
+        // CDR 的语义是绕对象自己看得见的那块转。墨迹先随拉伸走（绕盒中心），它的中心就是旋转中心。
+        var inkCx = fit.InkLeftDiu + fit.Formatted.WidthIncludingTrailingWhitespace / 2;
+        var inkCy = fit.TextTopDiu + fit.Formatted.Height / 2;
+        var boxCx = box.X + box.Width / 2;
+        var boxCy = box.Y + box.Height / 2;
+        var rotateAbout = new Point(
+            boxCx + (inkCx - boxCx) * text.TextScaleX,
+            boxCy + (inkCy - boxCy) * text.TextScaleY);
+        var pushed = PushGeometry(dc, box, text.RotationDeg, text.TextScaleX, text.TextScaleY, rotateAbout);
         try
         {
             // 需人工核对的字段与”缩到下限仍装不下、被省略号截断”共用同一套警示样式（文字颜色已在 TextFit 里换成警示色）
@@ -315,11 +338,14 @@ public static class LabelRenderer
     }
 
     /// <summary>
-    /// 叠一层「先按中心拉伸、再按中心旋转」的变换（毫米盒已由调用方乘成 DIU）。<paramref name=”rotationDeg”/>
+    /// 叠一层「先按中心拉伸、再按旋转中心转动」的变换（毫米盒已由调用方乘成 DIU）。<paramref name=”rotationDeg”/>
     /// 为 0 且倍率为 1 时什么都不做（返回 false，调用方连 Pop 都省）。
     /// <para>顺序是 scale 后 rotate（CDR 变换手感：抻完再转，转的是抻好的结果）。</para>
+    /// <para><paramref name=”rotationCenter”/>（第 52 棒）＝旋转绕的点，<strong>文字传拉伸后的墨迹中心</strong>
+    /// （<see cref=”Core.Editing.EditGeometry.RotationCenterOf”/> 同一口径）；不传＝盒中心（形状与图片本就在盒中心）。</para>
     /// </summary>
-    private static bool PushGeometry(DrawingContext dc, Rect box, double rotationDeg, double scaleX, double scaleY)
+    private static bool PushGeometry(DrawingContext dc, Rect box, double rotationDeg, double scaleX, double scaleY,
+        Point? rotationCenter = null)
     {
         var stretch = Math.Abs(scaleX - 1) > 1e-6 || Math.Abs(scaleY - 1) > 1e-6;
         var rotate = Math.Abs(rotationDeg) > 1e-6;
@@ -327,16 +353,29 @@ public static class LabelRenderer
 
         var cx = box.X + box.Width / 2;
         var cy = box.Y + box.Height / 2;
+        var rc = rotationCenter ?? new Point(cx, cy);
         var group = new TransformGroup();
         // 变换按【从先到后】作用到点上（WPF TransformGroup 子项就是这个顺序）。目标合成 =
-        // 先绕盒中心拉伸、再绕盒中心旋转（CDR 手感：抻完再转，转的是抻好的结果）。
+        // 先绕盒中心拉伸、再绕旋转中心转动（CDR 手感：抻完再转，转的是抻好的结果）。
         // 中心缩放的三段式是 translate(-c) → scale → translate(+c)，顺序写反会把拉伸镜像到中心另一侧。
         if (stretch) group.Children.Add(new TranslateTransform(-cx, -cy));
         if (stretch) group.Children.Add(new ScaleTransform(scaleX, scaleY));
         if (rotate)
         {
-            // 拉伸时中心已被平移到原点，这里用"绕原点"旋转；没拉伸才用带圆心的 RotateTransform。
-            group.Children.Add(stretch ? new RotateTransform(rotationDeg) : new RotateTransform(rotationDeg, cx, cy));
+            // 旋转中心的坐标域要跟着链路走：拉伸分支里，此刻的点已经过 translate(-c)·scale，
+            // 最终坐标 = 当前坐标 + c，所以把”最终域”的 rc 换算成当前域要减 c；没拉伸时 rc 本身就在最终域。
+            var center = stretch ? new Point(rc.X - cx, rc.Y - cy) : rc;
+            group.Children.Add(stretch
+                ? new TransformGroup
+                {
+                    Children =
+                    {
+                        new TranslateTransform(-center.X, -center.Y),
+                        new RotateTransform(rotationDeg),
+                        new TranslateTransform(center.X, center.Y),
+                    },
+                }
+                : new RotateTransform(rotationDeg, center.X, center.Y));
         }
         if (stretch) group.Children.Add(new TranslateTransform(cx, cy));
         dc.PushTransform(group);

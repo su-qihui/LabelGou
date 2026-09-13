@@ -236,16 +236,31 @@ public static class SheetSvgWriter
 
                 case EllipseItem ellipse:
                     // 第 51 棒：发原生 <ellipse>，圆心/半径由外接盒说话——与 LabelRenderer.DrawEllipse 同一个盒。
-                    builder.Ellipse(ellipse.X + ellipse.Width / 2, ellipse.Y + ellipse.Height / 2,
-                        ellipse.Width / 2, ellipse.Height / 2,
-                        FillPaint(ellipse.Fill),
-                        ellipse.Stroked ? Stroke(ellipse.ThicknessMm, RenderRules.InkHex(ellipse.Ink)) : null);
+                    // 第 52 棒：转过的外壳包一层 rotate 组，锚点仍是盒中心。
+                    {
+                        var rot = Math.Abs(ellipse.RotationDeg) > 1e-6;
+                        if (rot)
+                            builder.StartGroup(SvgBuilder.GeometryTransform(
+                                ellipse.X + ellipse.Width / 2, ellipse.Y + ellipse.Height / 2, ellipse.RotationDeg, 1, 1));
+                        builder.Ellipse(ellipse.X + ellipse.Width / 2, ellipse.Y + ellipse.Height / 2,
+                            ellipse.Width / 2, ellipse.Height / 2,
+                            FillPaint(ellipse.Fill),
+                            ellipse.Stroked ? Stroke(ellipse.ThicknessMm, RenderRules.InkHex(ellipse.Ink)) : null);
+                        if (rot) builder.EndLayer();
+                    }
                     break;
 
                 case PolygonItem polygon:
-                    // 点表是 Core 那份（ShapeGeometry），这里一个点都不自己算。
-                    builder.Polygon(polygon.Points, FillPaint(polygon.Fill),
-                        polygon.Stroked ? Stroke(polygon.ThicknessMm, RenderRules.InkHex(polygon.Ink)) : null);
+                    // 点表是 Core 那份（ShapeGeometry），这里一个点都不自己算；转过的外壳包 rotate 组（第 52 棒）。
+                    {
+                        var rot = Math.Abs(polygon.RotationDeg) > 1e-6;
+                        if (rot)
+                            builder.StartGroup(SvgBuilder.GeometryTransform(
+                                polygon.X + polygon.Width / 2, polygon.Y + polygon.Height / 2, polygon.RotationDeg, 1, 1));
+                        builder.Polygon(polygon.Points, FillPaint(polygon.Fill),
+                            polygon.Stroked ? Stroke(polygon.ThicknessMm, RenderRules.InkHex(polygon.Ink)) : null);
+                        if (rot) builder.EndLayer();
+                    }
                     break;
 
                 case LineItem line:
@@ -298,16 +313,26 @@ public static class SheetSvgWriter
     {
         // 第 43 棒：带旋转/拉伸的文字整段包进一个带 transform 的 <g>——变换在 TextFit 决定之后
         // （与 LabelRenderer.DrawText 的 PushGeometry 严格同一顺序同一锚点），五出口才是同一张纸。
+        // 第 52 棒：fit 在这里先解一次，旋转中心按【拉伸后的墨迹中心】算——绕排版盒（隐形行带）
+        // 中心转会让左对齐的短字"飞出去"，与预览端同一个错、同一个修法。
+        var fit = TextFit.Solve(text, scale: 1.0, TextFit.CanonicalPixelsPerDip);
+        if (fit is null) return;
+
         var wrapped = text.HasGeometry;
         if (wrapped)
         {
             var cx = text.X + text.Width / 2;
             var cy = text.Y + text.Height / 2;
-            builder.StartGroup(SvgBuilder.GeometryTransform(cx, cy, text.RotationDeg, text.TextScaleX, text.TextScaleY));
+            var inkCx = (fit.InkLeftDiu + fit.Formatted.WidthIncludingTrailingWhitespace / 2) * UnitToMm;
+            var inkCy = (fit.TextTopDiu + fit.Formatted.Height / 2) * UnitToMm;
+            builder.StartGroup(SvgBuilder.GeometryTransform(
+                cx, cy,
+                cx + (inkCx - cx) * text.TextScaleX, cy + (inkCy - cy) * text.TextScaleY,
+                text.RotationDeg, text.TextScaleX, text.TextScaleY));
         }
         try
         {
-            WriteTextInner(builder, text, options, notes);
+            WriteTextInner(builder, text, fit, options, notes);
         }
         finally
         {
@@ -315,11 +340,10 @@ public static class SheetSvgWriter
         }
     }
 
-    private static void WriteTextInner(SvgBuilder builder, TextItem text, SvgExportOptions options, List<string> notes)
+    private static void WriteTextInner(SvgBuilder builder, TextItem text, TextFitResult fit, SvgExportOptions options, List<string> notes)
     {
-        // 字号、居中偏移、换行与省略号一律问 TextFit：与预览/打印同一个决定（定案 D10）
-        var fit = TextFit.Solve(text, scale: 1.0, TextFit.CanonicalPixelsPerDip);
-        if (fit is null) return;
+        // 字号、居中偏移、换行与省略号的决定都由调用方解好的这一份 TextFit 说话（定案 D10）：
+        // 变换组与内容读同一份，解两遍迟早对不上（§五-62 同族）。
 
         // 截断与需人工核对同一个颜色：矢量出口不许静默把货号截成半截
         if (fit.Truncated)
@@ -621,6 +645,23 @@ public static class SheetSvgWriter
     /// 与 WPF 那份 <c>LabelRenderer.RoundedRect</c> 同一个口径，免得屏上一套、SVG 一套。</para>
     /// </summary>
     private static void WriteRect(SvgBuilder builder, RectItem rect)
+    {
+        var rotated = Math.Abs(rect.RotationDeg) > 1e-6;
+        if (rotated)
+            builder.StartGroup(SvgBuilder.GeometryTransform(
+                rect.X + rect.Width / 2, rect.Y + rect.Height / 2,
+                rect.RotationDeg, 1, 1));
+        try
+        {
+            WriteRectBody(builder, rect);
+        }
+        finally
+        {
+            if (rotated) builder.EndLayer();
+        }
+    }
+
+    private static void WriteRectBody(SvgBuilder builder, RectItem rect)
     {
         var fill = FillPaint(rect.Fill);
         var stroke = rect.Stroked ? Stroke(rect.ThicknessMm, RenderRules.InkHex(rect.Ink)) : null;

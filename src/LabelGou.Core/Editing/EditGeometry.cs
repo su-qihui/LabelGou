@@ -206,14 +206,34 @@ public static class EditGeometry
     }
 
     /// <summary>
-    /// 纸面坐标 → 元素本地坐标（绕元素中心反向旋转 <see cref="TemplateElement.RotationDeg"/>）。
-    /// 未旋转时原样返回；Line 不参与旋转（两端点已是纸面坐标）。
+    /// 元素渲染旋转绕的中心（毫米，<strong>全项目唯一锚点口径</strong>，第 52 棒）。
+    /// <para>非文本：排版盒＝视觉盒＝形状本体，中心没有歧义。文本：绕<strong>看得见的墨迹中心</strong>转
+    /// （App 量出墨迹盒喂进来；量不到才退回视觉盒中心）。CDR 的行为就是绕对象自己的中心转——
+    /// 从前绕排版盒（隐形行带）中心，左对齐的短字在宽行带里一转就"飞出去"，用户 2026-09-14 报的正是这个。</para>
     /// </summary>
-    public static (double X, double Y) ToLocal(TemplateElement element, double xMm, double yMm)
+    public static (double Cx, double Cy) RotationCenterOf(TemplateElement element,
+        (double X, double Y, double Width, double Height)? visualOverride = null)
+    {
+        var box = visualOverride ?? VisualBoxOf(element);
+        return (box.X + box.Width / 2, box.Y + box.Height / 2);
+    }
+
+    /// <summary>
+    /// 纸面坐标 → 元素本地坐标（绕 <see cref="RotationCenterOf"/> 反向旋转 <see cref="TemplateElement.RotationDeg"/>）。
+    /// 未旋转时原样返回；Line 不参与旋转（两端点已是纸面坐标）。
+    /// <paramref name="visualOverride"/> = App 量出的墨迹盒（文本必喂，否则锚点与画出来的框不是一套）。
+    /// </summary>
+    public static (double X, double Y) ToLocal(TemplateElement element, double xMm, double yMm,
+        (double X, double Y, double Width, double Height)? visualOverride = null)
     {
         if (element.RotationDeg == 0 || element.Kind == ElementKind.Line) return (xMm, yMm);
-        var (lx, ly) = RotateAboutCenter(element, xMm, yMm, -element.RotationDeg);
-        return (lx, ly);
+        var (cx, cy) = RotationCenterOf(element, visualOverride);
+        var rad = -element.RotationDeg * Math.PI / 180;
+        var cos = Math.Cos(rad);
+        var sin = Math.Sin(rad);
+        var dx = xMm - cx;
+        var dy = yMm - cy;
+        return (cx + dx * cos - dy * sin, cy + dx * sin + dy * cos);
     }
 
     /// <summary>纸面位移向量 → 本地位移向量（只转方向不转位置；未旋转时原样）。</summary>
@@ -224,19 +244,6 @@ public static class EditGeometry
         var cos = Math.Cos(rad);
         var sin = Math.Sin(rad);
         return (dxMm * cos - dyMm * sin, dxMm * sin + dyMm * cos);
-    }
-
-    private static (double X, double Y) RotateAboutCenter(TemplateElement element, double xMm, double yMm, double degrees)
-    {
-        var box = BoxOf(element);
-        var cx = box.X + box.Width / 2;
-        var cy = box.Y + box.Height / 2;
-        var rad = degrees * Math.PI / 180;
-        var cos = Math.Cos(rad);
-        var sin = Math.Sin(rad);
-        var dx = xMm - cx;
-        var dy = yMm - cy;
-        return (cx + dx * cos - dy * sin, cy + dx * sin + dy * cos);
     }
 
     /// <summary>命中最上层元素的下标（列表末尾=画在最上面）；没命中返回 -1。
@@ -274,7 +281,8 @@ public static class EditGeometry
         var bottom = box.Y + box.Height;
 
         // 转过的元素：句柄也长在"转过的边"上——先把指针反变换回本地域再对轴对齐盒判。
-        var (px, py) = ToLocal(element, xMm, yMm);
+        // 反变换的锚点必须与画出来的框同一个（墨迹中心），否则句柄看得见抓不着（§五-146 同族）。
+        var (px, py) = ToLocal(element, xMm, yMm, displayBox);
 
         var horizontal = Near(px, left, r) ? ResizeHandle.Left
             : Near(px, right, r) ? ResizeHandle.Right : ResizeHandle.None;

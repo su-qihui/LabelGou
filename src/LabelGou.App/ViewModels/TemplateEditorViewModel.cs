@@ -2526,7 +2526,8 @@ public sealed class EditableElement : ObservableObject
     }
 
     /// <summary>当前元素能否旋转（条码不许转，线段由两端点决定）。面板按它显隐旋转框。</summary>
-    public bool CanRotate => _element.Kind is ElementKind.Text or ElementKind.Rect or ElementKind.Image or ElementKind.Vector;
+    public bool CanRotate => _element.Kind is ElementKind.Text or ElementKind.Rect or ElementKind.Ellipse or ElementKind.Polygon
+        or ElementKind.Image or ElementKind.Vector;
 
     /// <summary>当前元素能否用"字面拉伸"（只文本有；图片的拉伸就是它的宽高，不设倍率字段）。</summary>
     public bool CanStretchText => _element.Kind == ElementKind.Text;

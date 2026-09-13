@@ -451,7 +451,20 @@ public class SvgInterchangeTests
         var group = Layer(XDocument.Parse(outlined.Xml), "labels")
             .Descendants(Svg + "g")
             .Single(g => ((string?)g.Attribute("transform"))?.Contains("rotate(30") == true);
-        Assert.Equal(SvgBuilder.GeometryTransform(36, 10, 30, 2, 1), (string?)group.Attribute("transform"));
+
+        // 第 52 棒口径：旋转绕【拉伸后的墨迹中心】，不再绕排版盒（隐形行带）中心。
+        // 期望值按同一份 TextFit 现算：锚点必须离开盒心 (36,10)——不然这条对新旧口径都绿，等于没钉。
+        var layout0 = LayoutEngine.Build(template, SampleRecords.StandardSample(), new LayoutContext(1, 1));
+        var item0 = layout0.Items.OfType<TextItem>().Single();
+        var fit0 = TextFit.Solve(item0, scale: 1.0, TextFit.CanonicalPixelsPerDip)!;
+        var inkCx0 = (fit0.InkLeftDiu + fit0.Formatted.WidthIncludingTrailingWhitespace / 2) * (25.4 / 96.0);
+        var inkCy0 = (fit0.TextTopDiu + fit0.Formatted.Height / 2) * (25.4 / 96.0);
+        var anchorX = 36 + (inkCx0 - 36) * 2;      // 墨迹先随 TextScaleX=2 绕盒中心拉伸
+        var anchorY = 10 + (inkCy0 - 10) * 1;
+        Assert.True(Math.Abs(anchorX - 36) > 0.5,
+            "锚点没离开排版盒中心——要么这份夹具不左对齐，要么第 52 棒的口径被改回去了");
+        Assert.Equal(SvgBuilder.GeometryTransform(36, 10, anchorX, anchorY, 30, 2, 1),
+            (string?)group.Attribute("transform"));
 
         // 未转曲那条也要带同样的变换（<text> 也被包进 <g>）
         var editable = Assert.Single(SheetSvgWriter.WritePage(request, 0,

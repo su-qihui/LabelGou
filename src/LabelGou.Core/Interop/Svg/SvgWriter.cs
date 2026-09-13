@@ -73,16 +73,32 @@ public sealed class SvgBuilder
     /// <c>translate(c) [rotate] [scale] translate(-c)</c>。只转不拉 / 只拉不转 / 都无 三种退化情形由空段自动省掉。</para>
     /// </summary>
     public static string GeometryTransform(double centerXmm, double centerYmm, double rotationDeg, double scaleX, double scaleY)
+        => GeometryTransform(centerXmm, centerYmm, centerXmm, centerYmm, rotationDeg, scaleX, scaleY);
+
+    /// <summary>
+    /// 双中心版（第 52 棒）：拉伸绕 <c>(stretchX, stretchY)</c>，旋转绕 <c>(rotX, rotY)</c>——
+    /// 文字的旋转中心是【墨迹中心】而不是排版盒中心，两个中心不再重合。
+    /// 作用顺序仍是"先拉伸后旋转"：SVG 列表右起先作用，旋转段写在拉伸段左边。
+    /// </summary>
+    public static string GeometryTransform(double stretchXmm, double stretchYmm, double rotXmm, double rotYmm,
+        double rotationDeg, double scaleX, double scaleY)
     {
         var stretch = Math.Abs(scaleX - 1) > 1e-6 || Math.Abs(scaleY - 1) > 1e-6;
         var rotate = Math.Abs(rotationDeg) > 1e-6;
         if (!stretch && !rotate) return string.Empty;
 
-        var c = $"{N(centerXmm)},{N(centerYmm)}";
-        var sb = new StringBuilder($"translate({c})");
-        if (rotate) sb.Append($" rotate({N(rotationDeg)})");
-        if (stretch) sb.Append($" scale({N(scaleX)},{N(scaleY)})");
-        sb.Append($" translate(-{N(centerXmm)},-{N(centerYmm)})");
+        var sb = new StringBuilder();
+        if (rotate)
+        {
+            var rc = $"{N(rotXmm)},{N(rotYmm)}";
+            sb.Append($"translate({rc}) rotate({N(rotationDeg)}) translate(-{N(rotXmm)},-{N(rotYmm)})");
+        }
+        if (stretch)
+        {
+            if (sb.Length > 0) sb.Append(' ');
+            var c = $"{N(stretchXmm)},{N(stretchYmm)}";
+            sb.Append($"translate({c}) scale({N(scaleX)},{N(scaleY)}) translate(-{N(stretchXmm)},-{N(stretchYmm)})");
+        }
         return sb.ToString();
     }
 
