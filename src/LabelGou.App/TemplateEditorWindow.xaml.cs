@@ -1,7 +1,9 @@
 using System.ComponentModel;
 using System.Windows;
+using System.Windows.Input;
 using LabelGou.App.Rendering;
 using LabelGou.App.ViewModels;
+using LabelGou.Core.Colors;
 using LabelGou.Core.Templates;
 
 namespace LabelGou.App;
@@ -65,4 +67,58 @@ public sealed partial class TemplateEditorWindow : Window
 
     /// <summary>画布控件（单测拿它验证布局与渲染，不靠手点）。</summary>
     public TemplateEditorControl EditorCanvas => Canvas;
+
+    // ---------- 墨色调色盘（第 47 棒补刀）----------
+    // View 只把像素换算成 0~1 的比例，颜色怎么落、面板跳不跳档全在 EditableElement 里。
+
+    private void InkSvArea_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not FrameworkElement el) return;
+        el.CaptureMouse();
+        PushSv(el, e.GetPosition(el));
+        e.Handled = true;
+    }
+
+    private void InkSvArea_MouseMove(object sender, MouseEventArgs e)
+    {
+        if (sender is not FrameworkElement { IsMouseCaptured: true } el) return;
+        PushSv(el, e.GetPosition(el));
+    }
+
+    private void InkHueArea_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not FrameworkElement el) return;
+        el.CaptureMouse();
+        PushHue(el, e.GetPosition(el));
+        e.Handled = true;
+    }
+
+    private void InkHueArea_MouseMove(object sender, MouseEventArgs e)
+    {
+        if (sender is not FrameworkElement { IsMouseCaptured: true } el) return;
+        PushHue(el, e.GetPosition(el));
+    }
+
+    private void InkPickArea_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is FrameworkElement { IsMouseCaptured: true } el) el.ReleaseMouseCapture();
+    }
+
+    private void PushSv(FrameworkElement el, Point p)
+    {
+        var row = _editor.Editing;
+        if (row is null) return;
+        row.PickerSaturation = Clamp01(p.X / el.ActualWidth);
+        row.PickerValue = 1 - Clamp01(p.Y / el.ActualHeight);
+    }
+
+    private void PushHue(FrameworkElement el, Point p)
+    {
+        var row = _editor.Editing;
+        if (row is null) return;
+        row.PickerHueDeg = HsvMath.HueMax * Clamp01(p.Y / el.ActualHeight);
+    }
+
+    /// <summary>除以的可能是刚加载完还没量尺寸的 0，NaN 一律当 0 收（不然调色盘会写进一个 NaN 颜色）。</summary>
+    private static double Clamp01(double v) => double.IsNaN(v) || v < 0 ? 0 : v > 1 ? 1 : v;
 }

@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Globalization;
 using System.IO;
+using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
 using LabelGou.App.Mvvm;
@@ -1300,6 +1301,7 @@ public sealed class EditableElement : ObservableObject
         _changed = changed;
         ApplyInkPresetCommand = new RelayCommand(p => { if (p is InkPreset preset) InkColor = preset.Color; });
         ResetInkCommand = new RelayCommand(() => InkColor = null, () => _element.InkColor is not null);
+        SyncPickerFromColour();   // 选中一行时调色盘要停在那支墨真正的位置，别默认给左上角
     }
 
     public TemplateElement Element => _element;
@@ -1348,6 +1350,7 @@ public sealed class EditableElement : ObservableObject
             if (Equals(value, _element.InkColor)) return;
             Prepare(nameof(InkColor));
             _element.InkColor = value;
+            if (!_applyingPicker) SyncPickerFromColour();     // 调色盘自己拖出来的那一路以面板为准，别反推回去
             Done();
         }
     }
@@ -1432,6 +1435,143 @@ public sealed class EditableElement : ObservableObject
             if (string.IsNullOrWhiteSpace(value)) return;
             if (!LabelColor.TryParse(value.Trim(), out var parsed) || parsed is null) return;   // 打字打一半先不当真
             InkColor = parsed;
+        }
+    }
+
+    /// <summary>
+    /// 调色盘（第 47 棒补刀）：一方块 + 一条色相带，见 <see cref="PickerSaturation"/>。
+    /// 尺寸常量给 XAML 与拇指坐标共用，别在两处各写一个数字。
+    /// </summary>
+    public const double PickerSquareW = 250;
+
+    public const double PickerSquareH = 200;
+
+    /// <summary>色相条与方块同高，好对齐。</summary>
+    public const double PickerHueBarH = PickerSquareH;
+
+    /// <summary>
+    /// 调色盘自己记的那三值（<strong>界面状态，不落盘</strong>）。
+    /// <para>为什么不能每次从当前墨色反推：黑色上饱和度没有定义（<see cref="HsvMath.FromRgb"/> 交回 0），
+    /// 圈一旦拖到方块底边那条黑线上，再往上拖就变成白的了——手感受到了"颜色丢了"。
+    /// 所以拖方块期间这三值以面板为准，只有<em>别的</em>口子改颜色（墨量滑条、常用预设、十六进制、撤销、换选中行）
+    /// 时才反推一次同步过来，见 <see cref="SyncPickerFromColour"/>。</para>
+    /// </summary>
+    private double _pickerHueDeg;
+
+    private double _pickerSat;
+
+    private double _pickerVal;
+
+    private bool _applyingPicker;
+
+    /// <summary>当前色相（0~360），对应方块右边那条色相带。</summary>
+    public double PickerHueDeg
+    {
+        get => _pickerHueDeg;
+        set
+        {
+            var hue = HsvMath.NormalizeHue(value);
+            if (Near(hue, _pickerHueDeg)) return;
+            _pickerHueDeg = hue;
+            ApplyPicker();
+            RaisePicker();        // 灰上加色相不改变颜色，InkColor 那条链会静默，这里必须自己刷一次
+        }
+    }
+
+    /// <summary>方块横轴＝饱和度（左白右纯）。</summary>
+    public double PickerSaturation
+    {
+        get => _pickerSat;
+        set
+        {
+            var s = Math.Clamp(value, 0, 1);
+            if (Near(s, _pickerSat)) return;
+            _pickerSat = s;
+            ApplyPicker();
+            RaisePicker();
+        }
+    }
+
+    /// <summary>方块纵轴＝明度（上亮下黑）。鼠标在下方，所以与 <see cref="PickerThumbY"/> 反号。</summary>
+    public double PickerValue
+    {
+        get => _pickerVal;
+        set
+        {
+            var v = Math.Clamp(value, 0, 1);
+            if (Near(v, _pickerVal)) return;
+            _pickerVal = v;
+            ApplyPicker();
+            RaisePicker();
+        }
+    }
+
+    private void ApplyPicker()
+    {
+        var (r, g, b) = HsvMath.ToRgb(_pickerHueDeg, _pickerSat, _pickerVal);
+        ApplyPickerRgb(r, g, b);
+    }
+
+    /// <summary>
+    /// 调色盘交回来的是屏幕色，但<strong>面板停在哪一档就不跳档</strong>：CMYK 档下先把屏幕色折成
+    /// naive 印刷分量、再按分量录进去（<c>Entry</c> 仍是 Cmyk）。两条公式互逆，折回来的 RGB 与原值
+    /// 至多差 1/255，换来的是"拖完方块四格墨量立刻能读能改"，而不是面板突然换成 RGB 滑条。
+    /// </summary>
+    private void ApplyPickerRgb(int r, int g, int b)
+    {
+        var byScreen = LabelColor.FromSrgb(r, g, b);
+        _applyingPicker = true;
+        try
+        {
+            InkColor = InkUsesCmyk
+                ? LabelColor.FromCmyk(byScreen.C, byScreen.M, byScreen.Y, byScreen.K)
+                : byScreen;
+        }
+        finally
+        {
+            _applyingPicker = false;
+        }
+    }
+
+    public double PickerThumbX => _pickerSat * PickerSquareW;
+
+    public double PickerThumbY => (1 - _pickerVal) * PickerSquareH;
+
+    public double PickerHueThumbY => _pickerHueDeg / HsvMath.HueMax * PickerHueBarH;
+
+    /// <summary>方块底色：左白 → 右当前色相的纯色。上面再叠一层 XAML 里写死的"透明→黑"，就是截图那种方块。</summary>
+    public Brush PickerSvFill
+    {
+        get
+        {
+            var (r, g, b) = HsvMath.ToRgb(_pickerHueDeg, 1, 1);
+            var brush = new LinearGradientBrush { StartPoint = new Point(0, 0), EndPoint = new Point(1, 0) };
+            brush.GradientStops.Add(new GradientStop(Colors.White, 0));
+            brush.GradientStops.Add(new GradientStop(Color.FromRgb(r, g, b), 1));
+            brush.Freeze();
+            return brush;
+        }
+    }
+
+    /// <summary>颜色从调色盘以外的口子变了（墨量滑条、预设、十六进制、撤销、换选中行）之后，把面板上的圈搬回那支墨真正的位置。</summary>
+    private void SyncPickerFromColour()
+    {
+        var ink = InkOrBlack;
+        var (hue, sat, val) = HsvMath.FromRgb(ink.R, ink.G, ink.B);
+        if (!double.IsNaN(hue)) _pickerHueDeg = hue;      // 无彩时保留上一次选的色相
+        _pickerSat = sat;
+        _pickerVal = val;
+    }
+
+    private void RaisePicker()
+    {
+        foreach (var name in new[]
+        {
+            nameof(PickerHueDeg), nameof(PickerSaturation), nameof(PickerValue),
+            nameof(PickerThumbX), nameof(PickerThumbY), nameof(PickerHueThumbY), nameof(PickerSvFill),
+        })
+        {
+            Raise(name);
         }
     }
 
@@ -1586,6 +1726,7 @@ public sealed class EditableElement : ObservableObject
     public void Reload()
     {
         _lastCapturedFor = string.Empty;
+        SyncPickerFromColour();   // 撤销之后按这支墨真正的颜色重摆，不能留在刚才手拖的位置
         RaiseAll();
     }
 
@@ -1605,6 +1746,7 @@ public sealed class EditableElement : ObservableObject
         {
             Raise(name);
         }
+        RaisePicker();        // 调色盘那一组跟着一起刷：漏了就是数字变了、圈还停在老地方
     }
 }
 
