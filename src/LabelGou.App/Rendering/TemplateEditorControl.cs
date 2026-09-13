@@ -221,6 +221,11 @@ public sealed class TemplateEditorControl : FrameworkElement
             if (!selected) return;
             if (element.Kind == ElementKind.Line)
             {
+                if (CurveGeometry.IsCurved(element))
+                {
+                    DrawCurveNodes(dc, element);
+                    return;
+                }
                 DrawHandle(dc, new Point(ToDiuX(element.X), ToDiuY(element.Y)));
                 DrawHandle(dc, new Point(ToDiuX(element.X2), ToDiuY(element.Y2)));
                 return;
@@ -248,6 +253,33 @@ public sealed class TemplateEditorControl : FrameworkElement
         dc.DrawRectangle(HandleBrush, SelectedPen, new Rect(center.X - half, center.Y - half, HandlePixelSize, HandlePixelSize));
     }
 
+    /// <summary>
+    /// 选中曲线时画在画布上的节点与控制柄（类 CorelDRAW：节点是方框、柄头是圆点、中间一根细线）。
+    /// <para>先画柄再画节点：节点是"最常抓的那个"，压在上方才不会被柄线盖住点不中。
+    /// 尺寸按像素给（不随缩放变粗），位置一律经 <see cref="ToDiuX"/>/<see cref="ToDiuY"/>——
+    /// 与命中判据同一套坐标，不会出现"看得见柄头、抓不到"。</para>
+    /// </summary>
+    private void DrawCurveNodes(DrawingContext dc, TemplateElement element)
+    {
+        foreach (var n in CurveGeometry.NodesOf(element))
+        {
+            var node = new Point(ToDiuX(n.X), ToDiuY(n.Y));
+            if (n.InX != 0 || n.InY != 0) DrawHandleLine(dc, node, new Point(ToDiuX(n.X + n.InX), ToDiuY(n.Y + n.InY)));
+            if (n.OutX != 0 || n.OutY != 0) DrawHandleLine(dc, node, new Point(ToDiuX(n.X + n.OutX), ToDiuY(n.Y + n.OutY)));
+        }
+        foreach (var n in CurveGeometry.NodesOf(element))
+            DrawHandle(dc, new Point(ToDiuX(n.X), ToDiuY(n.Y)));
+    }
+
+    private static readonly Pen HandleLinePen = Frozen(new Pen(new SolidColorBrush(Color.FromRgb(0, 120, 200)), 1));
+
+    private void DrawHandleLine(DrawingContext dc, Point from, Point to)
+    {
+        dc.DrawLine(HandleLinePen, from, to);
+        const float r = 3f;
+        dc.DrawEllipse(Brushes.White, HandleLinePen, to, r, r);
+    }
+
     // ---------- 鼠标 ----------
 
     protected override void OnMouseLeftButtonDown(MouseButtonEventArgs e)
@@ -255,6 +287,29 @@ public sealed class TemplateEditorControl : FrameworkElement
         base.OnMouseLeftButtonDown(e);
         var vm = _vm;
         if (vm is null) return;
+
+        Focus();
+        var point = e.GetPosition(this);
+        // 修饰键在按下那一刻抓一次，整次拖拽用同一个判定——拖到一半才松开 Shift 不该中途换规则。
+        // 口径 = 本机 CorelDRAW X4 实测（第 45 棒）：**Shift = 绕中心向四周**（角柄本来就等比，
+        // 不需要键）；**Ctrl = 移动时锁水平或垂直**。44 棒把 Shift 实现成"等比"是错的，已翻案。
+        var shift = Keyboard.Modifiers.HasFlag(ModifierKeys.Shift);
+        if (vm.IsBezierTool)
+        {
+            // 贝塞尔工具下双击是"这条画完了"（类 CDR），不是复位缩放——两件事抢同一个手势时，正在画的那条说了算。
+            if (e.ClickCount == 2)
+            {
+                vm.FinishPath();
+                e.Handled = true;
+                return;
+            }
+            // 本工具下 Shift 的含义换成"这一节要直"（用户 2026-09-13 定的口径），与选择工具的"绕中心缩放"不冲突。
+            if (!vm.BeginPath(ToMmX(point.X), ToMmY(point.Y), shift)) return;
+            _dragging = true;
+            CaptureMouse();
+            e.Handled = true;
+            return;
+        }
 
         // 双击 = 复位缩放（放在按下里而不是 OnMouseDown，否则会先起一次多余的拖动）
         if (e.ClickCount == 2)
@@ -266,12 +321,7 @@ public sealed class TemplateEditorControl : FrameworkElement
             return;
         }
 
-        Focus();
-        var point = e.GetPosition(this);
-        // 修饰键在按下那一刻抓一次，整次拖拽用同一个判定——拖到一半才松开 Shift 不该中途换规则。
-        // 口径 = 本机 CorelDRAW X4 实测（第 45 棒）：**Shift = 绕中心向四周**（角柄本来就等比，
-        // 不需要键）；**Ctrl = 移动时锁水平或垂直**。44 棒把 Shift 实现成"等比"是错的，已翻案。
-        var anchor = Keyboard.Modifiers.HasFlag(ModifierKeys.Shift) ? ResizeAnchor.Center : ResizeAnchor.Opposite;
+        var anchor = shift ? ResizeAnchor.Center : ResizeAnchor.Opposite;
         var lockAxis = Keyboard.Modifiers.HasFlag(ModifierKeys.Control);
         var mode = vm.BeginDrag(ToMmX(point.X), ToMmY(point.Y), HandleRadiusMm, anchor, lockAxis);
         if (mode == TemplateEditorViewModel.DragMode.None) return;
@@ -290,7 +340,14 @@ public sealed class TemplateEditorControl : FrameworkElement
         var point = e.GetPosition(this);
         if (_dragging)
         {
-            vm.DragTo(ToMmX(point.X), ToMmY(point.Y));
+            if (vm.IsBezierTool) vm.DragPath(ToMmX(point.X), ToMmY(point.Y), Keyboard.Modifiers.HasFlag(ModifierKeys.Shift));
+            else vm.DragTo(ToMmX(point.X), ToMmY(point.Y));
+            return;
+        }
+
+        if (vm.IsBezierTool)
+        {
+            Cursor = Cursors.Cross;
             return;
         }
 
@@ -301,6 +358,10 @@ public sealed class TemplateEditorControl : FrameworkElement
 
     private Cursor CursorFor(TemplateEditorViewModel vm, TemplateElement element, double xMm, double yMm)
     {
+        // 曲线的节点/柄头优先：抓到它们就给手型（与 BeginDrag 的命中顺序一致，不然"点得中却提示能拖"）。
+        if (element.Kind == ElementKind.Line && CurveGeometry.IsCurved(element)
+            && CurveGeometry.HandleAt(element, xMm, yMm, HandleRadiusMm) is not null) return Cursors.Hand;
+
         var handle = EditGeometry.HandleAt(element, xMm, yMm, HandleRadiusMm, vm.DisplayBoxOf(element));
         return handle switch
         {
@@ -320,7 +381,8 @@ public sealed class TemplateEditorControl : FrameworkElement
         if (!_dragging) return;
         _dragging = false;
         ReleaseMouseCapture();
-        _vm?.EndDrag();
+        if (_vm is { IsBezierTool: true }) _vm.EndPathSegment();
+        else _vm?.EndDrag();
     }
 
     protected override void OnMouseWheel(MouseWheelEventArgs e)
@@ -358,6 +420,21 @@ public sealed class TemplateEditorControl : FrameworkElement
             e.Handled = true;
             return;
         }
+        if (e.Key == Key.Enter && vm.IsDrawingPath)
+        {
+            vm.FinishPath();
+            e.Handled = true;
+            return;
+        }
+        // 正在画一条曲线时，Esc / Delete 都是"这条不要了"：删掉元素而节点表还指着那个下标，下一个点会写歪。
+        if (vm.IsDrawingPath && (e.Key == Key.Escape || e.Key == Key.Delete))
+        {
+            _dragging = false;
+            ReleaseMouseCapture();
+            vm.CancelPath();
+            e.Handled = true;
+            return;
+        }
         if (e.Key == Key.Escape && _dragging)
         {
             _dragging = false;
@@ -369,6 +446,12 @@ public sealed class TemplateEditorControl : FrameworkElement
         if (e.Key == Key.Delete)
         {
             if (vm.RemoveCommand.CanExecute(null)) vm.RemoveCommand.Execute(null);
+            e.Handled = true;
+            return;
+        }
+        // 画到一半不认方向键微调：微调改的是元素本体，下一个点仍会按内存里那份节点表写回去，等于白挪。
+        if (vm.IsDrawingPath && e.Key is Key.Left or Key.Right or Key.Up or Key.Down)
+        {
             e.Handled = true;
             return;
         }

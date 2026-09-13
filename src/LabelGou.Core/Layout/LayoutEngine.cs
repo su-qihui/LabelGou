@@ -13,9 +13,15 @@ public abstract record LayoutItem;
 public sealed record RectItem(double X, double Y, double Width, double Height, double ThicknessMm,
     Colors.LabelColor? Ink = null) : LayoutItem;
 
-/// <summary>已解析好的线段（毫米）。<paramref name="Ink"/> 同 <see cref="RectItem"/>：null = 黑。</summary>
+/// <summary>
+/// 已解析好的线段（毫米）。<paramref name="Ink"/> 同 <see cref="RectItem"/>：null = 黑。
+/// <para><paramref name="Arc"/> 非 null 时是曲线的段序列（第 49 棒），渲染端必须画这份而不是连两端：
+/// 预览、位图、打印、PDF、SVG 五个出口共用 Core 算好的这一份，谁自己再解释一遍"曲线怎么连"
+/// 就会出现"屏上是弯的、PDF 里是直的"那一类错（§五-62 同族）。null = 直线，与从前逐字同形。</para>
+/// </summary>
 public sealed record LineItem(double X1, double Y1, double X2, double Y2, double ThicknessMm,
-    Colors.LabelColor? Ink = null) : LayoutItem;
+    Colors.LabelColor? Ink = null,
+    IReadOnlyList<Templates.CurveSegment>? Arc = null) : LayoutItem;
 
 /// <summary>
 /// 已解析好的文本项。
@@ -232,7 +238,9 @@ public static class LayoutEngine
             {
                 case ElementKind.Line:
                     items.Add(new LineItem(element.X, element.Y, element.X2, element.Y2, element.ThicknessMm,
-                        Ink: InkOf(element.InkColor, context)));
+                        Ink: InkOf(element.InkColor, context),
+                        // 分不分色都画同一条弧，只是每一版上的墨量不同（Ink 那份已经按版折好了）。
+                        Arc: Templates.CurveGeometry.IsCurved(element) ? Templates.CurveGeometry.Segments(element) : null));
                     break;
 
                 case ElementKind.Rect:

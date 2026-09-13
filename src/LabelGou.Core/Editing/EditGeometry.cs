@@ -111,6 +111,8 @@ public static class EditGeometry
         if (element is null) throw new ArgumentNullException(nameof(element));
         if (element.Kind == ElementKind.Line)
         {
+            // 曲线的外接框要量弧本身（解导数根），拿两端点算会把鼓出去的那截漏掉——选择框与越界校验都跟着错。
+            if (Templates.CurveGeometry.IsCurved(element)) return Templates.CurveGeometry.BoundsMm(element);
             var x = Math.Min(element.X, element.X2);
             var y = Math.Min(element.Y, element.Y2);
             return (x, y, Math.Abs(element.X2 - element.X), Math.Abs(element.Y2 - element.Y));
@@ -191,6 +193,8 @@ public static class EditGeometry
         if (element.Kind == ElementKind.Line)
         {
             var tol = Math.Max(toleranceMm, element.ThicknessMm);
+            if (Templates.CurveGeometry.IsCurved(element))
+                return Templates.CurveGeometry.DistanceMm(element, xMm, yMm) <= tol;
             return DistanceToSegment(xMm, yMm, element.X, element.Y, element.X2, element.Y2) <= tol;
         }
 
@@ -354,6 +358,15 @@ public static class EditGeometry
 
         if (element.Kind == ElementKind.Line)
         {
+            if (Templates.CurveGeometry.IsCurved(element))
+            {
+                // 曲线不能各端点分别夹：那样会把一条弧撕成另一个形状。量整条的外接框，算"最少挪多少能进纸"，整条平移。
+                var box = BoxOf(element);
+                var dx = box.Width >= template.WidthMm ? 0 : Math.Min(0, template.WidthMm - (box.X + box.Width)) + Math.Max(0, -box.X);
+                var dy = box.Height >= template.HeightMm ? 0 : Math.Min(0, template.HeightMm - (box.Y + box.Height)) + Math.Max(0, -box.Y);
+                ApplyShift(element, dx, dy);
+                return;
+            }
             element.X = Clamp(element.X, 0, template.WidthMm);
             element.Y = Clamp(element.Y, 0, template.HeightMm);
             element.X2 = Clamp(element.X2, 0, template.WidthMm);
@@ -379,6 +392,8 @@ public static class EditGeometry
         {
             element.X2 += dx;
             element.Y2 += dy;
+            // 端点动了中间节点也必须动：只挪两端等于把弧身留在原地。柄是相对量，跟着走不用改。
+            Templates.CurveGeometry.Translate(element, dx, dy);
         }
     }
 

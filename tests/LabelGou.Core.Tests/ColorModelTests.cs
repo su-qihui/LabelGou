@@ -200,8 +200,12 @@ public class ColorModelTests
         Assert.Null(Assert.Single(read.Elements).InkColor);
     }
 
+    /// <summary>
+    /// 版本号跟着"最近一次加字段"走：v6 = 第 47 棒的墨色，v7 = 第 49 棒的曲线三字段（缺字段=直线=旧行为）。
+    /// 递增时必须在这儿留一句为什么，接手的人才知道老文件缺哪个字段该当什么。
+    /// </summary>
     [Fact]
-    public void SchemaVersionSixCarriesTheColourField() => Assert.Equal(6, LabelTemplate.CurrentSchemaVersion);
+    public void SchemaVersionTracksTheLatestFieldAddition() => Assert.Equal(7, LabelTemplate.CurrentSchemaVersion);
 
     private static LabelTemplate WriteThenReadJson(string json)
     {

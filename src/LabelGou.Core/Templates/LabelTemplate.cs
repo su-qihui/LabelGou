@@ -106,6 +106,22 @@ public sealed class TemplateElement
     /// </summary>
     public Colors.LabelColor? InkColor { get; set; }
 
+    /// <summary>
+    /// 曲线的<strong>中间节点</strong>（第 49 棒：线条改成贝塞尔工具）。
+    /// <para><strong>null 或空 = 没有中间节点</strong>；再配上下面两根柄都为空，就还是从前那条直线——
+    /// 老模板文件一个字节都不用改（<c>TemplateStore</c> 的 <c>WhenWritingNull</c> 会把整条省掉）。</para>
+    /// <para>起点与终点仍然住在 <see cref="X"/>/<see cref="Y"/> 与 <see cref="X2"/>/<see cref="Y2"/> 里，
+    /// 这里只存中间那些点。这么定是为了不让"同一个点存两处、拖一下就不一样"有发生的机会：
+    /// 端点只有一个出处，曲线算法在 <see cref="CurveGeometry"/> 里现拼段序列。</para>
+    /// </summary>
+    public List<CurveNode>? Nodes { get; set; }
+
+    /// <summary>起点的出柄（相对起点，毫米）。null 或零＝起点是尖角。</summary>
+    public CurveHandle? StartOut { get; set; }
+
+    /// <summary>终点的进柄（相对终点，毫米）。null 或零＝终点是尖角。</summary>
+    public CurveHandle? EndIn { get; set; }
+
     /// <summary>文本框内容放不下时是否允许自动缩字号（渲染端执行，引擎只带标志）。</summary>
     public bool ShrinkToFit { get; set; } = true;
 
@@ -194,8 +210,13 @@ public sealed class LabelTemplate
     /// 复核闸门）与「缩回纸内」一键，不再是排版盒。想恢复旧行为，把「折行宽度(mm)」填成与「宽(mm)」同值。
     /// v6 = 第 47 棒新增 <see cref="TemplateElement.InkColor"/>。<strong>缺字段 = null = 黑 = 逐字旧行为</strong>，
     /// 与 v5 的区别只在"能不能填"，不在"不填会怎样"——所以现有模板文件一个都不用更新（用户 2026-09-13 明确：
-    /// 模板文件暂时不用更新）。JSON 里它是一个字符串：<c>"#c62828"</c> 或 <c>"cmyk(0 91 90 0)"</c>（整数百分数）。</remarks>
-    public const int CurrentSchemaVersion = 6;
+    /// 模板文件暂时不用更新）。JSON 里它是一个字符串：<c>"#c62828"</c> 或 <c>"cmyk(0 91 90 0)"</c>（整数百分数）。
+    /// v7 = 第 49 棒把「线条」升级成贝塞尔工具，新增 <see cref="TemplateElement.Nodes"/> /
+    /// <see cref="TemplateElement.StartOut"/> / <see cref="TemplateElement.EndIn"/>。<strong>三个字段全缺 =
+    /// 没有中间节点也没有柄 = 从前那条直线 = 逐字旧行为</strong>，所以现有模板文件还是一个都不用更新；
+    /// 用曲线工具拖出来的<strong>直线</strong>也不会写这三个字段（见 <c>CurveGeometry.ApplyNodes</c>），
+    /// 老文件与新文件里"一条直线"长同一个样子。</remarks>
+    public const int CurrentSchemaVersion = 7;
 
     /// <summary>稳定标识，如 <c>builtin.standard-100x80</c>。用户模板用 <c>user.xxx</c>。</summary>
     public string Id { get; set; } = "user." + Guid.NewGuid().ToString("N")[..8];
@@ -373,6 +394,29 @@ public static class TemplateValidator
                 if (e.X2 > template.WidthMm + ToleranceMm || e.Y2 > template.HeightMm + ToleranceMm
                     || e.X2 < -ToleranceMm || e.Y2 < -ToleranceMm)
                     issues.Add(new TemplateIssue(IssueLevel.Error, $"{tag} 线段端点超出标签范围。", i));
+
+                // 第 49 棒：曲线多了三个要管的地方。端点都在纸内、中间鼓出去一大截是常见手滑，
+                // 所以越界这条量的是弧本身（CurveGeometry.BoundsMm 解导数根，不是控制点那个虚胖框）。
+                if (e.Nodes is { Count: > CurveGeometry.MaxNodes })
+                    issues.Add(new TemplateIssue(IssueLevel.Error,
+                        $"{tag} 有 {e.Nodes.Count} 个中间节点，超过上限 {CurveGeometry.MaxNodes}。", i));
+                else if (e.Nodes is { } nodes && nodes.Any(n => n is null
+                         || !double.IsFinite(n.X) || !double.IsFinite(n.Y)
+                         || !double.IsFinite(n.InX) || !double.IsFinite(n.InY)
+                         || !double.IsFinite(n.OutX) || !double.IsFinite(n.OutY)))
+                    issues.Add(new TemplateIssue(IssueLevel.Error, $"{tag} 的节点坐标不是有效数字（NaN/无穷），画不出来。", i));
+                else if (CurveGeometry.IsCurved(e))
+                {
+                    var arc = CurveGeometry.BoundsMm(e);
+                    if (arc.X < -ToleranceMm || arc.Y < -ToleranceMm
+                        || arc.X + arc.Width > template.WidthMm + ToleranceMm
+                        || arc.Y + arc.Height > template.HeightMm + ToleranceMm)
+                    {
+                        issues.Add(new TemplateIssue(IssueLevel.Error,
+                            $"{tag} 的弧鼓到 X {arc.X:0.#}~{arc.X + arc.Width:0.#}、Y {arc.Y:0.#}~{arc.Y + arc.Height:0.#} mm，" +
+                            $"探出标签（{template.WidthMm:0.#} × {template.HeightMm:0.#} mm）——两端在纸内不算过关，弧身也会被裁掉。", i));
+                    }
+                }
             }
 
             if (e.Kind is ElementKind.Text or ElementKind.Barcode)

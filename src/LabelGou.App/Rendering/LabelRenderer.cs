@@ -152,10 +152,46 @@ public static class LabelRenderer
 
     private static void DrawLine(DrawingContext dc, LineItem line, double scale, RenderTarget target)
     {
+        var pen = RenderRules.PenFor(RenderRules.InkOf(line.Ink), line.ThicknessMm, scale, target);
+        if (line.Arc is { Count: > 0 } arc)
+        {
+            dc.DrawGeometry(null, pen, ArcGeometry(arc, scale));
+            return;
+        }
         var p1 = new Point(Mm.ToDiu(line.X1) * scale, Mm.ToDiu(line.Y1) * scale);
         var p2 = new Point(Mm.ToDiu(line.X2) * scale, Mm.ToDiu(line.Y2) * scale);
-        dc.DrawLine(RenderRules.PenFor(RenderRules.InkOf(line.Ink), line.ThicknessMm, scale, target), p1, p2);
+        dc.DrawLine(pen, p1, p2);
     }
+
+    /// <summary>
+    /// 曲线段序列 → WPF 几何（设备单位）。<strong>全项目只有这一份"弧怎么连"</strong>：画布、位图、打印
+    /// 三条吃几何的出口与编辑器选择框都走这里，直线段退化成 <c>LineSegment</c>。
+    /// </summary>
+    public static Geometry ArcGeometry(IReadOnlyList<Core.Templates.CurveSegment> arc, double scale)
+    {
+        var figure = new PathFigure
+        {
+            StartPoint = Diu(arc[0].X1, arc[0].Y1, scale),
+            IsClosed = false,
+            // 不填充由下面 DrawGeometry 传 null 画刷表达，几何本身不管这件事。
+        };
+        foreach (var s in arc)
+        {
+            // 第四个参数是 isStroked（不是 isSmoothJoin）：曲线只有描边没有填充，传 false 就等于整条不画。
+            // （实测症状：分色版上一个像素都没有，直线却正常——因为直线走的是另一条 DrawLine 分支。）
+            figure.Segments.Add(s.IsStraight
+                ? new LineSegment(Diu(s.X2, s.Y2, scale), true)
+                : new BezierSegment(
+                    Diu(s.CX1, s.CY1, scale), Diu(s.CX2, s.CY2, scale), Diu(s.X2, s.Y2, scale), true));
+        }
+        var geometry = new PathGeometry();
+        geometry.Figures.Add(figure);
+        geometry.Freeze();
+        return geometry;
+    }
+
+    private static Point Diu(double mmX, double mmY, double scale)
+        => new(Mm.ToDiu(mmX) * scale, Mm.ToDiu(mmY) * scale);
 
     private static void DrawText(DrawingContext dc, TextItem text, double scale, bool showGuides, double pixelsPerDip, RenderTarget target)
     {

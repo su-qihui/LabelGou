@@ -235,7 +235,15 @@ public static class SheetSvgWriter
                     break;
 
                 case LineItem line:
-                    builder.Line(line.X1, line.Y1, line.X2, line.Y2, Stroke(line.ThicknessMm, RenderRules.InkHex(line.Ink)));
+                    if (line.Arc is { Count: > 0 } arc)
+                    {
+                        // 直线段写 L、弧段写 C：拿去 CorelDRAW 里挑中还是一个个节点，而不是一堆没用的控制点。
+                        builder.Path(ArcCommands(arc), null, Stroke(line.ThicknessMm, RenderRules.InkHex(line.Ink)));
+                    }
+                    else
+                    {
+                        builder.Line(line.X1, line.Y1, line.X2, line.Y2, Stroke(line.ThicknessMm, RenderRules.InkHex(line.Ink)));
+                    }
                     break;
 
                 case TextItem text:
@@ -504,6 +512,26 @@ public static class SheetSvgWriter
         builder.EndLayer();
     }
 
+    /// <summary>
+    /// 段序列 → SVG 路径命令（绝对 M/L/C，毫米）。直线段发 <c>L</c> 不发 <c>C</c>：
+    /// 拿去 CorelDRAW 里挑中就是节点，而不是一堆控制点。<strong>形状仍由 Core 的
+    /// <c>CurveGeometry.Segments</c> 定</strong>，这里只做词汇翻译，不再算一遍弧。
+    /// </summary>
+    private static List<SvgPathCommand> ArcCommands(IReadOnlyList<Core.Templates.CurveSegment> arc)
+    {
+        var commands = new List<SvgPathCommand>(arc.Count + 1)
+        {
+            new('M', new[] { arc[0].X1, arc[0].Y1 }),
+        };
+        foreach (var s in arc)
+        {
+            commands.Add(s.IsStraight
+                ? new SvgPathCommand('L', new[] { s.X2, s.Y2 })
+                : new SvgPathCommand('C', new[] { s.CX1, s.CY1, s.CX2, s.CY2, s.X2, s.Y2 }));
+        }
+        return commands;
+    }
+
     private static void WriteNotes(SvgBuilder builder, LabelLayout layout)
     {
         foreach (var element in layout.Template.Elements.Where(e => e.Visible && !e.ReferenceOnly))
@@ -511,6 +539,12 @@ public static class SheetSvgWriter
             switch (element.Kind)
             {
                 case ElementKind.Line:
+                    if (Core.Templates.CurveGeometry.IsCurved(element))
+                    {
+                        // 注记层画的是"这条元素占在哪"，拿两端连一条弦会把鼓出去那截说没。
+                        builder.Path(ArcCommands(Core.Templates.CurveGeometry.Segments(element)), null, NoteStroke);
+                        continue;
+                    }
                     builder.Line(element.X, element.Y, element.X2, element.Y2, NoteStroke);
                     continue;
                 case ElementKind.Rect:

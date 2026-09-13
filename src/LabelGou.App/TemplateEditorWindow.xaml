@@ -49,7 +49,8 @@
 
                 <TextBlock Text="加元素：" Style="{StaticResource Caption}" />
                 <Button Content="文本" Command="{Binding AddTextCommand}" ToolTip="加一个文本元素（可含字段占位符）" />
-                <Button Content="线条" Command="{Binding AddLineCommand}" ToolTip="加分隔线" />
+                <ToggleButton Content="曲线" IsChecked="{Binding IsBezierTool}" MinWidth="56" Margin="2,0"
+                              ToolTip="贝塞尔工具（类 CorelDRAW）：在画布上按下拖出这一节的弯度、松开定下一个点，逐点连成一条曲线。&#10;按住 Shift 拖＝直线（不出控制柄）。双击或回车收尾这条线，Esc 取消。&#10;画好后选中它，可以直接拖节点和拖控制柄继续调。" />
                 <Button Content="矩形框" Command="{Binding AddRectCommand}" ToolTip="加边框/表格线" />
                 <Button Content="图片" Command="{Binding AddImageCommand}" ToolTip="加 Logo 或条码图，会复制到模板目录" />
                 <Button Content="复制" Command="{Binding DuplicateCommand}" ToolTip="复制选中元素（偏移 2mm）" />
@@ -230,6 +231,7 @@
                                     <ColumnDefinition Width="*" />
                                 </Grid.ColumnDefinitions>
                                 <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
@@ -525,6 +527,20 @@
                                             </Grid>
                                         </Border>
                                     </Popup>
+                                </StackPanel>
+
+                                <TextBlock Grid.Row="16" Text="曲线" Style="{StaticResource Caption}"
+                                           Visibility="{Binding Editing.IsCurve, Converter={StaticResource BoolVis}}" />
+                                <StackPanel Grid.Row="16" Grid.Column="1" Orientation="Horizontal" Margin="0,4,0,4"
+                                            Visibility="{Binding Editing.IsCurve, Converter={StaticResource BoolVis}}">
+                                    <TextBlock VerticalAlignment="Center" FontSize="11"
+                                               Text="{Binding Editing.NodeCount, StringFormat='共 {0} 个节点'}" />
+                                    <Button Content="拉直" Command="{Binding Editing.StraightenCommand}" Margin="10,0,0,0" Padding="6,1"
+                                            ToolTip="所有控制柄归零：节点位置不动，每段变成直线段（想退回直线又不想删了重画时用）" />
+                                    <Button Content="只留两端" Command="{Binding Editing.FlattenToEndsCommand}" Margin="6,0,0,0" Padding="6,1"
+                                            ToolTip="删掉所有中间节点与柄，回到从前那条两点直线" />
+                                    <TextBlock Text="节点和柄在画布上直接拖" VerticalAlignment="Center" Margin="10,0,0,0"
+                                               FontSize="10" Foreground="#8A8F98" />
                                 </StackPanel>
                             </Grid>
 

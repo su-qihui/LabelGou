@@ -115,7 +115,6 @@ public sealed class TemplateEditorViewModel : ObservableObject
     public LabelLayout SampleLayout { get; private set; } = new();
 
     public ICommand AddTextCommand { get; private set; } = null!;
-    public ICommand AddLineCommand { get; private set; } = null!;
     public ICommand AddRectCommand { get; private set; } = null!;
     public ICommand AddImageCommand { get; private set; } = null!;
     public ICommand RemoveCommand { get; private set; } = null!;
@@ -300,9 +299,6 @@ public sealed class TemplateEditorViewModel : ObservableObject
     public void BuildCommands()
     {
         AddTextCommand = new RelayCommand(() => AddElement(TemplateFactory.NewText("新文本", _template.PaddingMm, _template.PaddingMm, 30, 6), "文本"));
-        AddLineCommand = new RelayCommand(() => AddElement(TemplateFactory.NewLine(
-            _template.PaddingMm, _template.PaddingMm + 14,
-            Math.Max(_template.PaddingMm + 14, _template.WidthMm - _template.PaddingMm), _template.PaddingMm + 14), "线条"));
         AddRectCommand = new RelayCommand(() => AddElement(TemplateFactory.NewRect(_template.PaddingMm, _template.PaddingMm, 30, 14), "矩形框"));
         AddImageCommand = new RelayCommand(AddImage);
         RemoveCommand = new RelayCommand(RemoveSelected, () => SelectedRow is not null);
@@ -610,12 +606,210 @@ public sealed class TemplateEditorViewModel : ObservableObject
 
     // ---------- 画布交互（控件调用，坐标一律毫米） ----------
 
+    /// <summary>画布当前用什么工具点。第 49 棒：「线条」从"两点直线"升级成贝塞尔曲线。</summary>
+    public enum EditorTool
+    {
+        /// <summary>选择/移动/缩放（从前那把箭头）。</summary>
+        Select = 0,
+
+        /// <summary>贝塞尔：按下拖出节点的控制柄，松开定下一点；<strong>按住 Shift 拖＝直线（不出柄）</strong>。</summary>
+        Bezier = 1,
+    }
+
     public enum DragMode
     {
         None = 0,
         Move = 1,
         Resize = 2,
+
+        /// <summary>拖曲线的某个节点（整段弯度跟着平移）。</summary>
+        Node = 3,
+
+        /// <summary>拖某根控制柄（节点不动，只改切线方向）。</summary>
+        Handle = 4,
     }
+
+    /// <summary>当前工具。贝塞尔模式下画布上的按下/拖动都走 <see cref="BeginPath"/> 那一路。</summary>
+    public EditorTool Tool
+    {
+        get => _tool;
+        set
+        {
+            if (_tool == value) return;
+            // 切走之前把没画完的这条收尾：不然画布上会留一条半截曲线，而人已经去点别的东西了。
+            if (_tool == EditorTool.Bezier && IsDrawingPath) FinishPath();
+            _tool = value;
+            Raise(nameof(Tool));
+            Raise(nameof(IsBezierTool));
+            StatusText = value == EditorTool.Bezier
+                ? "曲线工具：在画布上按下拖出这一节的弯度，松开定下一个点；按住 Shift 拖＝直线；双击或回车收尾，Esc 取消。"
+                : "已切回选择工具。";
+            CanvasChanged?.Invoke();
+        }
+    }
+    private EditorTool _tool = EditorTool.Select;
+
+    /// <summary>那颗「曲线」按钮绑的就是它（双向）。</summary>
+    public bool IsBezierTool
+    {
+        get => Tool == EditorTool.Bezier;
+        set => Tool = value ? EditorTool.Bezier : EditorTool.Select;
+    }
+
+    // ---------- 贝塞尔：正在画的那条路径（第 49 棒）----------
+
+    /// <summary>正在画的节点表（绝对毫米 + 各自两根柄）。</summary>
+    private readonly List<CurveNode> _path = new();
+
+    /// <summary>画布上是否有一条正在画的曲线（决定 Enter/Esc 归谁、以及要不要画节点标记）。</summary>
+    public bool IsDrawingPath => _path.Count > 0;
+
+    /// <summary>正在画的那条路径的节点（控件画圈用；柄已经在元素本体里）。</summary>
+    public IReadOnlyList<CurveNode> PathNodes => _path;
+
+    /// <summary>正在画的元素下标（-1 = 还没落地）。</summary>
+    public int PathIndex { get; private set; } = -1;
+
+    /// <summary>
+    /// 贝塞尔工具下按下鼠标：落下一个节点并开始拖它的出柄。
+    /// <para>第一个点会真的建一个元素（走 <see cref="TemplateFactory.AddElement"/> 那一路，
+    /// 所以撤销栈、越界校验、重叠提醒都与其他元素同一套），之后每个点只改这个元素的节点表。</para>
+    /// </summary>
+    /// <param name="shift">按住 Shift＝这一节要直（柄归零，下一段也是直线）。</param>
+    public bool BeginPath(double xMm, double yMm, bool shift)
+    {
+        if (_path.Count == 0)
+        {
+            var element = TemplateFactory.NewLine(xMm, yMm, xMm, yMm, DefaultLineThicknessMm);
+            Capture();                       // 必须在加入之前录：快照里带着这个新元素的话，Esc/撤销会把它原样放回来
+            var outcome = TemplateFactory.AddElement(_template, element, xMm, yMm);
+            if (outcome is null)
+            {
+                StatusText = "元素数量已到上限，画不下去了。";
+                ReleaseCapture();
+                return false;
+            }
+            PathIndex = outcome.Index;
+            var placed = _template.Elements[outcome.Index];
+            SelectedRow = Elements.FirstOrDefault(r => ReferenceEquals(r.Element, placed)) ?? SelectedRow;
+            // 落点以元素为准：AddElement 找不到原位时会把它挪到最近的空位，拿点击坐标当第一个节点就会与元素对不上。
+            _path.Add(new CurveNode(placed.X, placed.Y, 0, 0, 0, 0));
+        }
+        else
+        {
+            // 新节点：进柄取上一节点出柄的反向（CDR 的"平滑"手感），Shift 则两头都归零＝尖角。
+            var prev = _path[^1];
+            var mirrorIn = shift || prev.OutX == 0 && prev.OutY == 0
+                ? (0d, 0d)
+                : (-prev.OutX, -prev.OutY);
+            _path.Add(new CurveNode(xMm, yMm, mirrorIn.Item1, mirrorIn.Item2, 0, 0));
+        }
+        WritePath();
+        return true;
+    }
+
+    /// <summary>拖动中：当前节点的出柄跟鼠标走（Shift 时归零，这一段就是直的）。</summary>
+    public void DragPath(double xMm, double yMm, bool shift)
+    {
+        if (_path.Count == 0) return;
+        var n = _path[^1];
+        var dx = shift ? 0 : xMm - n.X;
+        var dy = shift ? 0 : yMm - n.Y;
+        _path[^1] = n with { OutX = dx, OutY = dy };
+        WritePath();
+    }
+
+    /// <summary>松开鼠标：这一节的柄定下来了（此时才允许下一段接上去）。</summary>
+    public void EndPathSegment()
+    {
+        if (_path.Count == 0) return;
+        SnapPathForStorage();
+        Touch();
+        RebuildSample();
+        RecomputeIssues();
+        CanvasChanged?.Invoke();
+    }
+
+    /// <summary>
+    /// 收尾（双击或回车）：最后一个节点没有出柄，路径变成一条完整的曲线元素。
+    /// <para>只点了一下就收尾（不足两点）时把刚建的那个元素撤掉——留一条零长度线在列表里是垃圾。</para>
+    /// </summary>
+    public bool FinishPath()
+    {
+        if (_path.Count < 2)
+        {
+            AbandonPath();
+            return false;
+        }
+        var keep = _path[^1] with { OutX = 0, OutY = 0 };
+        _path[^1] = keep;
+        WritePath();
+        _path.Clear();
+        PathIndex = -1;
+        Touch();
+        RebuildSample();
+        RecomputeIssues();
+        CanvasChanged?.Invoke();
+        StatusText = "曲线画好了。拖节点或拖柄可以继续调。";
+        return true;
+    }
+
+    /// <summary>Esc：丢掉正在画的这条路径（含刚建出来的那个元素），撤销栈一起收回。</summary>
+    public void CancelPath()
+    {
+        if (_path.Count == 0) return;
+        _path.Clear();
+        if (PathIndex >= 0 && PathIndex < _template.Elements.Count) _template.Elements.RemoveAt(PathIndex);
+        PathIndex = -1;
+        ReleaseCapture();
+        RefreshElements();
+        RebuildSample();
+        RecomputeIssues();
+        CanvasChanged?.Invoke();
+        StatusText = "取消这条曲线。";
+    }
+
+    private void AbandonPath()
+    {
+        var index = PathIndex;
+        _path.Clear();
+        if (index >= 0 && index < _template.Elements.Count) _template.Elements.RemoveAt(index);
+        PathIndex = -1;
+        ReleaseCapture();
+        RefreshElements();
+        RebuildSample();
+        RecomputeIssues();
+        CanvasChanged?.Invoke();
+    }
+
+    /// <summary>把节点表写回元素（唯一的写入口，见 <see cref="CurveGeometry.ApplyNodes"/>）。</summary>
+    private void WritePath()
+    {
+        if (PathIndex < 0 || PathIndex >= _template.Elements.Count || _path.Count < 1) return;
+        var pts = _path.Count == 1
+            ? new List<CurveNode> { _path[0], _path[0] }          // 只点了一下：零长度线，等下一个点
+            : new List<CurveNode>(_path);
+        CurveGeometry.ApplyNodes(_template.Elements[PathIndex], pts);
+        CanvasChanged?.Invoke();
+    }
+
+    private void SnapPathForStorage()
+    {
+        for (var i = 0; i < _path.Count; i++)
+        {
+            var n = _path[i];
+            _path[i] = n with
+            {
+                X = Math.Round(n.X, 3), Y = Math.Round(n.Y, 3),
+                InX = Math.Round(n.InX, 3), InY = Math.Round(n.InY, 3),
+                OutX = Math.Round(n.OutX, 3), OutY = Math.Round(n.OutY, 3),
+            };
+        }
+        if (PathIndex >= 0 && PathIndex < _template.Elements.Count) CurveGeometry.SnapForStorage(_template.Elements[PathIndex]);
+    }
+
+    /// <summary>新画曲线的默认线宽（与「添加线条」那颗按钮同源，不另定一份）。</summary>
+    public const double DefaultLineThicknessMm = 0.35;
 
     /// <summary>
     /// 按下鼠标：<paramref name="handleRadiusMm"/> 由控件按当前缩放换算（屏幕上约 8 像素）。
@@ -623,6 +817,8 @@ public sealed class TemplateEditorViewModel : ObservableObject
     /// <para><paramref name="anchor"/> = 按住 Shift 时的锚点（<see cref="ResizeAnchor.Center"/> = 绕中心向四周，
     /// 与 CorelDRAW 同口径，第 45 棒实测）；<paramref name="lockAxis"/> = 按住 Ctrl，
     /// 移动时锁到水平或垂直一根轴上。</para>
+    /// <para><strong>贝塞尔工具不走这条路</strong>：那颗工具切过去之后，控件直接调
+    /// <see cref="BeginPath"/>/<see cref="DragPath"/>/<see cref="EndPathSegment"/>。</para>
     /// </summary>
     public DragMode BeginDrag(double xMm, double yMm, double handleRadiusMm,
         ResizeAnchor anchor = ResizeAnchor.Opposite, bool lockAxis = false)
@@ -630,6 +826,12 @@ public sealed class TemplateEditorViewModel : ObservableObject
         // 命中【不】用墨迹盒：AI 行式模板每行是一条全宽行带，只认墨迹会让"点文字旁边的空白选不中这一行"，
         // 比改之前更难选。分工是刻意的：**点得中 = 行带（宽容）**，**看得见框、抓得到句柄 = 墨迹（精确）**。
         var index = EditGeometry.TopmostAt(_template, xMm, yMm);
+        if (index < 0 && SelectedRow?.Element is { Kind: ElementKind.Line } selected && CurveGeometry.IsCurved(selected)
+            && CurveGeometry.HandleAt(selected, xMm, yMm, handleRadiusMm) is not null)
+        {
+            // 柄头常常伸在弧的外面：先按"元素本体命中"拦一道就永远抓不到它（CDR 同样是先选中物件、再拖节点）。
+            index = _template.Elements.IndexOf(selected);
+        }
         _dragMode = DragMode.None;
         _dragIndex = -1;
         _dragSnapshot = null;
@@ -646,7 +848,6 @@ public sealed class TemplateEditorViewModel : ObservableObject
         var element = _template.Elements[index];
         SelectedRow = Elements.FirstOrDefault(r => ReferenceEquals(r.Element, element));
 
-        var handle = EditGeometry.HandleAt(element, xMm, yMm, handleRadiusMm, DisplayBoxOf(element));
         Capture();
         _dragSnapshot = element.CloneTemplate();
         // 墨迹盒"相对排版盒"的偏移与尺寸，按下这一刻量一次就够（此时缓存与版面都是新鲜的）。
@@ -655,8 +856,20 @@ public sealed class TemplateEditorViewModel : ObservableObject
         _dragInkRel = RelativeInkOf(element);
         _dragStart = (xMm, yMm);
         _dragIndex = index;
-        _dragMode = handle == ResizeHandle.None ? DragMode.Move : DragMode.Resize;
+
+        // 曲线上的节点/柄优先：抓中它们时动的是那一个点，不是整条元素。
+        if (element.Kind == ElementKind.Line && CurveGeometry.IsCurved(element)
+            && CurveGeometry.HandleAt(element, xMm, yMm, handleRadiusMm) is { } hit)
+        {
+            _curveHit = hit;
+            _dragMode = hit.Part == CurvePart.Node ? DragMode.Node : DragMode.Handle;
+            _dragHandle = ResizeHandle.None;
+            return _dragMode;
+        }
+
+        var handle = EditGeometry.HandleAt(element, xMm, yMm, handleRadiusMm, DisplayBoxOf(element));
         _dragHandle = handle;
+        _dragMode = handle == ResizeHandle.None ? DragMode.Move : DragMode.Resize;
         return _dragMode;
     }
 
@@ -666,6 +879,7 @@ public sealed class TemplateEditorViewModel : ObservableObject
     private ResizeAnchor _dragAnchor;
     private bool _dragLockAxis;
     private (double X, double Y, double Width, double Height)? _dragInkRel;
+    private CurveHit? _curveHit;
 
     /// <summary>
     /// 元素"看得见的那一块"（毫米、未旋转）：文本 = <see cref="TextFit"/> 实测的墨迹盒按字面拉伸
@@ -705,6 +919,32 @@ public sealed class TemplateEditorViewModel : ObservableObject
         var dx = xMm - _dragStart.X;
         var dy = yMm - _dragStart.Y;
 
+        if ((_dragMode == DragMode.Node || _dragMode == DragMode.Handle) && _curveHit is { } hit)
+        {
+            // 每帧从按下时的快照重算（与 Move/Resize 同一口径）：不累积误差，也保证 Esc 一次回到原位。
+            var pts = CurveGeometry.NodesOf(_dragSnapshot);
+            if (hit.Index >= pts.Count) return;
+            var n = pts[hit.Index];
+            if (_dragMode == DragMode.Node)
+            {
+                pts[hit.Index] = n with { X = n.X + dx, Y = n.Y + dy };
+            }
+            else
+            {
+                var (hx, hy) = hit.Part == CurvePart.Out ? (n.OutX + dx, n.OutY + dy) : (n.InX + dx, n.InY + dy);
+                // 平滑节点（两根柄成一直线）拖一边另一边跟着镜像——这是"类 CDR"里最常用的一半手感；
+                // 尖角节点（两柄不在一条线上，或只有一根）只动这一根，不然调不动单侧切线。
+                var smooth = CurveGeometry.IsSmooth(n);
+                pts[hit.Index] = hit.Part == CurvePart.Out
+                    ? n with { OutX = hx, OutY = hy, InX = smooth ? -hx : n.InX, InY = smooth ? -hy : n.InY }
+                    : n with { InX = hx, InY = hy, OutX = smooth ? -hx : n.OutX, OutY = smooth ? -hy : n.OutY };
+            }
+            CurveGeometry.ApplyNodes(element, pts);
+            RebuildSample();
+            CanvasChanged?.Invoke();
+            return;
+        }
+
         if (_dragMode == DragMode.Move)
         {
             if (_dragLockAxis)
@@ -712,7 +952,10 @@ public sealed class TemplateEditorViewModel : ObservableObject
                 // Ctrl = 只沿一根轴走（CorelDRAW 实测：Ctrl+移动锁水平或垂直），位移更大的那根说了算。
                 if (Math.Abs(dx) >= Math.Abs(dy)) dy = 0; else dx = 0;
             }
-            var proposed = (X: _dragSnapshot.X + dx, Y: _dragSnapshot.Y + dy);
+            // proposed 用的是【包围盒左上角】而不是元素原点：MoveTo/Snap 的坐标口径是盒。
+            // 两者对直线以下元素并不相同（从右往左画的线、或弧身凸出两端的曲线），差多少就跳多少。
+            var boxAtStart = EditGeometry.BoxOf(_dragSnapshot);
+            var proposed = (X: boxAtStart.X + dx, Y: boxAtStart.Y + dy);
             var occupancy = DragInk(element);
             if (_snapEnabled)
             {
@@ -814,6 +1057,7 @@ public sealed class TemplateEditorViewModel : ObservableObject
         _dragIndex = -1;
         _dragSnapshot = null;
         _dragHandle = ResizeHandle.None;
+        _curveHit = null;
         _activeGuides = Array.Empty<GuideLine>();
         Editing?.Reload();
         Touch();
@@ -831,6 +1075,7 @@ public sealed class TemplateEditorViewModel : ObservableObject
         _dragIndex = -1;
         _dragSnapshot = null;
         _dragHandle = ResizeHandle.None;
+        _curveHit = null;
         _activeGuides = Array.Empty<GuideLine>();
         ReleaseCapture();
         StatusText = "已取消这次拖动。";
@@ -1059,6 +1304,11 @@ public sealed class TemplateEditorViewModel : ObservableObject
         // 第 43 棒同因：文本边柄拖的是字面拉伸倍率（RotationDeg 由面板改、拖动不碰，一并带上以防别的改动漏恢复）。
         target.TextScaleX = snapshot.TextScaleX;
         target.TextScaleY = snapshot.TextScaleY;
+        // 第 49 棒：曲线三个字段必须一起恢复。DragTo 是"每帧从快照重算"，漏了节点就会出现
+        // 拖一下节点、弧身留在原地，而且误差逐帧累积。列表要拷一份，不能与快照共用同一个 List。
+        target.Nodes = snapshot.Nodes is { } nodes ? new List<CurveNode>(nodes) : null;
+        target.StartOut = snapshot.StartOut;
+        target.EndIn = snapshot.EndIn;
     }
 
     /// <summary>改动之前录一步快照（同一属性的连续输入只录第一次，避免打字打出一个栈）。</summary>
@@ -1325,8 +1575,17 @@ public sealed class EditableElement : ObservableObject
         _changed = changed;
         ApplyInkPresetCommand = new RelayCommand(p => { if (p is InkPreset preset) InkColor = preset.Color; });
         ResetInkCommand = new RelayCommand(() => InkColor = null, () => _element.InkColor is not null);
+        StraightenCommand = new RelayCommand(() => CurveEdit(CurveGeometry.Straighten), () => IsCurve);
+        FlattenToEndsCommand = new RelayCommand(() => CurveEdit(Flatten), () => IsCurve);
         SyncPickerFromColour();   // 选中一行时调色盘要停在那支墨真正的位置，别默认给左上角
     }
+
+    /// <summary>只留两端：中间节点与柄全清掉，ApplyNodes 会把三个曲线字段一起置空（与老文件里一条直线同形）。</summary>
+    private static void Flatten(TemplateElement element) => CurveGeometry.ApplyNodes(element, new[]
+    {
+        new CurveNode(element.X, element.Y, 0, 0, 0, 0),
+        new CurveNode(element.X2, element.Y2, 0, 0, 0, 0),
+    });
 
     public TemplateElement Element => _element;
 
@@ -1602,6 +1861,28 @@ public sealed class EditableElement : ObservableObject
     /// <summary>「恢复默认（黑）」＝把这格清空（null），存盘时这个字段整个不写，与老模板逐字同形。</summary>
     public ICommand ResetInkCommand { get; }
 
+    // ---------- 曲线（第 49 棒）----------
+
+    /// <summary>这条元素是曲线：线条带了中间节点或控制柄才算（两点直线不算）。</summary>
+    public bool IsCurve => _element.Kind == ElementKind.Line && CurveGeometry.IsCurved(_element);
+
+    /// <summary>节点总数（含两端）。两点直线交回 2。</summary>
+    public int NodeCount => _element.Kind == ElementKind.Line ? CurveGeometry.NodesOf(_element).Count : 0;
+
+    /// <summary>拉直：所有柄归零，节点位置不动（拖歪了想退回直线段，比删了重画快）。</summary>
+    public ICommand StraightenCommand { get; }
+
+    /// <summary>只留两端：删掉所有中间节点与柄，回到从前那条两点直线。</summary>
+    public ICommand FlattenToEndsCommand { get; }
+
+    /// <summary>曲线编辑的撤销括号：与墨色、摆位那几处同一套（Prepare 录快照、Done 刷新并置脏）。</summary>
+    private void CurveEdit(Action<TemplateElement> work)
+    {
+        Prepare(nameof(IsCurve));
+        work(_element);
+        Done();
+    }
+
     /// <summary>常用墨色（印刷口径的整数百分数）。唛头常用的就这几支，一键选比手打数字快。</summary>
     public static IReadOnlyList<InkPreset> InkPresets { get; } = new[]
     {
@@ -1766,6 +2047,7 @@ public sealed class EditableElement : ObservableObject
             nameof(InkColor), nameof(InkSwatch), nameof(InkSummary), nameof(InkUsesCmyk), nameof(InkUsesRgb),
             nameof(InkC), nameof(InkM), nameof(InkY), nameof(InkK),
             nameof(InkR), nameof(InkG), nameof(InkB), nameof(InkHex),
+            nameof(IsCurve), nameof(NodeCount),
         })
         {
             Raise(name);

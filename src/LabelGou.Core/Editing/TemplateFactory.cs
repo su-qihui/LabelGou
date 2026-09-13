@@ -134,14 +134,18 @@ public static class TemplateFactory
         var spot = FindFreeSpot(template, element, xPreferred, yPreferred)
                    ?? ClampedSpot(template, element, xPreferred, yPreferred);
 
+        var (oldX, oldY) = (element.X, element.Y);
         element.X = Math.Max(0, Math.Min(spot.X, Math.Max(0, template.WidthMm - EditGeometry.BoxOf(element).Width)));
         element.Y = Math.Max(0, Math.Min(spot.Y, Math.Max(0, template.HeightMm - EditGeometry.BoxOf(element).Height)));
         if (element.Kind == ElementKind.Line)
         {
-            var lengthX = element.X2 - element.X;
-            var lengthY = element.Y2 - element.Y;
-            element.X2 = element.X + lengthX;
-            element.Y2 = element.Y + lengthY;
+            // 按真实位移挪另一端。从前这里写的是「X2 = 新X + (X2 - 新X)」= 原地不动，
+            // 结果落点一夹、线被拉长或压短（旧位置已经被覆盖掉了，长度量不出来）。
+            var dx = element.X - oldX;
+            var dy = element.Y - oldY;
+            element.X2 += dx;
+            element.Y2 += dy;
+            CurveGeometry.Translate(element, dx, dy);      // 曲线：中间节点跟着走，不然弧身留在原地
         }
 
         // 必须在 Add 之前判：加进去之后再判会拿自己跟自己比，永远"重叠"。
@@ -184,6 +188,7 @@ public static class TemplateFactory
         {
             copy.X2 += offsetMm;
             copy.Y2 += offsetMm;
+            CurveGeometry.Translate(copy, offsetMm, offsetMm);
         }
         return copy;
     }
