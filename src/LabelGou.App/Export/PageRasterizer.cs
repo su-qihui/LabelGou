@@ -2,6 +2,7 @@ using System.IO;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using LabelGou.App.Rendering;
+using LabelGou.Core.Colors;
 using LabelGou.Core.Impos;
 using LabelGou.Core.Layout;
 using LabelGou.Core.Marks;
@@ -33,7 +34,8 @@ public static class PageRasterizer
         Func<int, LabelLayout?>? layoutProvider,
         bool showElementGuides,
         PageRenderPurpose purpose,
-        bool includeTrimMarks)
+        bool includeTrimMarks,
+        InkPlate plate = InkPlate.None)
     {
         if (dpi < 72 || dpi > 2400)
             throw new ArgumentOutOfRangeException(nameof(dpi), $"DPI {dpi} 超出可用范围（72~2400）。");
@@ -44,13 +46,87 @@ public static class PageRasterizer
         using (var dc = visual.RenderOpen())
         {
             SheetRenderer.DrawPage(dc, plan, pageIndex, 1.0, layoutProvider, showElementGuides,
-                purpose, dpi / ReferenceDpi, includeTrimMarks);
+                purpose, dpi / ReferenceDpi, includeTrimMarks, plate);
         }
 
         var bitmap = new RenderTargetBitmap(width, height, dpi, dpi, PixelFormats.Pbgra32);
         bitmap.Render(visual);
         bitmap.Freeze();
         return bitmap;
+    }
+
+    /// <summary>
+    /// 一页 CMYK 像素：<strong>四通道、每通道 8 位、逐像素交错（C M Y K C M Y K…）、ink-direct
+    /// （0 = 无墨，255 = 满墨）</strong>。第 48 棒两条位图出口（TIFF / PDF）共用这一份，
+    /// 免得两条出口各自分色再各自错一遍。
+    /// <para>
+    /// 为什么画四遍而不把渲染好的 RGB 逐像素反算成 CMYK：<see cref="CmykMath"/> 那对公式折回来
+    /// <strong>不是同一套配墨</strong>（CMYK 37/63/11/5 反算是 29/58/0/15），反算等于把用户亲手填的
+    /// 四个数换掉——那是 47 棒立"两端并存"要防的事。所以每一版只画"这一版该上的那些墨"
+    /// （<see cref="LayoutEngine"/> 按 <see cref="InkPlate"/> 把每支墨折成一块灰），取反就是这一版的墨量。
+    /// </para>
+    /// <para>
+    /// <strong>已知限制：元素互相盖住时，上面那块把下面的挖掉（knockout）</strong>——四版分别是四张灰图，
+    /// 后画的盖前画的，与印刷里非叠印的默认行为一致；叠印（overprint）本软件还没有这个概念。
+    /// </para>
+    /// <para>
+    /// <strong>实测到的第二条限制：字身边缘会有 ±2/255（约 0.8% 墨）的串色</strong>。
+    /// 一支纯黑的字（只该落在 K 版）在青/品/黄三版上留下峰值 2 的边——不是我们的换算漏了，
+    /// 是 WPF 文本渲染在 sRGB↔线性往返时的舍入（满格处也有 ±1~2）。0.8% 低于多数 RIP 的最小网点，
+    /// 但"分色版上有 0 以外的值"这件事必须先写在明面上：真要抠到逐位干净，得改成自己算灰版，
+    /// 那是独立一棒的量级（见《LabelGou-AI对接文档》§六）。
+    /// </para>
+    /// </summary>
+    public static CmykPage RenderCmykPage(
+        SheetPlan plan, int pageIndex, double dpi,
+        Func<InkPlate, Func<int, LabelLayout?>> plateProviders, bool includeTrimMarks)
+    {
+        var plates = new[] { InkPlate.Cyan, InkPlate.Magenta, InkPlate.Yellow, InkPlate.Black };
+        byte[]? pixels = null;
+        var width = 0;
+        var height = 0;
+        for (var p = 0; p < plates.Length; p++)
+        {
+            var bitmap = RenderPage(plan, pageIndex, dpi, plateProviders(plates[p]), false,
+                PageRenderPurpose.Image, includeTrimMarks, plates[p]);
+            if (pixels is null)
+            {
+                width = bitmap.PixelWidth;
+                height = bitmap.PixelHeight;
+                pixels = new byte[width * height * 4];
+            }
+            else if (bitmap.PixelWidth != width || bitmap.PixelHeight != height)
+            {
+                throw new InvalidDataException(
+                    $"第 {pageIndex + 1} 页四版尺寸对不上（{bitmap.PixelWidth}×{bitmap.PixelHeight} ≠ {width}×{height}）。");
+            }
+            FillPlane(bitmap, pixels, p);
+        }
+        return new CmykPage(width, height, pixels!);
+    }
+
+    /// <summary>把一张灰版（Pbgra32，白底）搬进四通道缓冲的第 channel 个平面：墨量 = 255 - 红通道。</summary>
+    private static void FillPlane(BitmapSource plate, byte[] target, int channel)
+    {
+        var stride = plate.PixelWidth * 4;
+        var src = new byte[stride * plate.PixelHeight];
+        plate.CopyPixels(src, stride, 0);
+        for (var i = 0; i < plate.PixelWidth * plate.PixelHeight; i++)
+            target[i * 4 + channel] = (byte)(255 - src[i * 4 + 2]);      // Pbgra32 里红在第三个字节
+    }
+
+    /// <summary>一页的 CMYK 像素（ink-direct）。Width×Height×4 字节。</summary>
+    public sealed record CmykPage(int Width, int Height, byte[] Pixels)
+    {
+        /// <summary>按版拆成四条单通道平面（PDF 与 TIFF 各自要的形状）。</summary>
+        public byte[][] ToPlanes()
+        {
+            var planes = new byte[4][];
+            for (var c = 0; c < 4; c++) planes[c] = new byte[Width * Height];
+            for (var i = 0; i < Width * Height; i++)
+                for (var c = 0; c < 4; c++) planes[c][i] = Pixels[i * 4 + c];
+            return planes;
+        }
     }
 
     /// <summary>用于打印：真实尺寸的 DrawingVisual（96DPI 口径），由驱动决定最终点密度。</summary>
@@ -189,13 +265,21 @@ public sealed class PageContentSource
         return count;
     }
 
-    /// <summary>标签序号（1 起）→ 版面。这里没有缓存：每页只算它用到的那几枚，内存保持平稳。</summary>
-    public LabelLayout? BuildAt(int labelIndex)
+    /// <summary>
+    /// 标签序号（1 起）→ 版面。这里没有缓存：每页只算它用到的那几枚，内存保持平稳。
+    /// <para><paramref name="plate"/> 非 None 只发生在第 48 棒的分色光栅里（那一版该上多少墨，
+    /// 由 <see cref="LayoutEngine"/> 折算，渲染端不判颜色归属）。</para>
+    /// </summary>
+    public LabelLayout? BuildAt(int labelIndex, InkPlate plate = InkPlate.None)
     {
         if (labelIndex < 1 || labelIndex > _records.Count) return null;
-        var context = new LayoutContext(labelIndex, Math.Max(1, _records.Count), SourceName, TextCase: _textCase);
+        var context = new LayoutContext(labelIndex, Math.Max(1, _records.Count), SourceName,
+            TextCase: _textCase, Plate: plate);
         return LayoutEngine.Build(_template, _records[labelIndex - 1], context);
     }
 
-    public Func<int, LabelLayout?> AsProvider() => BuildAt;
+    public Func<int, LabelLayout?> AsProvider() => index => BuildAt(index);
+
+    /// <summary>分色用的提供者：先挑版，再挑标签。四遍渲染各自拿一条，别共用（会串版）。</summary>
+    public Func<InkPlate, Func<int, LabelLayout?>> AsPlateProvider() => plate => index => BuildAt(index, plate);
 }

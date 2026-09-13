@@ -187,9 +187,14 @@ public static class MarkTextCaseExtensions
 /// 只有单标签预览、整版预览与模板编辑器画布会传 true。</para>
 /// </param>
 /// <param name="TextCase">唛头文字大小写口径，<strong>默认按表格里的</strong>（不改变任何已有行为）。</param>
+/// <param name="Plate">
+/// 分色：这一份版面要出哪一张墨版（第 48 棒）。默认 <see cref="Colors.InkPlate.None"/> = 不分色，
+/// 与从前逐字同形；只有 <c>PageRasterizer</c> 出 CMYK 位图时才填非 None 值。
+/// </param>
 public sealed record LayoutContext(
     int RowIndex, int RecordCount, string? SourceFile = null, bool IncludeReference = false,
-    MarkTextCase TextCase = MarkTextCase.AsSource);
+    MarkTextCase TextCase = MarkTextCase.AsSource,
+    Colors.InkPlate Plate = Colors.InkPlate.None);
 
 /// <summary>
 /// 把「模板 + 一条记录」解析成 <see cref="LabelLayout"/>。
@@ -213,7 +218,9 @@ public static class LayoutEngine
 
         if (template.BorderMm > 0)
         {
-            items.Add(new RectItem(0, 0, template.WidthMm, template.HeightMm, template.BorderMm));
+            // 外框没填色＝黑＝只该落在黑版上（不分色时 InkOf 原样交回 null，与从前逐字同形）。
+            items.Add(new RectItem(0, 0, template.WidthMm, template.HeightMm, template.BorderMm,
+                Ink: InkOf(null, context)));
         }
 
         foreach (var element in template.Elements)
@@ -225,12 +232,12 @@ public static class LayoutEngine
             {
                 case ElementKind.Line:
                     items.Add(new LineItem(element.X, element.Y, element.X2, element.Y2, element.ThicknessMm,
-                        Ink: element.InkColor));
+                        Ink: InkOf(element.InkColor, context)));
                     break;
 
                 case ElementKind.Rect:
                     items.Add(new RectItem(element.X, element.Y, element.Width, element.Height, element.ThicknessMm,
-                        Ink: element.InkColor));
+                        Ink: InkOf(element.InkColor, context)));
                     break;
 
                 case ElementKind.Vector:
@@ -287,13 +294,13 @@ public static class LayoutEngine
                         encoding.Data, element.Symbology.ShortName(), element.ShowBarcodeText,
                         string.IsNullOrWhiteSpace(element.FontFamily) ? TemplateElement.DefaultFont : element.FontFamily,
                         fontSizePt,
-                        Flagged: barFlag is not null || !encoding.Ok,
+                        Flagged: ShowFlag(context, barFlag is not null || !encoding.Ok),
                         FlagReason: barFlag ?? (encoding.Ok ? null : encoding.Error),
                         Warning: encoding.Ok ? geometry.Warning : null,
                         Error: encoding.Ok ? null : encoding.Error,
                         GuardBarsHeight: geometry.GuardBarsHeight,
                         Hri: hri,
-                        Ink: element.InkColor));
+                        Ink: InkOf(element.InkColor, context)));
                     break;
                 }
 
@@ -317,13 +324,13 @@ public static class LayoutEngine
                         element.Align,
                         element.ShrinkToFit,
                         element.MaxLines,
-                        Flagged: flagReason is not null,
+                        Flagged: ShowFlag(context, flagReason is not null),
                         FlagReason: flagReason,
                         RotationDeg: element.RotationDeg,
                         TextScaleX: element.TextScaleX,
                         TextScaleY: element.TextScaleY,
                         WrapWidthMm: element.WrapWidthMm,
-                        Ink: element.InkColor)
+                        Ink: InkOf(element.InkColor, context))
                     { Source = element });
                     break;
             }
@@ -340,12 +347,28 @@ public static class LayoutEngine
     }
 
     /// <summary>
+    /// 这一版上该拿什么色画这块墨。<strong>不分色时原样交回</strong>（含 null=黑），
+    /// 分色时折成"这一版上多少墨"的那块灰，见 <see cref="InkPlates.ForPlate"/>。
+    /// </summary>
+    private static Colors.LabelColor? InkOf(Colors.LabelColor? ink, LayoutContext context)
+        => context.Plate == Colors.InkPlate.None ? ink : Colors.InkPlates.ForPlate(ink, context.Plate);
+
+    /// <summary>
+    /// 分色版上没有「警示红」这种墨——那是给人眼和打印闸门看的记号，不是配墨的一部分。
+    /// <para>这一条不是洁癖：警示红 (255,0,0) 画到灰版上会被当成"这一版此处无墨"，
+    /// 那一行字就<strong>从成品里安静地消失</strong>了。所以分色时按元素自己那支墨画，记号不上版。</para>
+    /// </summary>
+    private static bool ShowFlag(LayoutContext context, bool flagged)
+        => flagged && context.Plate == Colors.InkPlate.None;
+
+    /// <summary>
     /// 用一份样例记录渲染模板（还没导数据时的"示意预览"）。
     /// <para><paramref name="includeReference"/> 只有预览与编辑器画布该传 true：参考底图是给人对齐用的，不能上纸。</para>
     /// </summary>
-    public static LabelLayout BuildSample(LabelTemplate template, bool includeReference = false)
+    public static LabelLayout BuildSample(LabelTemplate template, bool includeReference = false,
+        Colors.InkPlate plate = Colors.InkPlate.None)
         => Build(template, SampleRecords.StandardSample(),
-            new LayoutContext(1, 1, "样例数据.xlsx", includeReference));
+            new LayoutContext(1, 1, "样例数据.xlsx", includeReference, Plate: plate));
 
     private static string? ResolveAsset(LabelTemplate template, TemplateElement element)
     {

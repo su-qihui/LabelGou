@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.IO.Compression;
 using System.Text;
 using LabelGou.Core.Units;
 
@@ -11,6 +10,17 @@ public enum PdfImageKind
     Jpeg,
     /// <summary>未压缩的 24 位 RGB 逐行像素（WPF 位图拷出来的样子），由本类做 Flate 压缩。</summary>
     Rgb24,
+    /// <summary>
+    /// 未压缩的 32 位 CMYK 逐像素交错像素（C M Y K C M Y K…），由本类做 Flate 压缩，
+    /// 以 <c>/ColorSpace /DeviceCMYK</c> 嵌入。
+    /// <para><strong>字节约定：0 = 无墨，255 = 满墨</strong>（ink-direct，与
+    /// <see cref="Colors.LabelColor"/> 里那四个百分数同一副口径：分量 100% 就是 255）。
+    /// PDF 里图像样本到色空间分量的映射由 <c>/Decode</c> 决定，本类<strong>显式写出恒等映射</strong>
+    /// <c>[0 1 0 1 0 1 0 1]</c>——这句话落在文件里，读的人不用猜，也不用信我们的注释。
+    /// （对照：PIL 写 CMYK PDF 时给的是 <c>[1 0 1 0 …]</c>，因为它自己的缓冲是"0 = 满墨"。
+    /// 取证见《LabelGou-AI对接文档》§三-阶段 48。）</para>
+    /// </summary>
+    Cmyk32,
 }
 
 /// <summary>
@@ -37,8 +47,14 @@ public sealed record PdfPageImage(
             issues.Add($"{label}：页图为空，无法写入 PDF。");
             return;
         }
-        if (Kind == PdfImageKind.Rgb24 && (long)Data.Length != (long)PixelWidth * PixelHeight * 3)
-            issues.Add($"{label}：RGB 像素字节数 {Data.Length} 与 {PixelWidth}×{PixelHeight}px 不符。");
+        var channels = Kind switch
+        {
+            PdfImageKind.Rgb24 => 3,
+            PdfImageKind.Cmyk32 => 4,
+            _ => 0,
+        };
+        if (channels > 0 && (long)Data.Length != (long)PixelWidth * PixelHeight * channels)
+            issues.Add($"{label}：{Kind} 像素字节数 {Data.Length} 与 {PixelWidth}×{PixelHeight}px×{channels} 不符。");
     }
 }
 
@@ -202,26 +218,30 @@ public sealed class PdfImageWriter : IDisposable
 
     private void WriteImageObject(int number, PdfPageImage page)
     {
-        byte[] payload;
-        string dictionary;
         if (page.Kind == PdfImageKind.Jpeg)
         {
-            payload = page.Data;
-            dictionary = ImageDictionary(page, "/Filter /DCTDecode", payload.Length, null);
+            WriteStreamObject(number, page.Data, ImageDictionary(page, "/Filter /DCTDecode", page.Data.Length, null));
+            return;
         }
-        else
-        {
-            payload = ZlibCompress(page.Data);
-            dictionary = ImageDictionary(page, "/Filter /FlateDecode", payload.Length,
-                $" /DecodeParms << /Colors 3 /BitsPerComponent 8 /Columns {page.PixelWidth} >>");
-        }
-        WriteStreamObject(number, payload, dictionary);
+        var payload = Deflate.Compress(page.Data);
+        var colors = page.Kind == PdfImageKind.Cmyk32 ? 4 : 3;
+        var decodeParms = $" /DecodeParms << /Colors {colors} /BitsPerComponent 8 /Columns {page.PixelWidth} >>";
+        WriteStreamObject(number, payload, ImageDictionary(page, "/Filter /FlateDecode", payload.Length, decodeParms));
     }
 
     private static string ImageDictionary(PdfPageImage page, string filter, int length, string? decodeParms)
-        => $"<< /Type /XObject /Subtype /Image /Width {page.PixelWidth} /Height {page.PixelHeight} " +
-           $"/ColorSpace /DeviceRGB /BitsPerComponent 8 {filter} /Interpolate false" +
-           $"{decodeParms} /Length {length} >>";
+    {
+        var (colorSpace, decode) = page.Kind switch
+        {
+            // CMYK 图像样本默认就是"0 → 分量 0、255 → 分量 1"（满墨）。把这条恒等映射显式写出来，
+            // 是为了让"0 = 无墨"这句话落在文件里而不是注释里——见 PdfImageKind.Cmyk32 的说明。
+            PdfImageKind.Cmyk32 => ("/DeviceCMYK", " /Decode [0 1 0 1 0 1 0 1]"),
+            _ => ("/DeviceRGB", string.Empty),
+        };
+        return $"<< /Type /XObject /Subtype /Image /Width {page.PixelWidth} /Height {page.PixelHeight} " +
+               $"/ColorSpace {colorSpace} /BitsPerComponent 8 {filter}{decode} /Interpolate false" +
+               $"{decodeParms} /Length {length} >>";
+    }
 
     private void WriteStreamObject(int number, byte[] payload, string dictionary)
     {
@@ -267,42 +287,6 @@ public sealed class PdfImageWriter : IDisposable
     /// <summary>坐标 4 位小数足够（1/72 英寸以下没人能量得出来），同时避免科学计数法写进 PDF。</summary>
     private static string Fmt(double value)
         => Math.Round(value, 4).ToString("0.####", CultureInfo.InvariantCulture);
-
-    /// <summary>DeflateStream 只给裸 deflate，而 PDF 的 FlateDecode 要 zlib 外壳（2 字节头 + 4 字节 Adler-32）。</summary>
-    private static byte[] ZlibCompress(byte[] raw)
-    {
-        using var buffer = new MemoryStream();
-        buffer.WriteByte(0x78);
-        buffer.WriteByte(0x01);
-        using (var deflate = new DeflateStream(buffer, CompressionLevel.Optimal, leaveOpen: true))
-        {
-            deflate.Write(raw, 0, raw.Length);
-        }
-        var checksum = new byte[4];
-        WriteBigEndian(checksum, Adler32(raw));
-        buffer.Write(checksum, 0, 4);
-        return buffer.ToArray();
-    }
-
-    private static void WriteBigEndian(byte[] target, uint value)
-    {
-        target[0] = (byte)(value >> 24);
-        target[1] = (byte)(value >> 16);
-        target[2] = (byte)(value >> 8);
-        target[3] = (byte)value;
-    }
-
-    private static uint Adler32(byte[] data)
-    {
-        const uint modulus = 65521;
-        uint a = 1, b = 0;
-        foreach (var value in data)
-        {
-            a = (a + value) % modulus;
-            b = (b + a) % modulus;
-        }
-        return (b << 16) | a;
-    }
 
     public void Dispose()
     {

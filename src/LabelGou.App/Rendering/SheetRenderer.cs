@@ -49,7 +49,8 @@ public static class SheetRenderer
         bool showElementGuides,
         PageRenderPurpose purpose,
         double pixelsPerDip,
-        bool includeTrimMarks = true)
+        bool includeTrimMarks = true,
+        Core.Colors.InkPlate plate = Core.Colors.InkPlate.None)
     {
         var page = Math.Max(1, pageIndex);
         var paperW = Mm.ToDiu(plan.PageWidthMm) * scale;
@@ -87,7 +88,9 @@ public static class SheetRenderer
             foreach (var mark in ImpositionEngine.BuildMarks(plan.Spec, plan, page))
             {
                 if (purpose != PageRenderPurpose.Screen && mark.Kind == SheetMarkKind.LabelOutline) continue;
-                dc.DrawLine(PenFor(mark, scale, target),
+                var pen = PenFor(mark, scale, target, plate);
+                if (pen is null) continue;          // 这一版上这条线没有墨
+                dc.DrawLine(pen,
                     new Point(Mm.ToDiu(mark.X1) * scale, Mm.ToDiu(mark.Y1) * scale),
                     new Point(Mm.ToDiu(mark.X2) * scale, Mm.ToDiu(mark.Y2) * scale));
             }
@@ -130,11 +133,21 @@ public static class SheetRenderer
     /// 打印/PDF/位图/SVG 出口一律还是实线——要上纸的必须是实的，所以判据是 <paramref name="target"/>
     /// 而不是线的类型。</para>
     /// </summary>
-    private static Pen PenFor(SheetMarkLine mark, double scale, RenderTarget target)
+    private static Pen? PenFor(SheetMarkLine mark, double scale, RenderTarget target, Core.Colors.InkPlate plate)
     {
+        // 分色时这条线落在哪张版上：套准十字四版都要有（它就是让四版对得齐的，少一版白印），
+        // 角线只走黑版（裁切标记是黑墨，掺三色是浪费）。
+        if (plate != Core.Colors.InkPlate.None
+            && plate != Core.Colors.InkPlate.Black
+            && mark.Kind != SheetMarkKind.RegistrationMark) return null;
+
+        var separating = plate != Core.Colors.InkPlate.None;
         var brush = new SolidColorBrush(mark.Kind switch
         {
+            // 灰版上"这条线有墨"就是满墨那一档，画成黑；取反后正是 100%。
+            SheetMarkKind.RegistrationMark when separating => System.Windows.Media.Colors.Black,
             SheetMarkKind.RegistrationMark => RenderRules.RegistrationColor,
+            SheetMarkKind.LabelOutline when separating => System.Windows.Media.Colors.Black,
             SheetMarkKind.LabelOutline => RenderRules.LabelOutlineColor,
             _ => RenderRules.CropMarkColor,
         });

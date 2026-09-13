@@ -687,7 +687,9 @@
                                           SelectedItem="{Binding Export.SelectedDpi}" DisplayMemberPath="Label" />
                                 <TextBlock Grid.Column="2" Text="PDF 页图：" VerticalAlignment="Center" Margin="8,0,2,0" />
                                 <ComboBox Grid.Column="3" ItemsSource="{Binding Export.PdfFormatOptions}"
-                                          SelectedItem="{Binding Export.SelectedPdfFormat}" DisplayMemberPath="Label" />
+                                          SelectedItem="{Binding Export.SelectedPdfFormat}" DisplayMemberPath="Label"
+                                          IsEnabled="{Binding Export.PdfFormatApplies}"
+                                          ToolTip="CMYK 四版一律走无损 Flate，这一档在那时不适用" />
                             </Grid>
 
                             <Grid Margin="0,6,0,0">
@@ -708,6 +710,8 @@
                                           ToolTip="默认不勾：缩小后标签就不是原定尺寸了" />
                                 <CheckBox Content="打印前看驱动窗口" IsChecked="{Binding Export.ConfirmBeforePrint}" Margin="12,0,0,0" VerticalAlignment="Center"
                                           ToolTip="勾了就能选纸盒/单面双面，但不算静默批量" />
+                                <CheckBox Content="印刷用 CMYK 四版" IsChecked="{Binding Export.CmykPlates}" Margin="12,0,0,0" VerticalAlignment="Center"
+                                          ToolTip="PDF 与 TIFF 按 C/M/Y/K 四张版出，每版墨量就是元素「墨色」里那四个数（0=无墨、255=满墨）。PNG 装不下四版，勾了也还是 RGB，摘要会如实说。" />
                             </WrapPanel>
 
                             <WrapPanel Margin="0,6,0,0">

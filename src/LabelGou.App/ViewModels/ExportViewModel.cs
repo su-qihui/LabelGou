@@ -181,6 +181,25 @@ public sealed class ExportViewModel : ObservableObject
     }
     private bool _includeTrimMarks = true;
 
+    /// <summary>
+    /// <strong>按 CMYK 四版出</strong>（第 48 棒）。只管 PDF 与 TIFF 两条位图出口：
+    /// PNG 装不下四版（47 棒实测 WPF 会把它悄悄转成 RGB），打印走驱动自己的色管。
+    /// 开着它时 PDF 那颗「JPEG/无损」下拉不再适用，面板上一起灰掉。
+    /// </summary>
+    public bool CmykPlates
+    {
+        get => _cmykPlates;
+        set
+        {
+            if (!Set(ref _cmykPlates, value)) return;
+            Raise(nameof(PdfFormatApplies));
+        }
+    }
+    private bool _cmykPlates;
+
+    /// <summary>JPEG/无损那一档现在说得上话吗（CMYK 四版一律走无损 Flate，不适用就灰掉）。</summary>
+    public bool PdfFormatApplies => !CmykPlates;
+
     public bool ScaleToFitPrintableArea
     {
         get => _scaleToFit;
@@ -369,6 +388,7 @@ public sealed class ExportViewModel : ObservableObject
             Dpi = SelectedDpi.Value,
             IncludeTrimMarks = IncludeTrimMarks,
             RasterKind = SelectedPdfFormat.Value,
+            CmykPlates = CmykPlates,
         };
     }
 

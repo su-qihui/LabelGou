@@ -1158,7 +1158,31 @@ public sealed class TemplateEditorViewModel : ObservableObject
                 $"第 {i + 1} 个元素的字排出来探出标签约 {over:0.#} mm。这一行是「永不折行」，不会被行带默默收回去——" +
                 "请挪回纸内、改小字号，或点工具栏「缩回纸内」。", i));
         }
+        list.AddRange(ArtworkDegradations());
         return list;
+    }
+
+    /// <summary>
+    /// 矢量底稿的降级告警（第 48 棒）。<c>SvgRenderPlan.Issues</c> 从前只有导出摘要里说一次：
+    /// 同一份底稿，画布上看着正常、渐变被抹成纯色这件事要到出片才看得见，那就是静默降级。
+    /// 底稿路径与缓存都走 <see cref="SampleLayout"/> 那份（与上面按墨迹量越界同一条来源）。
+    /// </summary>
+    private IEnumerable<TemplateIssue> ArtworkDegradations()
+    {
+        for (var i = 0; i < _template.Elements.Count; i++)
+        {
+            var element = _template.Elements[i];
+            if (element.Kind != ElementKind.Vector || !element.Visible) continue;
+            var vector = SampleLayout.Items.OfType<VectorItem>().FirstOrDefault(v =>
+                v.X == element.X && v.Y == element.Y && v.Width == element.Width && v.Height == element.Height);
+            if (vector is null) continue;
+            var plan = Rendering.SvgDrawableBuilder.Load(vector.AbsolutePath);
+            if (plan is null) continue;
+            foreach (var issue in plan.Issues.Distinct())
+            {
+                yield return new TemplateIssue(IssueLevel.Warning, $"第 {i + 1} 个元素的底稿：{issue}", i);
+            }
+        }
     }
 
     /// <summary>这一元素看得见墨迹（含旋转外接）探出纸边几毫米；量不到就返回 0（不猜）。</summary>

@@ -6,6 +6,7 @@ using LabelGou.App.Rendering;
 using LabelGou.App.Services;
 using LabelGou.Core.Export;
 using LabelGou.Core.Impos;
+using LabelGou.Core.Templates;
 
 namespace LabelGou.App.Export;
 
@@ -22,6 +23,15 @@ public sealed class SheetExportRequest
     /// <summary>PDF 里页图的存放方式：JPEG 文件小，无损（Flate）边缘更硬。</summary>
     public PdfImageKind RasterKind { get; init; } = PdfImageKind.Jpeg;
 
+    /// <summary>
+    /// 第 48 棒：<strong>按 CMYK 四版出</strong>（PDF 与 TIFF 两条位图出口认这个开关）。
+    /// <para>开着它时 PDF 里 <see cref="RasterKind"/> 不再适用（CMYK 走无损 Flate，JPEG 那套是三色
+    /// 有损的），面板上那颗格式下拉会一起灰掉——不留"我明明选了 JPEG 怎么不是"的怪事。
+    /// <strong>PNG 出口不认它</strong>：47 棒探针实测 WPF 写 PNG 会把 Cmyk32 悄悄转成 Bgr24，
+    /// 那正是"看着是 CMYK、拿到手是 RGB"的静默降级，所以我们宁可不提供。</para>
+    /// </summary>
+    public bool CmykPlates { get; init; }
+
     public int JpegQuality { get; init; } = 92;
 
     public void CollectIssues(IList<string> issues)
@@ -30,7 +40,26 @@ public sealed class SheetExportRequest
         if (Dpi < 72 || Dpi > 2400) issues.Add($"DPI {Dpi} 超出可用范围（72~2400）。");
         if (string.IsNullOrWhiteSpace(BaseName)) issues.Add("文件名不能为空。");
         if (Plan.PerPage <= 0) issues.Add("纸规放不下任何一枚标签，请先调整拼版设置。");
+        if (CmykPlates) CollectPlateCoverageIssues(issues);
         Plan.CollectPageRangeIssues(PageIndexes, issues);
+    }
+
+    /// <summary>
+    /// CMYK 四版目前只分得开<strong>文字、线条、矩形框、条码</strong>——它们的墨量直接来自用户在「墨色」里
+    /// 填的那四个百分数。<strong>图片与矢量底图分不了</strong>：它们带着自己的颜色，画到灰版上只有红通道
+    /// 会被当成这一版的墨，四版会印成同一张红版灰度图（不是"颜色差一点"，是整版错）。
+    /// 与其出一份看着像 CMYK、上机全废的件，不如在这里停下并说清下一步（48.5 棒补分色画法）。
+    /// </summary>
+    private void CollectPlateCoverageIssues(IList<string> issues)
+    {
+        var blockers = Source.Template.Elements.Count(e =>
+            e.Visible && !e.ReferenceOnly && e.Kind is ElementKind.Image or ElementKind.Vector);
+        if (blockers > 0)
+        {
+            issues.Add($"CMYK 四版暂时分不开图片与矢量底图（这一版里有 {blockers} 处）。" +
+                       "它们要的分色画法在下一棒，现在硬出会四版印成同一张红通道灰度图。" +
+                       "先按 RGB 出这份，或把底图/图片暂时隐藏。");
+        }
     }
 
     public int SheetWidthPx => PageRasterizer.PixelsForMillimetres(Plan.PageWidthMm, Dpi);
@@ -83,25 +112,38 @@ public static class SheetExportService
             using var file = new FileStream(filePath, FileMode.Create, FileAccess.Write, FileShare.None);
             using var writer = new PdfImageWriter(file);
             var options = new PdfWriteOptions { Producer = ProducerName, Title = request.BaseName, CreatorTool = ProducerName };
+            var kind = request.CmykPlates ? PdfImageKind.Cmyk32 : request.RasterKind;
             var done = 0;
             foreach (var index in request.PageIndexes)
             {
                 token.ThrowIfCancellationRequested();
                 done++;
                 progress?.Report($"正在渲染 PDF 第 {index + 1} 页（{done}/{request.PageIndexes.Count}）…");
-                var bitmap = PageRasterizer.RenderPage(request.Plan, index + 1, request.Dpi,
-                    request.Source.AsProvider(), false, PageRenderPurpose.Image, request.IncludeTrimMarks);
-                var data = request.RasterKind == PdfImageKind.Jpeg
-                    ? PageRasterizer.EncodeJpeg(bitmap, request.JpegQuality)
-                    : PageRasterizer.CopyRgb24(bitmap);
+                byte[] data;
+                int pixelWidth, pixelHeight;
+                if (request.CmykPlates)
+                {
+                    var plate = PageRasterizer.RenderCmykPage(request.Plan, index + 1, request.Dpi,
+                        request.Source.AsPlateProvider(), request.IncludeTrimMarks);
+                    (pixelWidth, pixelHeight, data) = (plate.Width, plate.Height, plate.Pixels);
+                }
+                else
+                {
+                    var bitmap = PageRasterizer.RenderPage(request.Plan, index + 1, request.Dpi,
+                        request.Source.AsProvider(), false, PageRenderPurpose.Image, request.IncludeTrimMarks);
+                    data = kind == PdfImageKind.Jpeg
+                        ? PageRasterizer.EncodeJpeg(bitmap, request.JpegQuality)
+                        : PageRasterizer.CopyRgb24(bitmap);
+                    (pixelWidth, pixelHeight) = (bitmap.PixelWidth, bitmap.PixelHeight);
+                }
                 writer.AddPage(new PdfPageImage(request.Plan.PageWidthMm, request.Plan.PageHeightMm,
-                    bitmap.PixelWidth, bitmap.PixelHeight, request.RasterKind, data));
+                    pixelWidth, pixelHeight, kind, data));
             }
             var bytes = writer.Finish(options);
             var summary = string.Format(CultureInfo.InvariantCulture,
                 "{0} 导出 {1} 页 · {2}DPI · {3} · {4}（页面 {5}×{6}mm）",
                 Path.GetFileName(filePath), request.PageIndexes.Count, request.Dpi,
-                request.RasterKind == PdfImageKind.Jpeg ? "JPEG" : "无损", FormatSize(bytes),
+                DescribePdfRaster(request), FormatSize(bytes),
                 request.Plan.PageWidthMm.ToString("0.#", CultureInfo.InvariantCulture),
                 request.Plan.PageHeightMm.ToString("0.#", CultureInfo.InvariantCulture));
             return new ExportOutcome(true, null, new[] { filePath }, bytes, summary);
@@ -152,7 +194,8 @@ public static class SheetExportService
                 progress?.Report($"已写出 {step}/{request.PageIndexes.Count} 页…");
             }
             var summary = string.Format(CultureInfo.InvariantCulture,
-                "写出 {0} 个 PNG · {1}DPI · 合计 {2}", files.Count, request.Dpi, FormatSize(total));
+                "写出 {0} 个 PNG · {1}DPI · 合计 {2}{3}", files.Count, request.Dpi, FormatSize(total),
+                request.CmykPlates ? "｜PNG 装不下 CMYK 四版，这一份仍是 RGB（要四版请出 PDF 或 TIFF）" : string.Empty);
             return new ExportOutcome(true, null, files, total, summary);
         }
         catch (OperationCanceledException)
@@ -176,6 +219,7 @@ public static class SheetExportService
         }
 
         var frames = new List<BitmapSource>();
+        var cmykFrames = new List<CmykTiffFrame>();
         try
         {
             var directory = Path.GetDirectoryName(Path.GetFullPath(filePath));
@@ -183,15 +227,28 @@ public static class SheetExportService
             foreach (var index in request.PageIndexes)
             {
                 token.ThrowIfCancellationRequested();
-                var bitmap = PageRasterizer.RenderPage(request.Plan, index + 1, request.Dpi,
-                    request.Source.AsProvider(), false, PageRenderPurpose.Image, request.IncludeTrimMarks);
-                frames.Add(bitmap);
-                progress?.Report($"已渲染 {frames.Count}/{request.PageIndexes.Count} 页…");
+                if (request.CmykPlates)
+                {
+                    var plate = PageRasterizer.RenderCmykPage(request.Plan, index + 1, request.Dpi,
+                        request.Source.AsPlateProvider(), request.IncludeTrimMarks);
+                    cmykFrames.Add(new CmykTiffFrame(plate.Width, plate.Height, plate.Pixels));
+                }
+                else
+                {
+                    var bitmap = PageRasterizer.RenderPage(request.Plan, index + 1, request.Dpi,
+                        request.Source.AsProvider(), false, PageRenderPurpose.Image, request.IncludeTrimMarks);
+                    frames.Add(bitmap);
+                }
+                progress?.Report($"已渲染 {(request.CmykPlates ? cmykFrames.Count : frames.Count)}/{request.PageIndexes.Count} 页…");
             }
-            var bytes = PageRasterizer.EncodeTiff(frames);
+            var bytes = request.CmykPlates
+                ? CmykTiffWriter.Write(cmykFrames, ProducerName, request.Dpi)
+                : PageRasterizer.EncodeTiff(frames);
             File.WriteAllBytes(filePath, bytes);
+            var frameCount = request.CmykPlates ? cmykFrames.Count : frames.Count;
             var summary = string.Format(CultureInfo.InvariantCulture,
-                "{0} 导出 {1} 帧 TIFF · {2}DPI · {3}", Path.GetFileName(filePath), frames.Count, request.Dpi, FormatSize(bytes.Length));
+                "{0} 导出 {1} 帧 TIFF · {2}DPI · {3} · {4}", Path.GetFileName(filePath), frameCount, request.Dpi,
+                request.CmykPlates ? "CMYK 四版（0=无墨）" : "RGB", FormatSize(bytes.Length));
             return new ExportOutcome(true, null, new[] { filePath }, bytes.Length, summary);
         }
         catch (OperationCanceledException)
@@ -219,6 +276,13 @@ public static class SheetExportService
         // 口径提醒（关转曲、图片改引用）不是错，但必须进摘要，不能默默降质
         var reminders = new List<string>();
         options.CollectIssues(reminders);
+
+        // 取证实测：CorelDRAW X4 的 SVG 通道装不下 CMYK（IESVG.flt 里 CMYK 字样 0 次），
+        // 所以这份文件里的颜色到对方手里只剩屏幕近似值。这句话必须在摘要里说，不能等印坏了再问。
+        if (request.Source.Template.Elements.Any(e => e.InkColor?.Entry == Core.Colors.ColorEntrySpace.Cmyk))
+        {
+            reminders.Add("SVG 这条通道带不动 CMYK，元素墨量到这里只剩屏幕近似色；要给印刷店准确的墨量，请另出 PDF 或 TIFF 的「CMYK 四版」。");
+        }
 
         // 一枚一图时数的是“真会写出几个文件”：只导两页却按整批 LabelCount 算上限，会把合法请求误拦下
         var totalFiles = options.Mode == SvgExportMode.PerLabel
@@ -278,11 +342,17 @@ public static class SheetExportService
         }
     }
 
+    /// <summary>PDF 摘要里那一格怎么说。CMYK 开着时用户选的 JPEG/无损那档不适用，必须说清楚。</summary>
+    private static string DescribePdfRaster(SheetExportRequest request) => request.CmykPlates
+        ? "CMYK 四版 · 无损（Flate）· 0=无墨"
+        : request.RasterKind == PdfImageKind.Jpeg ? "JPEG" : "无损";
+
     /// <summary>粗估 PDF 体积，让用户在按下去之前就知道要等多久、U 盘装不装得下（每像素按 0.09 字节估，线稿 JPEG 的经验值）。</summary>
     public static string EstimatePdfSize(SheetExportRequest request)
     {
         var perPage = (long)(request.SheetWidthPx * (double)request.SheetHeightPx * 0.09);
-        if (request.RasterKind == PdfImageKind.Rgb24) perPage = (long)(perPage * 2.5);
+        if (request.CmykPlates) perPage = (long)(perPage * 3.2);           // 四通道无损，比 RGB 那份再大一档
+        else if (request.RasterKind == PdfImageKind.Rgb24) perPage = (long)(perPage * 2.5);
         var total = perPage * Math.Max(1, request.PageIndexes.Count);
         return FormatSize(total) + "（估算）";
     }
