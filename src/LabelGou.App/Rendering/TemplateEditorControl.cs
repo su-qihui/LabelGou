@@ -34,6 +34,27 @@ public sealed class TemplateEditorControl : FrameworkElement
     private double _zoom = 1;
     private bool _zoomExplicit;
     private (double X, double Y) _origin;
+    private (double X, double Y) _pan;      // 视图平移（设备单位），叠在"居中"那个原点之上（第 67 棒：Ctrl/Alt + 滚轮）
+
+    /// <summary>滚轮一档平移多少设备单位（屏幕上约 10 毫米，与缩放无关——平移的是视图，不是纸）。</summary>
+    internal const double PanStepDiu = 40;
+
+    /// <summary>当前平移量（单测验手势映射与复位用）。</summary>
+    internal (double X, double Y) CurrentPan => _pan;
+
+    /// <summary>
+    /// 滚轮的三档手势，唯一口径（第 67 棒，用户：「鼠标滚动是放大缩小（现在有），ctrl+滚动--水平向左向右，
+    /// alt+滚动--水平向上向下」）：裸轮缩放、Ctrl+轮左右平移、Alt+轮上下平移。
+    /// 方向照"滚动条怎么走"：轮向上＝往右／往上，轮向下＝往左／往下。
+    /// </summary>
+    internal static (double PanX, double PanY, double ZoomFactor) WheelGesture(ModifierKeys mods, int delta)
+    {
+        var step = delta > 0 ? PanStepDiu : -PanStepDiu;
+        if (mods.HasFlag(ModifierKeys.Control)) return (step, 0, 1);
+        if (mods.HasFlag(ModifierKeys.Alt)) return (0, -step, 1);      // 屏幕 Y 向下为正：往上平移要减
+        return (0, 0, delta > 0 ? 1.15 : 1 / 1.15);
+    }
+
     private bool _dragging;
     private bool _dragIsResize;      // 这一笔抓的是句柄（缩放）还是元素本体（移动）——只服务光标
 
@@ -98,8 +119,8 @@ public sealed class TemplateEditorControl : FrameworkElement
         if (vm is null) return (MarginDiu, MarginDiu);
         var width = Mm.ToDiu(vm.Template.WidthMm) * _zoom;
         var height = Mm.ToDiu(vm.Template.HeightMm) * _zoom;
-        var x = Math.Max(MarginDiu, (size.Width - width) / 2);
-        var y = Math.Max(MarginDiu, (size.Height - height) / 2);
+        var x = Math.Max(MarginDiu, (size.Width - width) / 2) + _pan.X;
+        var y = Math.Max(MarginDiu, (size.Height - height) / 2) + _pan.Y;
         _origin = (x, y);
         return _origin;
     }
@@ -451,10 +472,11 @@ public sealed class TemplateEditorControl : FrameworkElement
                 return;
         }
 
-        // 双击 = 复位缩放（放在按下里而不是 OnMouseDown，否则会先起一次多余的拖动）
+        // 双击 = 复位视角（缩放 + 平移都回到"自动居中"）；放在按下里而不是 OnMouseDown，否则会先起一次多余的拖动
         if (e.ClickCount == 2)
         {
             _zoomExplicit = false;
+            _pan = (0, 0);
             InvalidateMeasure();
             InvalidateVisual();
             e.Handled = true;
@@ -543,12 +565,27 @@ public sealed class TemplateEditorControl : FrameworkElement
         var vm = _vm;
         if (vm is null) return;
 
-        var factor = e.Delta > 0 ? 1.15 : 1 / 1.15;
-        _zoom = Math.Clamp(_zoom * factor, 0.2, 12);
-        _zoomExplicit = true;
+        var (panX, panY, factor) = WheelGesture(Keyboard.Modifiers, e.Delta);
+        if (panX != 0 || panY != 0)
+        {
+            PanBy(panX, panY);
+        }
+        else
+        {
+            _zoom = Math.Clamp(_zoom * factor, 0.2, 12);
+            _zoomExplicit = true;
+            InvalidateMeasure();
+            InvalidateVisual();
+        }
+        e.Handled = true;
+    }
+
+    /// <summary>平移视角（设备单位）。单独开一个方法是为了能被测到——<see cref="OnMouseWheel"/> 读的是真实键盘状态。</summary>
+    internal void PanBy(double diuX, double diuY)
+    {
+        _pan = (_pan.X + diuX, _pan.Y + diuY);
         InvalidateMeasure();
         InvalidateVisual();
-        e.Handled = true;
     }
 
     // ---------- 键盘 ----------

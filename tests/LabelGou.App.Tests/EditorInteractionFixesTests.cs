@@ -1,5 +1,6 @@
 using System.IO;
 using System.Windows;
+using System.Windows.Input;
 using LabelGou.App.Export;
 using LabelGou.App.ViewModels;
 using LabelGou.Core.Editing;
@@ -188,5 +189,41 @@ public class EditorInteractionFixesTests
         window.LayerListForTests.Focus();
         Assert.True(window.EditorCanvas.TryDeleteKey());
         Assert.Empty(vm.Template.Elements);
+    });
+
+    // ---------- ⑦ 第 67 棒：滚轮三档视角手势 ----------
+
+    [Fact]
+    public void WheelGesturesMapToZoomHorizontalAndVertical()
+    {
+        var (zx, zy, zf) = Rendering.TemplateEditorControl.WheelGesture(ModifierKeys.None, 120);
+        Assert.Equal((0d, 0d), (zx, zy));
+        Assert.True(zf > 1, "裸轮向上该放大");
+        Assert.True(Rendering.TemplateEditorControl.WheelGesture(ModifierKeys.None, -120).ZoomFactor < 1, "裸轮向下该缩小");
+
+        var step = Rendering.TemplateEditorControl.PanStepDiu;
+        Assert.Equal((step, 0d, 1d), Rendering.TemplateEditorControl.WheelGesture(ModifierKeys.Control, 120));
+        Assert.Equal((-step, 0d, 1d), Rendering.TemplateEditorControl.WheelGesture(ModifierKeys.Control, -120));
+        Assert.Equal((0d, -step, 1d), Rendering.TemplateEditorControl.WheelGesture(ModifierKeys.Alt, 120));
+        Assert.Equal((0d, step, 1d), Rendering.TemplateEditorControl.WheelGesture(ModifierKeys.Alt, -120));
+    }
+
+    [Fact]
+    public void PanningMovesTheLabelInsideTheCanvas() => OnSta(() =>
+    {
+        var vm = NewVm("pan", OneRect());
+        var window = new TemplateEditorWindow(vm);
+        var root = (FrameworkElement)window.Content;
+        root.Measure(new Size(1180, 760));
+        root.Arrange(new Rect(0, 0, 1180, 760));
+        window.UpdateLayout();
+
+        var before = window.EditorCanvas.CurrentOrigin;
+        window.EditorCanvas.PanBy(60, -40);
+        window.UpdateLayout();
+        var after = window.EditorCanvas.CurrentOrigin;
+
+        Assert.Equal(before.X + 60, after.X, 1);
+        Assert.Equal(before.Y - 40, after.Y, 1);
     });
 }
