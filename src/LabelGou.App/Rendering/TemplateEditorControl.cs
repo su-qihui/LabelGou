@@ -35,6 +35,7 @@ public sealed class TemplateEditorControl : FrameworkElement
     private bool _zoomExplicit;
     private (double X, double Y) _origin;
     private bool _dragging;
+    private bool _dragIsResize;      // 这一笔抓的是句柄（缩放）还是元素本体（移动）——只服务光标
 
     public TemplateEditorControl()
     {
@@ -396,6 +397,33 @@ public sealed class TemplateEditorControl : FrameworkElement
         }
     }
 
+    /// <summary>
+    /// 按一次 Delete 该删什么：编辑工具下选中了曲线上的一个点就删那个点（CDR 同口径），否则删选中的元素。
+    /// <para>第 63 棒②：这段原来只写在画布的 <c>OnKeyDown</c> 里——焦点跑到图层列表或属性面板上，
+    /// Delete 就"有时按了没反应"（他报的第 2 条）。抽成公开方法，窗口那边在焦点不在画布时直接调它。</para>
+    /// </summary>
+    public bool TryDeleteKey()
+    {
+        var vm = _vm;
+        if (vm is null) return false;
+        if (vm.IsDrawingPath)
+        {
+            // 画到一半：Delete = 这条不要了（留着下标写下一个点会写歪，第 62 棒那条同源）
+            _dragging = false;
+            ReleaseMouseCapture();
+            vm.CancelPath();
+            return true;
+        }
+        if (vm.IsNodeTool && vm.SelectedRow?.Element.Kind == ElementKind.Line && vm.CurrentNodeIndex >= 0)
+        {
+            vm.RemoveCurrentNode();
+            return true;
+        }
+        if (!vm.RemoveCommand.CanExecute(null)) return false;
+        vm.RemoveCommand.Execute(null);
+        return true;
+    }
+
     protected override void OnMouseLeftButtonDown(MouseButtonEventArgs e)
     {
         base.OnMouseLeftButtonDown(e);
@@ -413,6 +441,7 @@ public sealed class TemplateEditorControl : FrameworkElement
         {
             case ToolDown.Drag:
                 _dragging = true;
+                _dragIsResize = false;
                 CaptureMouse();
                 e.Handled = true;
                 return;
@@ -434,11 +463,16 @@ public sealed class TemplateEditorControl : FrameworkElement
 
         var anchor = shift ? ResizeAnchor.Center : ResizeAnchor.Opposite;
         var lockAxis = Keyboard.Modifiers.HasFlag(ModifierKeys.Control);
-        var mode = vm.BeginDrag(ToMmX(point.X), ToMmY(point.Y), HandleRadiusMm, anchor, lockAxis);
+        var mode = vm.BeginDrag(ToMmX(point.X), ToMmY(point.Y), HandleRadiusMm, anchor, lockAxis, shift);
         if (mode == TemplateEditorViewModel.DragMode.None) return;
 
         _dragging = true;
+        _dragIsResize = mode == TemplateEditorViewModel.DragMode.Resize;
         CaptureMouse();
+         // 起拖那一刻就把光标定下来：;：移动＝四向箭头，缩放＝该方向的双向箭头（等系统下一次悬停算已经晚了）。
+        Cursor = mode == TemplateEditorViewModel.DragMode.Move
+            ? Cursors.SizeAll
+            : Cursors.Arrow;
         e.Handled = true;
     }
 
@@ -454,17 +488,22 @@ public sealed class TemplateEditorControl : FrameworkElement
             if (vm.IsShapeTool) vm.DragShape(ToMmX(point.X), ToMmY(point.Y));
             else if (vm.IsBezierTool) vm.DragPath(ToMmX(point.X), ToMmY(point.Y), Keyboard.Modifiers.HasFlag(ModifierKeys.Control));
             else vm.DragTo(ToMmX(point.X), ToMmY(point.Y));
+            // 拖的过程中光标也得是"能拖"的样子（用户第 63 棒④：移动时鼠标该变四向箭头）。
+            Cursor = _dragIsResize
+                ? CursorFor(vm, vm.SelectedRow?.Element ?? vm.Template.Elements[0], ToMmX(point.X), ToMmY(point.Y))
+                : Cursors.SizeAll;
             return;
         }
 
-        if (vm.IsBezierTool || vm.IsShapeTool || vm.IsNodeTool)
+        // 「编辑」工具（原「形状/转换点」，第 63 棒⑤改名并当默认档）用普通箭头：它就是日常那只鼠标。
+        if (vm.IsBezierTool || vm.IsShapeTool)
         {
             Cursor = Cursors.Cross;
             return;
         }
 
-        // 悬停与按下同一口径：命中按行带（宽容），句柄按墨迹盒（与画出来的框对齐）。
-        var index = EditGeometry.TopmostAt(vm.Template, ToMmX(point.X), ToMmY(point.Y));
+        // 悬停与按下同一口径：命中按行带 ∪ 墨迹（宽容），句柄按墨迹盒（与画出来的框对齐）。
+        var index = EditGeometry.TopmostAt(vm.Template, ToMmX(point.X), ToMmY(point.Y), inkBoxes: vm.DisplayBoxOf);
         Cursor = index < 0 ? Cursors.Arrow : CursorFor(vm, vm.Template.Elements[index], ToMmX(point.X), ToMmY(point.Y));
     }
 
@@ -564,16 +603,8 @@ public sealed class TemplateEditorControl : FrameworkElement
             e.Handled = true;
             return;
         }
-        if (e.Key == Key.Delete)
+        if (e.Key == Key.Delete && TryDeleteKey())
         {
-            // 形状工具且已选中曲线上的一个点：删的是这个点，不是整条元素（CDR 同口径）。
-            if (vm.IsNodeTool && vm.SelectedRow?.Element.Kind == ElementKind.Line && vm.CurrentNodeIndex >= 0)
-            {
-                vm.RemoveCurrentNode();
-                e.Handled = true;
-                return;
-            }
-            if (vm.RemoveCommand.CanExecute(null)) vm.RemoveCommand.Execute(null);
             e.Handled = true;
             return;
         }

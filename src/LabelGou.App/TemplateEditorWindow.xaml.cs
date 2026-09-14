@@ -213,6 +213,21 @@ public sealed partial class TemplateEditorWindow : Window
         return (node as ListBoxItem)?.DataContext as ElementRow;
     }
 
+    /// <summary>
+    /// Delete 不认焦点（第 63 棒②，用户："有些时候使用 delete 键不触发删除"）：
+    /// 从前这段只写在画布的 KeyDown 里，人在图层列表或属性面板上点完元素再按 Delete 就没反应。
+    /// 焦点在文本框/可编辑下拉里时不抢——那一下是在删字，不是删元素。
+    /// </summary>
+    protected override void OnPreviewKeyDown(KeyEventArgs e)
+    {
+        base.OnPreviewKeyDown(e);
+        if (e.Key != Key.Delete || e.Handled) return;
+        if (Keyboard.FocusedElement is System.Windows.Controls.Primitives.TextBoxBase
+            or ComboBox { IsEditable: true }) return;
+        if (Keyboard.FocusedElement is System.Windows.Controls.Primitives.ButtonBase) return;   // 按钮上按 Delete 不该删元素
+        if (Canvas.TryDeleteKey()) e.Handled = true;
+    }
+
     /// <summary>保存成功时由 VM 触发 Close，此时不该再问一遍。</summary>
     public bool AllowCloseWithoutPrompt { get; set; }
 
@@ -221,6 +236,9 @@ public sealed partial class TemplateEditorWindow : Window
 
     /// <summary>画布控件（单测拿它验证布局与渲染，不靠手点）。</summary>
     public TemplateEditorControl EditorCanvas => Canvas;
+
+    /// <summary>图层列表（第 63 棒②：单测要模拟"焦点在图层列表上"，验 Delete 不再看焦点脸色）。</summary>
+    internal ListBox LayerListForTests => LayerList;
 
     // ---------- 墨色调色盘（第 47 棒补刀）----------
     // View 只把像素换算成 0~1 的比例，颜色怎么落、面板跳不跳档全在 EditableElement 里。

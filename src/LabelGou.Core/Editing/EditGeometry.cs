@@ -187,7 +187,8 @@ public static class EditGeometry
         return (minX, minY, maxX, maxY);
     }
 
-    public static bool HitTest(TemplateElement element, double xMm, double yMm, double toleranceMm = HitToleranceMm)
+    public static bool HitTest(TemplateElement element, double xMm, double yMm, double toleranceMm = HitToleranceMm,
+        (double X, double Y, double Width, double Height)? inkBox = null)
     {
         if (element is null) throw new ArgumentNullException(nameof(element));
         if (element.Kind == ElementKind.Line)
@@ -196,6 +197,20 @@ public static class EditGeometry
             if (Templates.CurveGeometry.IsCurved(element))
                 return Templates.CurveGeometry.DistanceMm(element, xMm, yMm) <= tol;
             return DistanceToSegment(xMm, yMm, element.X, element.Y, element.X2, element.Y2) <= tol;
+        }
+
+        // 第 63 棒①：命中范围 = 排版盒 ∪ 看得见的墨迹盒。永不折行的字能排出排版盒右端（用户："右半段无法移动"），
+        // 只认盒就抓不到那一段；墨迹盒由 App 量（Core 量不了字），没递就退回只认盒＝逐字旧行为。
+        if (inkBox is { } ink && ink.Width > 0 && ink.Height > 0)
+        {
+            var box0 = VisualBoxOf(element);
+            var l = Math.Min(box0.X, ink.X) - toleranceMm;
+            var t = Math.Min(box0.Y, ink.Y) - toleranceMm;
+            var r = Math.Max(box0.X + box0.Width, ink.X + ink.Width) + toleranceMm;
+            var b = Math.Max(box0.Y + box0.Height, ink.Y + ink.Height) + toleranceMm;
+            if (xMm >= l && xMm <= r && yMm >= t && yMm <= b) return true;
+            // 转过的字：墨迹盒是转完的外接矩形，落在里面就够了；盒外的部分交给上面这条
+            if (element.RotationDeg == 0) return false;
         }
 
         // 转过的元素按"转回去"判：把纸面坐标绕元素中心反向旋转回本地域，再对轴对齐盒测。
@@ -249,12 +264,13 @@ public static class EditGeometry
     /// <summary>命中最上层元素的下标（列表末尾=画在最上面）；没命中返回 -1。
     /// <para>第 44 棒定口径：<strong>点选按宽容盒（文本=含拉伸的 VisualBoxOf，即整条行带）</strong>——
     /// 只认墨迹会让"点文字旁边的空白选不中这一行"；精确的墨迹盒只用于画框与句柄（HandleAt 的 displayBox）。</para></summary>
-    public static int TopmostAt(LabelTemplate template, double xMm, double yMm, double toleranceMm = HitToleranceMm)
+    public static int TopmostAt(LabelTemplate template, double xMm, double yMm, double toleranceMm = HitToleranceMm,
+        Func<TemplateElement, (double X, double Y, double Width, double Height)?>? inkBoxes = null)
     {
         for (var i = template.Elements.Count - 1; i >= 0; i--)
         {
             var element = template.Elements[i];
-            if (element.Visible && HitTest(element, xMm, yMm, toleranceMm)) return i;
+            if (element.Visible && HitTest(element, xMm, yMm, toleranceMm, inkBoxes?.Invoke(element))) return i;
         }
         return -1;
     }

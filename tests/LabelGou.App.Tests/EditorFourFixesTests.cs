@@ -100,11 +100,11 @@ public class EditorFourFixesTests
         window.UpdateLayout();
 
         var box = (FrameworkElement)window.FindName("ToolboxBox")!;
-        var shape = FindButton(box, "形状")!;
+        var shape = FindButton(box, "编辑")!;
         Assert.NotNull(shape);
         var panel = (Panel)VisualTreeHelper.GetParent(shape)!;
         var first = FindFirstButton(panel);
-        Assert.Equal("形状", first?.Content?.ToString());                  // 用户：「将形状工具调整到左列表第一个」
+        Assert.Equal("编辑", first?.Content?.ToString());                  // 用户：「将形状工具调整到左列表第一个」（第 63 棒改名「编辑」）
         var text = FindButton(box, "文本")!;
         Assert.True(panel.Children.IndexOf(first) == 0);
         Assert.NotSame(shape, text);

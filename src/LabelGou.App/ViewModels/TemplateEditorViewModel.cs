@@ -791,14 +791,14 @@ public sealed class TemplateEditorViewModel : ObservableObject
             {
                 EditorTool.Bezier => "曲线工具：点一下＝一个尖角（这一笔是直线）；按下拖开＝这一点带柄，刚画的那一段跟着弯。" +
                                       "接着点下一处续画，双击或回车收尾，Esc 取消。",
-                EditorTool.Shape => "形状工具：拖节点的方框改形；双击曲线段加一个点；点住一个点后按 Delete 删它。" +
-                                    "多边形/矩形抓顶点会先「转换为曲线」（可撤销）。",
-                _ => "已切回选择工具。",
+                EditorTool.Shape => "编辑工具（默认）：拖节点的方框改形；双击曲线段加一个点；点住一个点后按 Delete 删它。" +
+                                    "多边形/矩形抓顶点会先「转换为曲线」（可撤销）；其余照旧——点选、挪位置、拖句柄缩放。",
+                _ => "已切回选择/移动工具（不编辑节点）。",
             };
             CanvasChanged?.Invoke();
         }
     }
-    private EditorTool _tool = EditorTool.Select;
+    private EditorTool _tool = EditorTool.Shape;   // 第 63 棒⑤：「编辑」是常态（普通鼠标 + 选中就能调节点），不再要人每次去点
 
     /// <summary>那颗「曲线」按钮绑的就是它（双向）。</summary>
     public bool IsBezierTool
@@ -1354,11 +1354,13 @@ public sealed class TemplateEditorViewModel : ObservableObject
     /// <see cref="BeginPath"/>/<see cref="DragPath"/>/<see cref="EndPathSegment"/>。</para>
     /// </summary>
     public DragMode BeginDrag(double xMm, double yMm, double handleRadiusMm,
-        ResizeAnchor anchor = ResizeAnchor.Opposite, bool lockAxis = false)
+        ResizeAnchor anchor = ResizeAnchor.Opposite, bool lockAxis = false, bool shiftHeld = false)
     {
         // 命中【不】用墨迹盒：AI 行式模板每行是一条全宽行带，只认墨迹会让"点文字旁边的空白选不中这一行"，
         // 比改之前更难选。分工是刻意的：**点得中 = 行带（宽容）**，**看得见框、抓得到句柄 = 墨迹（精确）**。
-        var index = EditGeometry.TopmostAt(_template, xMm, yMm);
+        // 第 63 棒①补一条：命中范围还要并上量出来的墨迹盒——永不折行的字能排出行带右端，
+        // 只认行带就抓不住那一段（用户："右半段无法移动"）。墨迹盒只有 App 量得了（Core 不许碰 WPF）。
+        var index = EditGeometry.TopmostAt(_template, xMm, yMm, inkBoxes: DisplayBoxOf);
         if (index < 0 && SelectedRow?.Element is { Kind: ElementKind.Line } selected && CurveGeometry.IsCurved(selected)
             && CurveGeometry.HandleAt(selected, xMm, yMm, handleRadiusMm) is not null)
         {
@@ -1406,6 +1408,8 @@ public sealed class TemplateEditorViewModel : ObservableObject
         var handle = EditGeometry.HandleAt(element, xMm, yMm, handleRadiusMm, DisplayBoxOf(element));
         _dragHandle = handle;
         _dragMode = handle == ResizeHandle.None ? DragMode.Move : DragMode.Resize;
+        // 第 63 棒⑥：按住 Shift 移动 = 只沿水平或垂直一根轴走（缩放那一档 Shift 仍是"绕中心"，不动）。
+        if (_dragMode == DragMode.Move && shiftHeld) _dragLockAxis = true;
         return _dragMode;
     }
 

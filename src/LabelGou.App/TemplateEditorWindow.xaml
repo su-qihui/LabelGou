@@ -151,8 +151,8 @@
                                 HorizontalAlignment="Stretch" MinWidth="0" />
                     </StackPanel>
                     <StackPanel>
-                        <ToggleButton Content="形状" IsChecked="{Binding IsNodeTool}" Margin="2,2"
-                                      ToolTip="转换点工具（CorelDRAW 形状工具，原文「编辑对象的节点」）：&#10;曲线——拖节点/拖柄、双击线段加一个点、选中点按 Delete 删掉；&#10;多边形/矩形——抓顶点会先「转换为曲线」（CDR 同口径），带圆角的矩形不给转并说原因。" />
+                        <ToggleButton Content="编辑" IsChecked="{Binding IsNodeTool}" Margin="2,2"
+                                      ToolTip="编辑工具（默认这一档，CorelDRAW 的「编辑对象的节点」）：&#10;曲线——拖节点/拖柄、双击线段加一个点、选中点按 Delete 删掉；&#10;多边形/矩形——抓顶点会先「转换为曲线」（CDR 同口径），带圆角的矩形不给转并说原因。&#10;其余照旧：点选、挪位置、拖边角句柄缩放都不受影响。" />
                         <Button Content="文本" Command="{Binding AddTextCommand}" Margin="2,2"
                                 ToolTip="加一个文本元素（可含字段占位符）" />
                         <ToggleButton Content="曲线" IsChecked="{Binding IsBezierTool}" Margin="2,2"
