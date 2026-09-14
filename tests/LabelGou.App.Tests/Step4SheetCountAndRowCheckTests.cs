@@ -226,32 +226,39 @@ public sealed class Step4SheetCountAndRowCheckTests : IDisposable
             vm.Sheet.SelectedExpandColumn = vm.Sheet.ExpandColumnOptions.First(o => o.Value == "打印张数");
             vm.RowCheck = true;
             vm.RowCheckAll = true;
-            vm.RowThumbs[1].SelectCommand.Execute(null);
+            Assert.Equal(1, vm.RowThumbs[0].Ordinal);         // 格上带着行号，跳转不靠集合下标猜
+            vm.SelectRowThumb(vm.RowThumbs[0]);               // 故意点第一格：跳成"最后一行"这种错才抓得住
             return (Index: vm.CurrentIndex, All: vm.RowCheckAll, Thumbs: vm.RowThumbs.Count, Info: vm.RecordInfoText);
         });
 
-        Assert.Equal(2, result.Index);                  // 跳到他点的那一行
+        Assert.Equal(1, result.Index);                  // 跳到他点的那一行，不是最后一行
         Assert.False(result.All);                       // 一览收起，回到单张
         Assert.Equal(0, result.Thumbs);
-        Assert.Contains("olu830-70", result.Info);      // 看见的就是刚点的那一张
+        Assert.Contains("olu830-35", result.Info);      // 看见的就是刚点的那一张
     }
 
     [Fact]
-    public void 缩略一览十格一排_格宽按可用宽算()
+    public void 缩略一览十格一排_格宽按预览区可用宽算()
     {
         var result = OnSta(() =>
         {
             var vm = LoadInto();
-            vm.FitTo(1528, 700);                        // 预览区量到多宽，就按那个宽 ÷ 10 分格
+            vm.SetPreviewViewport(1528);                // 预览区量到多宽，就按那个宽 ÷ 10 分格
             return (Cell: vm.RowThumbItemWidth, PerRow: MainViewModel.RowThumbCellsPerRow,
-                Zoom: vm.RowThumbZoom, Used: vm.RowThumbItemWidth * MainViewModel.RowThumbCellsPerRow);
+                Used: vm.RowThumbItemWidth * MainViewModel.RowThumbCellsPerRow);
         });
 
-        Assert.Equal(150, result.Cell, 1);              // (1528 - 28) ÷ 10
+        Assert.Equal(148.4, result.Cell, 1);
         Assert.Equal(10, result.PerRow);
-        Assert.True(result.Used <= 1528, $"十格 {result.Used:0} DIP 放不下 1528 的预览区");
-        // 比例跟着格宽走：140 mm 的标签正好占满一格（扣掉格内边距）
-        Assert.True(Math.Abs(result.Zoom - (150 - 22) / LabelGou.Core.Units.Mm.ToDiu(140)) < 0.001);
+        // 十格加上留给内边距与竖向滚动条的余量，必须还在视口之内：宽一点 WrapPanel 就只排得下九格
+        Assert.True(result.Used + 44 <= 1528, $"十格 {result.Used:0} DIP 放不下 1528 的预览区");
+    }
+
+    [Fact]
+    public void 没量到视口宽时格宽不为零()
+    {
+        var cell = OnSta(() => LoadInto().RowThumbItemWidth);
+        Assert.True(cell > 0, "首帧兜底格宽不能是 0，否则一览整片空白");
     }
 
     [Fact]
@@ -278,9 +285,21 @@ public sealed class Step4SheetCountAndRowCheckTests : IDisposable
         var xaml = RepoFile("src", "LabelGou.App", "MainWindow.xaml");
 
         Assert.Contains("ItemWidth=\"{Binding DataContext.RowThumbItemWidth", xaml);   // 十格一排靠它
-        Assert.Contains("Command=\"{Binding SelectCommand}\"", xaml);                   // 每格可点
+        Assert.Contains("MouseLeftButtonUp=\"OnRowThumbClick\"", xaml);                // 点格 = 鼠标事件，不靠每格一条命令
+        Assert.DoesNotContain("Command=\"{Binding SelectCommand}\"", xaml);            // 那条"点了没反应"的老写法不许回来
+        // 横向滚动一开着，WrapPanel 拿到的就是无限宽 —— 永远不换行、只能往右拖（他报的「没按一行排 10 个往下排」）
+        Assert.Contains("HorizontalScrollBarVisibility=\"Disabled\" VerticalScrollBarVisibility=\"Auto\"", xaml);
+        Assert.Contains("<Viewbox Stretch=\"Uniform\">", xaml);                         // 每格按格宽自适应，不切不满也不溢出
         Assert.Contains("编辑这一张…", xaml);                                       // 从预览直接进编辑器（仍走 ③ 步那一个入口）
         Assert.Contains("Click=\"OnEditTemplateClick\"", xaml);
+
+        // 他报的「太小、显示不全」真因在这两行的顺序上：格宽刷新必须站在「自动适应」那颗勾之外 ——
+        // 一览开着时那排按钮（含这颗勾）整排是藏起来的，挂进去格宽就永远停在兜底值。
+        var code = RepoFile("src", "LabelGou.App", "MainWindow.xaml.cs");
+        var viewport = code.IndexOf("SetPreviewViewport(PreviewHost.ActualWidth)", StringComparison.Ordinal);
+        var autoFit = code.IndexOf("if (AutoFitBox.IsChecked == true) FitNow();", StringComparison.Ordinal);
+        Assert.True(viewport > 0 && autoFit > viewport && autoFit - viewport < 140,
+            "格宽刷新得站在「自动适应」那颗勾之前（挪进 if 里就红）");
     }
 
     // ---------- 界面拓扑（XAML 文本判据） ----------

@@ -427,6 +427,10 @@
                                         ToolTip="内置模板会先另存成一份自己的副本再改；改完在预览里就能看见，拖位置去「编辑模板…」" />
                             </WrapPanel>
 
+                            <TextBlock Text="{Binding Barcode.SymbolWidthText}" Style="{StaticResource Hint}"
+                                       TextWrapping="Wrap" Margin="0,2,0,0"
+                                       ToolTip="向导上那格只读的「符号宽度」：窄元素数 × X，不含静区" />
+
                             <TextBlock Text="{Binding Barcode.Preview}" Foreground="{Binding Barcode.PreviewBrush}"
                                        Style="{StaticResource Hint}" TextWrapping="Wrap" Margin="0,6,0,0" />
 
@@ -573,7 +577,7 @@
                                           SelectedItem="{Binding Sheet.SelectedExpandColumn}"
                                           DisplayMemberPath="Label"
                                           IsEnabled="{Binding Sheet.IsExpandMode}"
-                                          ToolTip="用户口径：「张数一般表格里会有一列写的（例：表格写打印 5 张，那对应的那张就要排出 5 张整张纸）」。&#10;选这一档时，每行按那一列的数字展开成几张，一张就是一页纸（开着「一页只排同一枚」时页内铺满全同份数）。&#10;只有「按每行的张数展开」这一档才用得上；读不到数的行会逐行报警，不会静默按 1 张处理。" />
+                                          ToolTip="用户口径：「张数一般表格里会有一列写的（例：表格写打印 5 张，那对应的那张就要排出 5 张整张纸）」。&#10;只有张数选了「按表里某一列」时才用得上；读不到数的行会逐行报警，不会静默按 1 张处理。" />
                             </Grid>
 
                             <Grid Margin="0,4,0,0">
@@ -899,15 +903,16 @@
                                         </ContentControl>
                                     </ScrollViewer>
 
-                                    <!-- 全部检查：一行一张缩略，WrapPanel 排开，纵向滚着扫 -->
-                                    <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
+                                    <!-- 全部检查：一行一张缩略。横向滚动必须关掉 —— 开着它 WrapPanel 拿到的是无限宽，
+                                         永远不换行（第 70 棒他看到的"排一行拖不到头"就是这个），竖向滚动条开着往下扫。 -->
+                                    <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto"
                                                   Background="Transparent" Padding="8"
                                                   Visibility="{Binding RowCheckAll, Converter={StaticResource BoolVis}}">
-                                        <ItemsControl ItemsSource="{Binding RowThumbs}" HorizontalAlignment="Center">
+                                        <ItemsControl ItemsSource="{Binding RowThumbs}" HorizontalAlignment="Left">
                                             <ItemsControl.ItemsPanel>
                                                 <ItemsPanelTemplate>
-                                                    <!-- ItemWidth = 一格（模板宽 × 缩略比例 + 边距）：一行摆满 10 格就往下排，
-                                                         31 行不用横向拖（用户：「排列可以加竖向，默认一行 10 个多的往下排一行」） -->
+                                                    <!-- ItemWidth = 可用宽 ÷ 10：一行摆十格，多的往下排（用户：「默认一行 10 个
+                                                         多的往下排一行（以此类推）」）。宽度由代码在预览区量宽时刷新。 -->
                                                     <WrapPanel Orientation="Horizontal"
                                                                ItemWidth="{Binding DataContext.RowThumbItemWidth,
                                                                              RelativeSource={RelativeSource AncestorType=ItemsControl}}" />
@@ -915,24 +920,26 @@
                                             </ItemsControl.ItemsPanel>
                                             <ItemsControl.ItemTemplate>
                                                 <DataTemplate>
-                                                    <!-- 点一格 = 跳到那一行并收起一览（要改的就是它） -->
-                                                    <Button Command="{Binding SelectCommand}" Cursor="Hand"
-                                                            Background="Transparent" BorderThickness="0" Padding="0"
-                                                            HorizontalContentAlignment="Left"
-                                                            ToolTip="点一下就跳到这一行（并收起一览）。要改这一张的越界，回单张后点「编辑这一张…」">
-                                                        <StackPanel Margin="6" VerticalAlignment="Top">
+                                                    <!-- 点一格 = 跳到那一行并收起一览。这里用 Border + 鼠标事件而不是每格一条
+                                                         命令：命令路由静默失败时表现就是"点了没反应"（第 71 棒他报的那条）。 -->
+                                                    <Border Background="Transparent" Cursor="Hand" Margin="2"
+                                                            MouseLeftButtonUp="OnRowThumbClick"
+                                                            ToolTip="{Binding Title}">
+                                                        <StackPanel VerticalAlignment="Top">
                                                             <TextBlock Text="{Binding Title}" FontSize="11.5" FontWeight="Bold"
-                                                                       Margin="0,0,0,3" />
+                                                                       TextTrimming="CharacterEllipsis" Margin="4,0,4,3" />
                                                             <Border Background="White" BorderBrush="#CDD3DA" BorderThickness="1"
-                                                                    Padding="4" HorizontalAlignment="Center">
-                                                                <render:LabelPreviewControl Layout="{Binding Layout}"
-                                                                                            Zoom="{Binding DataContext.RowThumbZoom,
-                                                                                                      RelativeSource={RelativeSource AncestorType=ItemsControl}}"
-                                                                                            ShowGuides="{Binding DataContext.ShowGuides,
-                                                                                                      RelativeSource={RelativeSource AncestorType=ItemsControl}}" />
+                                                                    Padding="4" HorizontalAlignment="Stretch">
+                                                                <!-- Viewbox 按格宽缩放：切不满也溢不出，窗口拉宽拉窄跟着变 -->
+                                                                <Viewbox Stretch="Uniform">
+                                                                    <render:LabelPreviewControl Layout="{Binding Layout}"
+                                                                                                Zoom="1"
+                                                                                                ShowGuides="{Binding DataContext.ShowGuides,
+                                                                                                          RelativeSource={RelativeSource AncestorType=ItemsControl}}" />
+                                                                </Viewbox>
                                                             </Border>
                                                         </StackPanel>
-                                                    </Button>
+                                                    </Border>
                                                 </DataTemplate>
                                             </ItemsControl.ItemTemplate>
                                         </ItemsControl>

@@ -881,7 +881,20 @@ public partial class MainWindow : Window
 
     private void OnPreviewHostSizeChanged(object sender, SizeChangedEventArgs e)
     {
+        // 视口宽一律递给 VM：缩略一览按它分十格。这一句不能挂在「自动适应」那颗勾上 ——
+        // 一览开着时那排按钮（含这颗勾）整排是藏起来的，挂上去格宽就永远不刷新（第 71 棒他报的"太小/不换行"）。
+        _viewModel.SetPreviewViewport(PreviewHost.ActualWidth);
         if (AutoFitBox.IsChecked == true) FitNow();
+    }
+
+    /// <summary>
+    /// 点缩略一览里的一格：跳到那一行并收起一览。
+    /// <para>走鼠标事件而不是每格一条命令 —— 命令路由静默失败时表现就是"点了没反应"（第 71 棒他报的那条）。</para>
+    /// </summary>
+    private void OnRowThumbClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: MainViewModel.RowThumb thumb })
+            _viewModel.SelectRowThumb(thumb);
     }
 
     private void OnSheetHostSizeChanged(object sender, SizeChangedEventArgs e)

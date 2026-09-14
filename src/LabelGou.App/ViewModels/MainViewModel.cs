@@ -1083,24 +1083,26 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
     /// </summary>
     public const int RowThumbCellsPerRow = 10;
 
-    /// <summary>一格里除版面之外占掉的宽度（StackPanel 左右 6+6、Border 的 4+4 与描边 1+1）。</summary>
-    private const double RowThumbCellChrome = 22;
+    private double _rowThumbCellWidth = 200;   // 还没量到预览区宽度时的兜底（首帧不至于零宽）
 
-    private double _rowThumbCellWidth = 240;   // 还没量到预览区宽度时的兜底（≈ 旧那档固定 0.4 的观感）
+    /// <summary>缩略一览一格的宽度（WrapPanel 的 ItemWidth）：可用宽 ÷ <see cref="RowThumbCellsPerRow"/>。</summary>
+    public double RowThumbItemWidth => _rowThumbCellWidth;
 
-    /// <summary>缩略一览的比例：跟着格宽算，所以 10 格永远排得下。</summary>
-    public double RowThumbZoom => Math.Clamp(
-        (_rowThumbCellWidth - RowThumbCellChrome) / LabelGou.Core.Units.Mm.ToDiu(SelectedTemplate?.Template.WidthMm ?? 100),
-        0.05, 2);
-
-    /// <summary>由 <see cref="FitTo"/> 在预览区量到宽度时更新；差不到 1 DIP 就不惊动界面。</summary>
-    private void SetRowThumbCellWidth(double width)
+    /// <summary>
+    /// 预览区量到宽度时由界面调用（<strong>不管自动适应开没开</strong>）：缩略一览按它分十格。
+    /// <para>第 71 棒：这一格宽从前只在「适应窗口」那条路里更新，而一览开着时那排按钮（含那颗勾）整排是
+    /// 藏起来的 —— 于是格宽永远停在兜底值，他看到的「太小、显示不全」就从这里来（「不换行」另有一条，
+    /// 是横向滚动把 WrapPanel 撑成无限宽，见 XAML 那侧的注释）。</para>
+    /// <para>扣掉的 44 = ScrollViewer 左右内边距 16 + 竖向滚动条约 18 + 几 DIP 余量：
+    /// ItemWidth 略大一点 WrapPanel 就只排得下九格，宁可留余量。</para>
+    /// </summary>
+    public void SetPreviewViewport(double width)
     {
-        var cell = Math.Max(120, width);
+        if (width < 60) return;
+        var cell = Math.Max(80, (width - 44) / RowThumbCellsPerRow);
         if (Math.Abs(_rowThumbCellWidth - cell) < 1) return;
         _rowThumbCellWidth = cell;
         Raise(nameof(RowThumbItemWidth));
-        Raise(nameof(RowThumbZoom));
     }
 
     /// <summary>缩略一览的内容：一行一张，标题写「第几行 · 货号 · 本行几张」。</summary>
@@ -1133,20 +1135,21 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         for (var ordinal = 1; ordinal <= _rowSheets.Count; ordinal++)
         {
             var row = _rowSheets[ordinal - 1];
-            RowThumbs.Add(new RowThumb(ordinal, RowTitle(ordinal, row), BuildLayoutForRow(ordinal),
-                new RelayCommand(_ => SelectRowFromThumb(ordinal))));
+            RowThumbs.Add(new RowThumb(ordinal, RowTitle(ordinal, row), BuildLayoutForRow(ordinal)));
         }
     }
 
-    /// <summary>点缩略一览里的一格：跳到那一行并收起一览（关着「全部行」看见的就是他点的那一张）。</summary>
-    private void SelectRowFromThumb(int ordinal)
+    /// <summary>
+    /// 点缩略一览里的一格：跳到那一行并收起一览（关着「全部行」看见的就是他点的那一张）。
+    /// <para>第 71 棒：入口从「每格一条 RelayCommand」改成界面鼠标事件 + 这一句 —— 命令绑定一旦接不上
+    /// 是静默的（按钮照样画出来），他报的「随便点哪个都没反应」就是这种；鼠标事件直接拿被点那一格的
+    /// DataContext 说话，接不上就什么都不做，不会装作办了事。</para>
+    /// </summary>
+    public void SelectRowThumb(RowThumb thumb)
     {
-        CurrentIndex = ordinal;
+        CurrentIndex = thumb.Ordinal;
         RowCheckAll = false;
     }
-
-    /// <summary>缩略一览一格的宽度（WrapPanel 的 ItemWidth）：可用宽 ÷ <see cref="RowThumbCellsPerRow"/>。</summary>
-    public double RowThumbItemWidth => _rowThumbCellWidth;
 
     private string RowTitle(int ordinal, RowSheet row)
         => $"第 {ordinal} / {_rowSheets.Count} 行：{(string.IsNullOrWhiteSpace(row.ItemNo) ? "（无货号）" : row.ItemNo)}，本行 {row.SheetCount} 张";
@@ -1174,15 +1177,14 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         public int SheetCount { get; set; } = 1;
     }
 
-    /// <summary>缩略一览里的一格：第几行、标题、那一行第一张的版面，外加「点这格就跳过去」的命令。</summary>
+    /// <summary>缩略一览里的一格：第几行、标题、那一行第一张的版面。点格跳转用 Ordinal。</summary>
     public sealed class RowThumb
     {
-        public RowThumb(int ordinal, string title, LabelLayout? layout, RelayCommand selectCommand)
+        public RowThumb(int ordinal, string title, LabelLayout? layout)
         {
             Ordinal = ordinal;
             Title = title;
             Layout = layout;
-            SelectCommand = selectCommand;
         }
 
         /// <summary>第几行（1 起，按表格行序）。测试与跳转都以它为准，不靠集合下标猜。</summary>
@@ -1191,8 +1193,6 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         public string Title { get; }
 
         public LabelLayout? Layout { get; }
-
-        public RelayCommand SelectCommand { get; }
     }
 
     /// <summary>当前预览第几条（1 起）；0 表示示意预览。</summary>
@@ -1247,8 +1247,6 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         var layout = CurrentLayout;
         if (layout is null || availableWidth < 20 || availableHeight < 20) return;
         Zoom = Rendering.LabelPreviewControl.FitZoom(layout, availableWidth - 24, availableHeight - 24);
-        // 缩略一览跟着这次量宽走：十格一排，多的往下排（不随窗口变宽就变成八格十格地跳）
-        SetRowThumbCellWidth((availableWidth - 28) / RowThumbCellsPerRow);
     }
 
     /// <summary>整版预览适应窗口（没方案时什么也不做）。</summary>
@@ -1370,8 +1368,9 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         }
         rows.Sort();
         // 用户开关过的合计行兜底原样带走：AI 没提这一项，它就不该被提案悄悄顶回来
+        // 右侧块（① 步圈出的表内文字模板/指令列）同理：提案没提它，保留用户点过的。
         return new SheetLayoutChoice(header, p.HasHeader ?? _choice.HasHeader,
-            rows.Count == 0 ? null : rows, _choice.SkipSummaryRows);
+            rows.Count == 0 ? null : rows, _choice.SkipSummaryRows, _choice.SideBlocks, _choice.ValueRules);
     }
 
     /// <summary>
@@ -1394,7 +1393,7 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
             takeHeader ? full.HeaderRowIndex : _choice.HeaderRowIndex,
             takeHeader ? full.HasHeader : _choice.HasHeader,
             takeRows ? full.ExcludedRawRows : _choice.ExcludedRawRows,
-            _choice.SkipSummaryRows);
+            _choice.SkipSummaryRows, _choice.SideBlocks, _choice.ValueRules);
     }
 
     /// <summary>回到「软件自动猜表头、不剔行」的那一份切法（用户说「改错了，恢复」时走这条）。</summary>
@@ -1420,8 +1419,7 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
             if (_suppressHeaderRowOption || value is null || Equals(value, _selectedHeaderRowOption)) return;
             var previous = _selectedHeaderRowOption;
             // 只动表头那一项：点名剔过的行与合计行开关都原样带走（并集语义不变）
-            var next = new SheetLayoutChoice(value.HeaderIndex, value.HasHeader,
-                _choice.ExcludedRawRows, _choice.SkipSummaryRows);
+            var next = _choice with { HeaderRowIndex = value.HeaderIndex, HasHeader = value.HasHeader };
             _selectedHeaderRowOption = value;
             Raise(nameof(SelectedHeaderRowOption));
             if (next == _choice) return;
@@ -1482,7 +1480,7 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         HeaderRowOptions.Add(new HeaderRowOption("这张表没有列名（第一行也是货）", null, false));
         if (detected is not null)
         {
-            var top = Math.Min(detected.RawRowCount - 1, 20);   // 表头底下至少得留一行货
+            var top = detected.RawRowCount - 1;   // 表头底下至少得留一行货（列名写在表尾的表，手选也要能点到那一行）
             for (var i = 0; i < top; i++)
                 HeaderRowOptions.Add(new HeaderRowOption($"原表第 {i + 1} 行", i, true));
         }
@@ -1581,7 +1579,7 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
                 }
                 else
                 {
-                    _working = MappingSuggester.Suggest(data.Headers, ProfileName);
+                    _working = MappingSuggester.Suggest(data.Headers, ProfileName, SideColumnIndexes);
                     StatusMessage = "已按表头自动连接字段，请检查后点「应用映射」。";
                 }
             }
@@ -1604,6 +1602,9 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         }
         catch (Exception ex)
         {
+            // 栈必须落日志：界面上那句 MessageBox 只带 Message，打印店弹窗一闪而过，
+            // 没有栈就永远查不出是谁炸的（2026-09-13 用户实测的 NRE 弹窗就是这么卡住的）。
+            Services.AppLog.Error("导入/重读这张表时抛异常：" + ex);
             ErrorRaised?.Invoke(ex.Message);
             StatusMessage = "打开失败：" + ex.Message;
         }
@@ -1621,14 +1622,21 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
     private void BuildPreviewTable(TabularData data)
     {
         var table = new DataTable(data.SheetName);
+        // 第一列摆 Excel 行号：体检清单、合计行理由、AI 报的都是「原表第 N 行」，
+        // 对面这张表却没有行号，人就只能拿手指一行行数（用户 2026-09-13 实测第三条）。
+        var rowNumberColumn = "行号";
+        if (data.Headers.Any(h => h.Trim() == rowNumberColumn)) rowNumberColumn += " ";
+        table.Columns.Add(rowNumberColumn, typeof(string));
         foreach (var header in data.Headers) table.Columns.Add(header, typeof(string));
 
         const int maxPreviewRows = 300;
         var rowCount = Math.Min(maxPreviewRows, data.RowCount);
         for (var r = 0; r < rowCount; r++)
         {
-            var values = new object[data.ColumnCount];
-            for (var c = 0; c < data.ColumnCount; c++) values[c] = data.GetCell(r, c);
+            var values = new object[data.ColumnCount + 1];
+            values[0] = ((r < data.DataRowRawIndexes.Count ? data.DataRowRawIndexes[r] : r) + 1)
+                .ToString(System.Globalization.CultureInfo.InvariantCulture);
+            for (var c = 0; c < data.ColumnCount; c++) values[c + 1] = data.GetCell(r, c);
             table.Rows.Add(values);
         }
         table.DefaultView.AllowNew = false;
@@ -1785,7 +1793,8 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
 
         var previousFixed = _working is null ? null : new Dictionary<string, string>(_working.FixedValues);
         _working = MappingSuggester.Suggest(data.Headers,
-            string.IsNullOrWhiteSpace(ProfileName) ? "自动匹配方案" : ProfileName.Trim());
+            string.IsNullOrWhiteSpace(ProfileName) ? "自动匹配方案" : ProfileName.Trim(),
+            SideColumnIndexes);
         // 重接列不该抹掉已经填好的整批固定值（它们与列无关）
         if (previousFixed is not null)
         {
