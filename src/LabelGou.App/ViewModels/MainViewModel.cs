@@ -1368,9 +1368,8 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         }
         rows.Sort();
         // 用户开关过的合计行兜底原样带走：AI 没提这一项，它就不该被提案悄悄顶回来
-        // 右侧块（① 步圈出的表内文字模板/指令列）同理：提案没提它，保留用户点过的。
         return new SheetLayoutChoice(header, p.HasHeader ?? _choice.HasHeader,
-            rows.Count == 0 ? null : rows, _choice.SkipSummaryRows, _choice.SideBlocks, _choice.ValueRules);
+            rows.Count == 0 ? null : rows, _choice.SkipSummaryRows);
     }
 
     /// <summary>
@@ -1393,7 +1392,7 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
             takeHeader ? full.HeaderRowIndex : _choice.HeaderRowIndex,
             takeHeader ? full.HasHeader : _choice.HasHeader,
             takeRows ? full.ExcludedRawRows : _choice.ExcludedRawRows,
-            _choice.SkipSummaryRows, _choice.SideBlocks, _choice.ValueRules);
+            _choice.SkipSummaryRows);
     }
 
     /// <summary>回到「软件自动猜表头、不剔行」的那一份切法（用户说「改错了，恢复」时走这条）。</summary>
@@ -1419,7 +1418,8 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
             if (_suppressHeaderRowOption || value is null || Equals(value, _selectedHeaderRowOption)) return;
             var previous = _selectedHeaderRowOption;
             // 只动表头那一项：点名剔过的行与合计行开关都原样带走（并集语义不变）
-            var next = _choice with { HeaderRowIndex = value.HeaderIndex, HasHeader = value.HasHeader };
+            var next = new SheetLayoutChoice(value.HeaderIndex, value.HasHeader,
+                _choice.ExcludedRawRows, _choice.SkipSummaryRows);
             _selectedHeaderRowOption = value;
             Raise(nameof(SelectedHeaderRowOption));
             if (next == _choice) return;
@@ -1579,7 +1579,7 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
                 }
                 else
                 {
-                    _working = MappingSuggester.Suggest(data.Headers, ProfileName, SideColumnIndexes);
+                    _working = MappingSuggester.Suggest(data.Headers, ProfileName);
                     StatusMessage = "已按表头自动连接字段，请检查后点「应用映射」。";
                 }
             }
@@ -1793,8 +1793,7 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
 
         var previousFixed = _working is null ? null : new Dictionary<string, string>(_working.FixedValues);
         _working = MappingSuggester.Suggest(data.Headers,
-            string.IsNullOrWhiteSpace(ProfileName) ? "自动匹配方案" : ProfileName.Trim(),
-            SideColumnIndexes);
+            string.IsNullOrWhiteSpace(ProfileName) ? "自动匹配方案" : ProfileName.Trim());
         // 重接列不该抹掉已经填好的整批固定值（它们与列无关）
         if (previousFixed is not null)
         {
