@@ -59,7 +59,9 @@ public class EditorFourFixesTests
         vm.EndDrag();
 
         Assert.True(bar.Width > w0 * 1.5, $"框宽没怎么变（{w0:0.#} → {bar.Width:0.#}）：这一拖没落到角柄上");
-        Assert.Equal(h0 * (bar.Width / w0), bar.Height, 1);                 // 等比：高跟着宽走
+        // 等比 = 宽与高长的倍数一致。X 是整像素，吸附到"按 X 算出来的那只框"时会差一丝，留 0.12 的余量。
+        Assert.True(Math.Abs(bar.Height / h0 - bar.Width / w0) < 0.12,
+            $"角柄拖出来是 {bar.Width / w0:0.##}×宽、{bar.Height / h0:0.##}×高：两轴不同倍，不是等比");
         var module1 = vm.SampleLayout.Items.OfType<BarcodeItem>().Single().ModuleMm;
         Assert.True(module1 > module0 * 1.4,
             $"窄线只从 {module0:0.###} 变到 {module1:0.###} mm：又是拉长条不变粗（用户报的那件事）");

@@ -53,10 +53,16 @@ public sealed class TemplateStore
 
     /// <summary>
     /// 保存用户模板。<strong>校验有 Error 时直接拒绝</strong>并返回问题清单。
+    /// <para><paramref name="allowOffLabel"/> 只给模板编辑器里用户明确点了「<strong>跳过</strong>」那一下用（第 60 棒②，
+    /// 用户：「文本或其他元素处于边缘时会触发——改成确定/跳过」）：把"探出纸"这一族 Error 降成 Warning 存下来，
+    /// 别的问题一律照拦。<strong>这不是把闸门拆了</strong>——④⑤ 步出纸前那道按真数据量的闸不认这个参数，
+    /// 模板列表与校验清单里也仍然写着这条（只是从"错"变成"提示"）。</para>
     /// </summary>
-    public (bool Saved, string? FileName, IReadOnlyList<TemplateIssue> Issues) Save(LabelTemplate template, bool overwrite = true)
+    public (bool Saved, string? FileName, IReadOnlyList<TemplateIssue> Issues) Save(
+        LabelTemplate template, bool overwrite = true, bool allowOffLabel = false)
     {
         var issues = TemplateValidator.Validate(template);
+        if (allowOffLabel) issues = DowngradeOffLabel(issues);
         if (issues.HasError()) return (false, null, issues);
         if (template.BuiltIn)
         {
@@ -202,6 +208,16 @@ public sealed class TemplateStore
             return null;
         }
     }
+
+    /// <summary>「探出纸」这一族从 Error 降成 Warning（用户在编辑器里点了「跳过」）——消息里写明是谁让它过的，别糊过去。</summary>
+    private static IReadOnlyList<TemplateIssue> DowngradeOffLabel(IReadOnlyList<TemplateIssue> issues) =>
+        issues.Select(i => i.Severity == IssueLevel.Error && IsOffLabel(i.Message)
+            ? i with { Severity = IssueLevel.Warning, Message = i.Message + "（编辑器里选了「跳过」，先照这样存）" }
+            : i).ToList();
+
+    /// <summary>只有越界这一族能被「跳过」降级：其余 Error（未知字段、制式不认识、宽高为 0…）一律照拦。</summary>
+    private static bool IsOffLabel(string message) =>
+        message.Contains("超出标签", StringComparison.Ordinal) || message.Contains("探出标签", StringComparison.Ordinal);
 
     /// <summary>
     /// 这份模板存盘时的文件名——<strong>全项目只有这一处算法</strong>。

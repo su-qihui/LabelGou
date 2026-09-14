@@ -359,9 +359,14 @@ public static class LayoutEngine
                     var hri = element.ShowBarcodeText && encoding.Ok
                         ? BarcodeBars.BuildHri(encoding, element.X, element.Width, geometry)
                         : Array.Empty<HriGlyph>();
-                    // 字号用元素自己的（默认 8pt），装不下由 TextFit 兜底缩——
-                    // 「字号 = 7.215 个模块」那条 CDR 规则在扁框里会炸出 27pt 的巨字，同一天里栽过一次，不再犯。
-                    var fontSizePt = element.FontSizePt;
+                    // 可读数字的字号：
+                    // · 有尺寸参数（第 58 棒的 X 尺寸模型）→ 照 CDR 的规矩「一位数字 = 7.215 个模块」，跟着条码一起缩放。
+                    //   从前这条不敢用：那时 X 由框宽算，扁框能把它撑成 27pt 巨字（2026-09-11 栽过一次）。
+                    //   现在反过来——字号写死 8pt 才是他这张截图的病：条码按比例缩小之后，两位数字骑到一起成了糊的一串。
+                    // · 没有尺寸参数（老模板）→ 仍用元素自己的字号，装不下由 TextFit 兜底，行为逐字不变。
+                    var fontSizePt = element.BarcodeSize is null || geometry.ModuleMm <= 0
+                        ? element.FontSizePt
+                        : Math.Clamp(BarcodeBars.HriFontSizeModules * geometry.ModuleMm * 72.0 / 25.4, 3, 72);
                     items.Add(new BarcodeItem(
                         geometry.Bars, element.X, element.Y, element.Width, element.Height,
                         geometry.BarsY, geometry.BarsHeight, geometry.ModuleMm,

@@ -112,6 +112,12 @@ public sealed class TemplateEditorViewModel : ObservableObject
     /// <summary>需要弹窗级别提醒的错误。</summary>
     public event Action<string>? ErrorRaised;
 
+    /// <summary>
+    /// 存盘被校验拦下时问那一句（<strong>确定／跳过</strong>，第 60 棒②）：返回 true＝这些问题先不管、照样存盘。
+    /// <para>留成可替换：没接（单测、别的宿主）就还是老行为——拦住不存，只报问题。</para>
+    /// </summary>
+    internal Func<IReadOnlyList<string>, bool>? AskSkipIssues { get; set; }
+
     /// <summary>请求关闭窗口（由 View 执行）。</summary>
     public event Action? CloseRequested;
 
@@ -1690,12 +1696,23 @@ public sealed class TemplateEditorViewModel : ObservableObject
     /// <summary>
     /// 存盘前的闸门：Core 的校验器量不到墨迹（不许碰 WPF），所以"字排到纸外"这一条只能由编辑器把。
     /// <para>第 46 棒：不加这道闸，永不折行的文字就能带着出纸的版面存进模板库——正是"会印错且看不见"那一类。</para>
+    /// <para>第 60 棒②（用户：「文本或其他元素处于边缘时会触发——改成确定／跳过」）：拦下之后不止"回去改"一条路，
+    /// 多给一颗「跳过」。<strong>跳过只降级"探出纸"这一族</strong>（<c>allowOffLabel</c> 一路传到 <see cref="TemplateStore.Save"/>），
+    /// 未知字段、制式不认识、宽高为 0 那些照拦；④⑤ 步出纸前那道按真数据量的闸也不认这个参数。</para>
     /// </summary>
-    private bool BlocksSave()
+    private bool GateSave(out bool allowOffLabel)
     {
+        allowOffLabel = false;
         RecomputeIssues();
         if (!HasError) return false;
         var first = Issues.FirstOrDefault(m => m.Contains("探出标签")) ?? Issues.FirstOrDefault();
+        if (AskSkipIssues is not null && AskSkipIssues(Issues))
+        {
+            allowOffLabel = true;
+            AppLog.Warning($"编辑器按「跳过」放行存盘（只降级探出纸这一族）：{first}");
+            StatusText = "这些问题先不管，继续存盘（越界那几条会降成提示；出纸前那道闸照旧会拦）。";
+            return false;
+        }
         Report("模板还有问题，先解决再存：" + Environment.NewLine + string.Join(Environment.NewLine, Issues));
         AppLog.Warning($"编辑器拒绝存盘：{first}");
         return true;
@@ -1704,9 +1721,9 @@ public sealed class TemplateEditorViewModel : ObservableObject
     public void Save()
     {
         SyncIntoTemplate();
-        if (BlocksSave()) return;
+        if (GateSave(out var allowOffLabel)) return;
         var stale = _savedFileName is null ? null : Path.Combine(_store.UserDirectory, _savedFileName);
-        var (saved, fileName, issues) = _store.Save(_template);
+        var (saved, fileName, issues) = _store.Save(_template, allowOffLabel: allowOffLabel);
         if (!saved)
         {
             RecomputeIssues(issues);
@@ -1739,9 +1756,9 @@ public sealed class TemplateEditorViewModel : ObservableObject
     public void SaveAsCopy()
     {
         SyncIntoTemplate();
-        if (BlocksSave()) return;
+        if (GateSave(out var allowOffLabel)) return;
         var copy = TemplateFactory.CopyOf(_template, string.IsNullOrWhiteSpace(Name) ? _template.Name + " 副本" : Name.Trim() + " 副本");
-        var (saved, fileName, issues) = _store.Save(copy);
+        var (saved, fileName, issues) = _store.Save(copy, allowOffLabel: allowOffLabel);
         if (!saved)
         {
             RecomputeIssues(issues);

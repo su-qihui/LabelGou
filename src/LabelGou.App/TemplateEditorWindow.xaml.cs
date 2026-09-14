@@ -64,7 +64,62 @@ public sealed partial class TemplateEditorWindow : Window
         });
         _editor.ErrorRaised += message => Dispatcher.Invoke(() =>
             MessageBox.Show(this, message, "模板编辑", MessageBoxButton.OK, MessageBoxImage.Warning));
+        _editor.AskSkipIssues = issues => Dispatcher.Invoke(() => AskSkipIssuesNow(issues));
         _editor.CloseRequested += () => Dispatcher.Invoke(Close);
+    }
+
+    /// <summary>
+    /// 存盘被校验拦下时那一句「<strong>确定／跳过</strong>」（第 60 棒②，用户：「文本或其他元素处于边缘时会触发——改成确定/跳过」）。
+    /// <para>左「确定」＝回去改（默认键，回车就是它）；右「跳过」＝这些毛病先不管、照这样存。
+    /// 原生 MessageBox 给不了"跳过"这两个字，所以这一颗仍自绘——只画按钮与一行说明，不改任何判定。</para>
+    /// </summary>
+    private bool AskSkipIssuesNow(IReadOnlyList<string> issues)
+    {
+        var fix = new Button { Content = "确定", MinWidth = 88, IsDefault = true, Margin = new Thickness(0, 0, 8, 0) };
+        var skip = new Button
+        {
+            Content = "跳过",
+            MinWidth = 88,
+            ToolTip = "这些问题先不管，照这样存盘。列表里它们仍然标红，④⑤ 步出纸前那道按真数据量的闸也照旧会拦——跳过一次不等于抹平。",
+        };
+        var skipped = false;
+        Window box = null!;
+        fix.Click += (_, _) => box.DialogResult = false;                                  // 确定＝回去改
+        skip.Click += (_, _) => { skipped = true; box.DialogResult = true; };             // DialogResult 一并关掉框
+        box = new Window
+        {
+            Title = "模板还有问题",
+            SizeToContent = SizeToContent.Height,
+            Width = 470,
+            Owner = this,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            ShowInTaskbar = false,
+            ResizeMode = ResizeMode.NoResize,
+            FontFamily = this.FontFamily,
+            Background = new SolidColorBrush(Color.FromRgb(0xF4, 0xF5, 0xF7)),
+            Content = new StackPanel
+            {
+                Margin = new Thickness(16),
+                Children =
+                {
+                    new TextBlock
+                    {
+                        Text = "这份模板还有下面这些问题：\n\n" + string.Join("\n", issues) +
+                               "\n\n「确定」＝回去改完再存；「跳过」＝先不管这些问题，照这样存下来。",
+                        TextWrapping = TextWrapping.Wrap,
+                        Margin = new Thickness(0, 0, 0, 14),
+                    },
+                    new StackPanel
+                    {
+                        Orientation = Orientation.Horizontal,
+                        HorizontalAlignment = HorizontalAlignment.Right,
+                        Children = { fix, skip },
+                    },
+                },
+            },
+        };
+        box.ShowDialog();
+        return skipped;
     }
 
     /// <summary>当前这份保存成功（主窗口据此刷新模板列表并选中）。</summary>
