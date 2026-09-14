@@ -399,6 +399,15 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
 
     IReadOnlyList<MarkRecord> ILabelSource.RawRecords => _rawRecords;
 
+    /// <summary>
+    /// 模板编辑器画布该照哪条记录画（第 65 棒③，用户：「Ctns 那行在预览层不显示」）。
+    /// <para>编号跑过就用<strong>第 1 张标签</strong>（那才是会印出来的东西，含 <c>col:本行箱数</c> 这类推算量）；
+    /// 还没编号就与主预览同一份兜底样例。<strong>不能拿表里第一行</strong>：那条记录没经过编号引擎，
+    /// <c>{{col:本行箱数}}</c> 是空的，模板里「Ctns：…件」那一行会命中「变量全空整条隐藏」——
+    /// 无声少印一行正是第 9 棒批次一-11 记过的那类错，也是他这次看到的症状（第 59 棒我递错了来源）。</para>
+    /// </summary>
+    internal MarkRecord EditorPreviewRecord => _records.FirstOrDefault() ?? SampleRecords.StandardSample();
+
     /// <summary><see cref="ILabelSource"/>：④ 步「按哪一列数张数」的候选 —— 表头原样，没导数据就是空清单。</summary>
     IReadOnlyList<string> ILabelSource.ColumnHeaders => _data?.Headers ?? Array.Empty<string>();
 

@@ -92,12 +92,12 @@ public sealed class RememberedLayoutTests : IDisposable
         var written = OnSta(() =>
         {
             var vm = new MainViewModel(store);
-            var target = vm.TemplateOptions.First(t => t.Id == BuiltInTemplates.IdRowsBigTwo);
+            var target = vm.TemplateOptions.First(t => t.Id == BuiltInTemplates.IdStandard);
             vm.SelectedTemplate = target;
             return store.Load().TemplateId;
         });
 
-        Assert.Equal(BuiltInTemplates.IdRowsBigTwo, written);
+        Assert.Equal(BuiltInTemplates.IdStandard, written);
     }
 
     public void Dispose()

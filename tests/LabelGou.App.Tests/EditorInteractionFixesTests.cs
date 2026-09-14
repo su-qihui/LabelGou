@@ -4,6 +4,7 @@ using LabelGou.App.Export;
 using LabelGou.App.ViewModels;
 using LabelGou.Core.Editing;
 using LabelGou.Core.Layout;
+using LabelGou.Core.Marks;
 using LabelGou.Core.Templates;
 using Xunit;
 
@@ -116,7 +117,34 @@ public class EditorInteractionFixesTests
         Assert.Equal(cy + 15, row.Y + row.Height / 2, 1);                    // 不然上面那条就是假绿
     });
 
-    // ---------- ② Delete 不认焦点 ----------
+    // ---------- ③ Ctns 那行不能因为"来源递错"而整条消失 ----------
+
+    [Fact]
+    public void TheCtnsRowOnlyAppearsWhenTheRecordCarriesTheComputedCartonCount() => OnSta(() =>
+    {
+        var template = BuiltInTemplates.RowsFour140x100();
+
+        // 只差一项：有没有 {{col:本行箱数}} 这个推算量（表里第一行没有，编号后的标签才有）。
+        var noCount = MarkRecord.Builder()
+            .SetRow(1, "订单.xlsx")
+            .Set(MarkFieldKey.Consignee, "WALMART").Set(MarkFieldKey.ItemNo, "AJ7-001").Set(MarkFieldKey.Quantity, "12")
+            .Build();
+        var withCount = MarkRecord.Builder()
+            .SetRow(1, "订单.xlsx")
+            .Set(MarkFieldKey.Consignee, "WALMART").Set(MarkFieldKey.ItemNo, "AJ7-001").Set(MarkFieldKey.Quantity, "12")
+            .SetCustom("col:本行箱数", "5")
+            .Build();
+
+        var rowsWithout = CountRows(template, noCount);
+        var rowsWith = CountRows(template, withCount);
+
+        Assert.True(rowsWith == rowsWithout + 1 && rowsWithout >= 3,
+            $"没推算量 {rowsWithout} 行、有推算量 {rowsWith} 行——那一行会整条无声消失（他看到的 Ctns 不显示）");
+    });
+
+    private static int CountRows(LabelTemplate template, MarkRecord record)
+        => LayoutEngine.Build(template, record, new LayoutContext(1, 1, "体检.xlsx"))
+            .Items.OfType<LabelGou.Core.Layout.TextItem>().Count();
 
     [Fact]
     public void DeleteWorksThroughTheWindowEvenWhenTheCanvasHasNoFocus() => OnSta(() =>

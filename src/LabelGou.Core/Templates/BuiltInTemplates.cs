@@ -24,7 +24,8 @@ public static class BuiltInTemplates
         RowsFour100x70(),       // 一开八・28×20 纸上 8 枚
         RowsFour200x140(),      // 大开二・28×20 纸上 2 枚
         RowsFour160x120(),      // 小开二・16×24 纸上 2 枚
-        RowsBigTwo160x120(),
+        // 「大字两行 160×120」第 65 棒退出清单（用户：「这个有错，不过对我来说没用，直接删了」）。
+        // 定义与 GetById 留着：以前另存过这份副本的人还要能打开它，AI 认版式的评测也还认这个 Id。
         Standard100x80(),
         // 邱总 / OLU / TOP 三套故意不列在这里：用户给的那批样张是「让 AI 去学的训练素材」，
         // 不是让我抄成五个内置选项。它们的定义留在本文件里当评测基准（见下面三个方法的注）。
@@ -174,8 +175,8 @@ public static class BuiltInTemplates
     /// 只是按各自的行带高同比缩字号（见 <see cref="FourRows"/>）。</para>
     /// </summary>
     public static LabelTemplate RowsFour140x100() => FourRows(
-        IdRowsFour, "一开四・四行 140×100（金沐样张）",
-        "抄自 7.8 金沐 唛头 CDR+SVG：顶部客户名一大条居中 + 货号/数量/件数三行同字号明细左对齐，无框线。配 28×20 一开四那张纸。",
+        IdRowsFour, "一开四・四行 140×100",
+        "顶部客户名一大条居中 + 货号/数量/件数三行同字号明细左对齐，无框线。配 28×20 一开四那张纸。",
         140, 100, paddingMm: 4, gapMm: 1.5, detailPt: 41.4);
 
     /// <summary>行式四行 100×70：<strong>一开八配套</strong>（28×20 纸上一张 8 枚）。</summary>

@@ -134,7 +134,10 @@ public class ItemNoTailTests
         Assert.Null(BuiltInTemplates.GetById(BuiltInTemplates.IdQiuRows));
         // 通用骨架仍在（金沐那张表当下就靠它跑）
         Assert.Contains(BuiltInTemplates.IdRowsFour, ids);
-        Assert.Contains(BuiltInTemplates.IdRowsBigTwo, ids);
+        // 「大字两行」第 65 棒退出清单（用户：有错、对他没用、直接删），但定义与 GetById 留着——
+        // 以前另存过这份副本的人还要能打开它，AI 认版式的评测也还认这个 Id。
+        Assert.DoesNotContain(BuiltInTemplates.IdRowsBigTwo, ids);
+        Assert.NotNull(BuiltInTemplates.GetById(BuiltInTemplates.IdRowsBigTwo));
         // 写死的单号品名不得出现在任何内置模板里（用户圈的“乱加一个不知道什么”）
         Assert.All(BuiltInTemplates.All(), t => Assert.DoesNotContain("香水", string.Concat(
             t.Elements.Where(e => e.Kind == ElementKind.Text).Select(e => e.Text))));

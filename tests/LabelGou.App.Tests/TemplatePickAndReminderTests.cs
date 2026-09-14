@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -121,13 +121,13 @@ public sealed class TemplatePickAndReminderTests : IDisposable
             var vm = OfflineVm(store);
             vm.LoadSource(csv, null);                       // 自动接手换成行式四行
             var autoSwitched = vm.SelectedTemplate?.Id;
-            vm.SelectedTemplate = vm.TemplateOptions.First(t => t.Id == BuiltInTemplates.IdRowsBigTwo);
+            vm.SelectedTemplate = vm.TemplateOptions.First(t => t.Id == BuiltInTemplates.IdStandard);
             return (Auto: autoSwitched, Remembered: RememberedTemplate(store));
         });
 
         Assert.Equal(BuiltInTemplates.IdRowsFour, after.Auto);
         // 自动那一次不算用户的选择：写盘就会把他手工记的模板顶掉，下一张表进来又按数据说话
-        Assert.Equal(BuiltInTemplates.IdRowsBigTwo, after.Remembered);
+        Assert.Equal(BuiltInTemplates.IdStandard, after.Remembered);
     }
 
     [Fact]
@@ -164,7 +164,7 @@ public sealed class TemplatePickAndReminderTests : IDisposable
             var afterLoad = vm.DataGeneration;
             vm.ApplyMappingCommand.Execute(null);
             var afterMap = vm.DataGeneration;
-            vm.SelectedTemplate = vm.TemplateOptions.First(t => t.Id == BuiltInTemplates.IdRowsBigTwo);
+            vm.SelectedTemplate = vm.TemplateOptions.First(t => t.Id == BuiltInTemplates.IdStandard);
             var afterTemplate = vm.DataGeneration;
             vm.LoadSource(csv2, null);
             return (atStart, afterLoad, afterMap, afterTemplate, vm.DataGeneration);
