@@ -63,6 +63,7 @@ public static class LabelRenderer
         if (widthDiu <= 0 || heightDiu <= 0) return;
 
         var pushed = false;
+        var clipped = false;
         if (drawBackground)
         {
             dc.DrawRectangle(LabelBackground, EdgePen, new Rect(offsetX, offsetY, widthDiu, heightDiu));
@@ -76,6 +77,11 @@ public static class LabelRenderer
 
         try
         {
+            // 纸就标签这么大：探出标签的墨迹（用户 2026-09-14 截图那行 "11150588"）到刀模那里就被裁掉，
+            // 所以这里按"裁掉"画——预览、位图、打印、PDF、整版五处共用这一刀，看见的就是印出来的，
+            // 而不是看见一串根本印不出的字（§七：五出口一张脸）。背景与外框在裁切之前画，它们就是纸本身。
+            dc.PushClip(new RectangleGeometry(new Rect(0, 0, widthDiu, heightDiu)));
+            clipped = true;
             foreach (var item in layout.Items)
             {
                 switch (item)
@@ -109,6 +115,7 @@ public static class LabelRenderer
         }
         finally
         {
+            if (clipped) dc.Pop();
             if (pushed) dc.Pop();
         }
     }

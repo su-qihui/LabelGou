@@ -18,6 +18,9 @@ public sealed class SvgBuilder
     private readonly StringBuilder _body = new();
     private readonly Stack<string> _layers = new();
     private readonly List<string> _metadata = new();
+    private readonly StringBuilder _defs = new();
+    private readonly Dictionary<(string, string), string> _clips = new();
+    private int _clipSeq;
 
     public SvgBuilder(double widthMm, double heightMm, string? generatorComment = null)
     {
@@ -45,12 +48,34 @@ public sealed class SvgBuilder
         return this;
     }
 
-    public SvgBuilder StartLayer(string id, string? label = null, string? transform = null)
+    /// <summary>
+    /// 往 <c>defs</c> 里放一只"从原点起、给定尺寸"的裁切框，返回它的 id；<strong>同尺寸只写一份</strong>
+    /// （整版几十枚标签尺寸相同，重复定义会让 CDR 里多出一堆没用的剪集）。
+    /// <para>第 61 棒：探出标签的墨迹到刀模那里是被裁掉的，<c>LabelRenderer.Draw</c> 里就是一句
+    /// <c>PushClip</c>；SVG 出口要让 CDR/Illustrator 打开也是同一张纸，就得给那一枚标签的分组挂上
+    /// <c>clip-path</c>。<strong>裁切框用的是分组自己的用户坐标</strong>（组的 transform 同样作用于它），
+    /// 所以旋转 90° 落位的那一枚也裁得对——与 WPF 端"先转再裁"同一顺序。</para>
+    /// </summary>
+    public string AddClipRect(double widthMm, double heightMm)
+    {
+        var size = (N(widthMm), N(heightMm));
+        if (_clips.TryGetValue(size, out var known)) return known;
+
+        var id = $"clip-{++_clipSeq}";
+        _defs.Append("  <clipPath id=\"").Append(Attr(id)).Append("\">\n")
+             .Append("    <rect x=\"0\" y=\"0\" width=\"").Append(size.Item1).Append("\" height=\"").Append(size.Item2).Append("\"/>\n")
+             .Append("  </clipPath>\n");
+        _clips[size] = id;
+        return id;
+    }
+
+    public SvgBuilder StartLayer(string id, string? label = null, string? transform = null, string? clip = null)
     {
         _layers.Push(id);
         _body.Append(Indent()).Append("<g id=\"").Append(Attr(id)).Append('"');
         if (!string.IsNullOrWhiteSpace(label)) _body.Append(" inkscape:label=\"").Append(Attr(label)).Append('"');
         if (!string.IsNullOrWhiteSpace(transform)) _body.Append(" transform=\"").Append(Attr(transform)).Append('"');
+        if (!string.IsNullOrWhiteSpace(clip)) _body.Append(" clip-path=\"url(#").Append(Attr(clip)).Append(")\"");
         _body.Append(">\n");
         return this;
     }
@@ -245,6 +270,7 @@ public sealed class SvgBuilder
             foreach (var line in _metadata) sb.Append(Escaped(line)).Append('\n');
             sb.Append("</metadata>\n");
         }
+        if (_defs.Length > 0) sb.Append("<defs>\n").Append(_defs).Append("</defs>\n");
         sb.Append(_body);
         sb.Append("</svg>\n");
         return sb.ToString();

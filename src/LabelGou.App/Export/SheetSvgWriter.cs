@@ -157,7 +157,9 @@ public static class SheetSvgWriter
             }
 
             // 与 LabelRenderer.DrawRotated 完全同源的落位：先转 90°，再平移到 (X+高, Y)
-            builder.StartLayer($"label-{placement.LabelIndex:D4}", null, TransformOf(placement));
+            // 裁切与 LabelRenderer.Draw 的 PushClip 同一刀：探出标签的墨迹到刀模那里就没了，SVG 里也不许留着（第 61 棒）。
+            builder.StartLayer($"label-{placement.LabelIndex:D4}", null, TransformOf(placement),
+                clip: builder.AddClipRect(layout.WidthMm, layout.HeightMm));
             WriteItems(builder, layout, options, notes);
             builder.EndLayer();
         }
@@ -198,8 +200,11 @@ public static class SheetSvgWriter
                 $"{ProducerOf(options)} · {options.Describe()}");
             WriteMetadata(builder, request, page, options);
 
-            // 一枚一图：画布就是标签，不需要平移；旋转由对方拼版时自己定
-            builder.StartLayer("label", $"第 {placement.LabelIndex} 枚");
+            // 一枚一图：画布就是标签，不需要平移；旋转由对方拼版时自己定。
+            // 裁切仍要显式写——外层视口在多数渲染器里会裁，但 CDR 打开后是把对象拿走，
+            // 那一截印不出的墨迹就跟着出来了（第 61 棒与整版那一路同一判据）。
+            builder.StartLayer("label", $"第 {placement.LabelIndex} 枚",
+                clip: builder.AddClipRect(layout.WidthMm, layout.HeightMm));
             WriteItems(builder, layout, options, notes);
             builder.EndLayer();
 

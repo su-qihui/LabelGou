@@ -298,6 +298,29 @@ public class SvgInterchangeTests
         return true;
     });
 
+    /// <summary>
+    /// 第五个出口也照"纸就标签这么大"裁（第 61 棒，用户：「文字超出去时打印的效果是直接截断，在整张纸上也是这样」）。
+    /// <para>预览/打印/PDF 那一侧是 <c>LabelRenderer</c> 的一句 PushClip；SVG 交给 CDR 打开，
+    /// 不写 clip-path 它就真的一整行收进去——多出来的那一截是印不出的字，不该出现在出片文件里。</para>
+    /// </summary>
+    [Fact]
+    public void EveryLabelGroupIsClippedToTheLabelItself() => OnStaThread(() =>
+    {
+        var plan = ImpositionEngine.Build(Spec(), LabelW, LabelH, 4);
+        var file = Assert.Single(SheetSvgWriter.WritePage(Request(plan, SourceOf(FrameTemplate())), 0, SvgExportOptions.Default));
+        var doc = XDocument.Parse(file.Xml);
+
+        var labels = doc.Root!.Descendants(Svg + "g")
+            .Where(g => ((string?)g.Attribute("id"))?.StartsWith("label-", StringComparison.Ordinal) == true).ToList();
+        Assert.NotEmpty(labels);
+        Assert.All(labels, g => Assert.NotNull(g.Attribute("clip-path")));
+
+        var rect = doc.Descendants(Svg + "clipPath").Single().Descendants(Svg + "rect").Single();
+        Assert.Equal(LabelW, Num(rect, "width"), 3);
+        Assert.Equal(LabelH, Num(rect, "height"), 3);
+        return true;
+    });
+
     [Fact]
     public void RotatedLabelUsesTranslateThenRotateLikeThePreview() => OnStaThread(() =>
     {
