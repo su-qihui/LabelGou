@@ -410,13 +410,26 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
     IReadOnlyList<MarkRecord> ILabelSource.RawRecords => _rawRecords;
 
     /// <summary>
-    /// 模板编辑器画布该照哪条记录画（第 65 棒③，用户：「Ctns 那行在预览层不显示」）。
-    /// <para>编号跑过就用<strong>第 1 张标签</strong>（那才是会印出来的东西，含 <c>col:本行箱数</c> 这类推算量）；
+    /// ③ 步「编辑模板…」与「编辑这一张…」递给编辑器的样例记录（第 65 棒③ 定的口径，第 70 棒加一层）。
+    /// <para>编号跑过就用<strong>会印出来的那条标签</strong>（含 <c>col:本行箱数</c> 这类推算量）；
     /// 还没编号就与主预览同一份兜底样例。<strong>不能拿表里第一行</strong>：那条记录没经过编号引擎，
     /// <c>{{col:本行箱数}}</c> 是空的，模板里「Ctns：…件」那一行会命中「变量全空整条隐藏」——
-    /// 无声少印一行正是第 9 棒批次一-11 记过的那类错，也是他这次看到的症状（第 59 棒我递错了来源）。</para>
+    /// 无声少印一行正是第 9 棒批次一-11 记过的那类错，也是第 65 棒③ 他看到的症状。</para>
+    /// <para>第 70 棒加一层：<strong>行检查开着时给眼前这一行的第一张</strong>——他从缩略里点进第 2 行
+    /// 去改那一行的越界，画布还照第 1 行的数据画，他就看不见自己刚才点的那张到底哪里出纸。</para>
     /// </summary>
-    internal MarkRecord EditorPreviewRecord => _records.FirstOrDefault() ?? SampleRecords.StandardSample();
+    internal MarkRecord EditorPreviewRecord
+    {
+        get
+        {
+            var labelIndex = RowCheck && RowSheetAt(Math.Max(1, CurrentIndex)) is { } row
+                ? row.FirstLabelIndex
+                : 1;
+            return labelIndex >= 1 && labelIndex <= _records.Count
+                ? _records[labelIndex - 1]
+                : SampleRecords.StandardSample();
+        }
+    }
 
     /// <summary><see cref="ILabelSource"/>：④ 步「按哪一列数张数」的候选 —— 表头原样，没导数据就是空清单。</summary>
     IReadOnlyList<string> ILabelSource.ColumnHeaders => _data?.Headers ?? Array.Empty<string>();
@@ -1065,10 +1078,30 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
     }
 
     /// <summary>
-    /// 缩略一览的固定小比例。这一态把 +/- 与适应窗口整排藏掉：31 格真尺寸会糊成一团，
-    /// 要看细的就关掉「全部行」回到单张（或去整版拼版那页放大）。
+    /// 缩略一览一格占几份宽：用户 2026-09-14「默认一行 10 个，多的往下排一行（以此类推）」——
+    /// 一排几格不靠模板尺寸碰运气，而是<strong>可用宽 ÷ 10</strong>：窗口多宽都是 10 格一排。
     /// </summary>
-    public double RowThumbZoom => 0.4;
+    public const int RowThumbCellsPerRow = 10;
+
+    /// <summary>一格里除版面之外占掉的宽度（StackPanel 左右 6+6、Border 的 4+4 与描边 1+1）。</summary>
+    private const double RowThumbCellChrome = 22;
+
+    private double _rowThumbCellWidth = 240;   // 还没量到预览区宽度时的兜底（≈ 旧那档固定 0.4 的观感）
+
+    /// <summary>缩略一览的比例：跟着格宽算，所以 10 格永远排得下。</summary>
+    public double RowThumbZoom => Math.Clamp(
+        (_rowThumbCellWidth - RowThumbCellChrome) / LabelGou.Core.Units.Mm.ToDiu(SelectedTemplate?.Template.WidthMm ?? 100),
+        0.05, 2);
+
+    /// <summary>由 <see cref="FitTo"/> 在预览区量到宽度时更新；差不到 1 DIP 就不惊动界面。</summary>
+    private void SetRowThumbCellWidth(double width)
+    {
+        var cell = Math.Max(120, width);
+        if (Math.Abs(_rowThumbCellWidth - cell) < 1) return;
+        _rowThumbCellWidth = cell;
+        Raise(nameof(RowThumbItemWidth));
+        Raise(nameof(RowThumbZoom));
+    }
 
     /// <summary>缩略一览的内容：一行一张，标题写「第几行 · 货号 · 本行几张」。</summary>
     public ObservableCollection<RowThumb> RowThumbs { get; } = new();
@@ -1100,9 +1133,20 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         for (var ordinal = 1; ordinal <= _rowSheets.Count; ordinal++)
         {
             var row = _rowSheets[ordinal - 1];
-            RowThumbs.Add(new RowThumb(RowTitle(ordinal, row), BuildLayoutForRow(ordinal)));
+            RowThumbs.Add(new RowThumb(ordinal, RowTitle(ordinal, row), BuildLayoutForRow(ordinal),
+                new RelayCommand(_ => SelectRowFromThumb(ordinal))));
         }
     }
+
+    /// <summary>点缩略一览里的一格：跳到那一行并收起一览（关着「全部行」看见的就是他点的那一张）。</summary>
+    private void SelectRowFromThumb(int ordinal)
+    {
+        CurrentIndex = ordinal;
+        RowCheckAll = false;
+    }
+
+    /// <summary>缩略一览一格的宽度（WrapPanel 的 ItemWidth）：可用宽 ÷ <see cref="RowThumbCellsPerRow"/>。</summary>
+    public double RowThumbItemWidth => _rowThumbCellWidth;
 
     private string RowTitle(int ordinal, RowSheet row)
         => $"第 {ordinal} / {_rowSheets.Count} 行：{(string.IsNullOrWhiteSpace(row.ItemNo) ? "（无货号）" : row.ItemNo)}，本行 {row.SheetCount} 张";
@@ -1130,18 +1174,25 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         public int SheetCount { get; set; } = 1;
     }
 
-    /// <summary>缩略一览里的一格：标题 + 那一行第一张的版面。</summary>
+    /// <summary>缩略一览里的一格：第几行、标题、那一行第一张的版面，外加「点这格就跳过去」的命令。</summary>
     public sealed class RowThumb
     {
-        public RowThumb(string title, LabelLayout? layout)
+        public RowThumb(int ordinal, string title, LabelLayout? layout, RelayCommand selectCommand)
         {
+            Ordinal = ordinal;
             Title = title;
             Layout = layout;
+            SelectCommand = selectCommand;
         }
+
+        /// <summary>第几行（1 起，按表格行序）。测试与跳转都以它为准，不靠集合下标猜。</summary>
+        public int Ordinal { get; }
 
         public string Title { get; }
 
         public LabelLayout? Layout { get; }
+
+        public RelayCommand SelectCommand { get; }
     }
 
     /// <summary>当前预览第几条（1 起）；0 表示示意预览。</summary>
@@ -1196,6 +1247,8 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         var layout = CurrentLayout;
         if (layout is null || availableWidth < 20 || availableHeight < 20) return;
         Zoom = Rendering.LabelPreviewControl.FitZoom(layout, availableWidth - 24, availableHeight - 24);
+        // 缩略一览跟着这次量宽走：十格一排，多的往下排（不随窗口变宽就变成八格十格地跳）
+        SetRowThumbCellWidth((availableWidth - 28) / RowThumbCellsPerRow);
     }
 
     /// <summary>整版预览适应窗口（没方案时什么也不做）。</summary>

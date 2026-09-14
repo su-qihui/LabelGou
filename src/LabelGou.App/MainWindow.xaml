@@ -859,6 +859,8 @@
                                 <Button Content="下一件 ▶" Command="{Binding NextRecordCommand}" />
                                 <Button Content="末件 ⏭" Command="{Binding LastRecordCommand}" />
                                 <Button Content="示意预览" Command="{Binding SamplePreviewCommand}" ToolTip="用内置样例数据看版式效果" />
+                                <Button Content="编辑这一张…" Click="OnEditTemplateClick" MinWidth="86"
+                                        ToolTip="打开模板编辑器，画布照眼前这一张的数据画（行检查开着就是这一行的第一张）——&#10;哪一行字探出边界，照它拖回去。&#10;改的是这份模板，用它的标签一起变；内置模板会先存成自己的副本。" />
                                 <Separator Width="14" Background="Transparent" />
                                 <!-- 行检查（用户 2026-09-14：「直接在单个标签页面添加一个开关（行检查）就把张数缩略了，
                                      还有开关（折叠）可以全部检查和单个检查」）：一行几张纸的货，核对内容时只看第一张 -->
@@ -904,23 +906,33 @@
                                         <ItemsControl ItemsSource="{Binding RowThumbs}" HorizontalAlignment="Center">
                                             <ItemsControl.ItemsPanel>
                                                 <ItemsPanelTemplate>
-                                                    <WrapPanel Orientation="Horizontal" />
+                                                    <!-- ItemWidth = 一格（模板宽 × 缩略比例 + 边距）：一行摆满 10 格就往下排，
+                                                         31 行不用横向拖（用户：「排列可以加竖向，默认一行 10 个多的往下排一行」） -->
+                                                    <WrapPanel Orientation="Horizontal"
+                                                               ItemWidth="{Binding DataContext.RowThumbItemWidth,
+                                                                             RelativeSource={RelativeSource AncestorType=ItemsControl}}" />
                                                 </ItemsPanelTemplate>
                                             </ItemsControl.ItemsPanel>
                                             <ItemsControl.ItemTemplate>
                                                 <DataTemplate>
-                                                    <StackPanel Margin="6" VerticalAlignment="Top">
-                                                        <TextBlock Text="{Binding Title}" FontSize="11.5" FontWeight="Bold"
-                                                                   Margin="0,0,0,3" />
-                                                        <Border Background="White" BorderBrush="#CDD3DA" BorderThickness="1"
-                                                                Padding="4" HorizontalAlignment="Center">
-                                                            <render:LabelPreviewControl Layout="{Binding Layout}"
-                                                                                        Zoom="{Binding DataContext.RowThumbZoom,
-                                                                                                  RelativeSource={RelativeSource AncestorType=ItemsControl}}"
-                                                                                        ShowGuides="{Binding DataContext.ShowGuides,
-                                                                                                  RelativeSource={RelativeSource AncestorType=ItemsControl}}" />
-                                                        </Border>
-                                                    </StackPanel>
+                                                    <!-- 点一格 = 跳到那一行并收起一览（要改的就是它） -->
+                                                    <Button Command="{Binding SelectCommand}" Cursor="Hand"
+                                                            Background="Transparent" BorderThickness="0" Padding="0"
+                                                            HorizontalContentAlignment="Left"
+                                                            ToolTip="点一下就跳到这一行（并收起一览）。要改这一张的越界，回单张后点「编辑这一张…」">
+                                                        <StackPanel Margin="6" VerticalAlignment="Top">
+                                                            <TextBlock Text="{Binding Title}" FontSize="11.5" FontWeight="Bold"
+                                                                       Margin="0,0,0,3" />
+                                                            <Border Background="White" BorderBrush="#CDD3DA" BorderThickness="1"
+                                                                    Padding="4" HorizontalAlignment="Center">
+                                                                <render:LabelPreviewControl Layout="{Binding Layout}"
+                                                                                            Zoom="{Binding DataContext.RowThumbZoom,
+                                                                                                      RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                                                                            ShowGuides="{Binding DataContext.ShowGuides,
+                                                                                                      RelativeSource={RelativeSource AncestorType=ItemsControl}}" />
+                                                            </Border>
+                                                        </StackPanel>
+                                                    </Button>
                                                 </DataTemplate>
                                             </ItemsControl.ItemTemplate>
                                         </ItemsControl>
@@ -932,7 +944,7 @@
                                 <TextBlock Text="{Binding TokenNoteText}" Style="{StaticResource Hint}"
                                            Foreground="#B25A00" TextWrapping="Wrap" />
                                 <TextBlock Style="{StaticResource Hint}" TextWrapping="Wrap"
-                                           Text="说明：此处已是编号后的单张标签（一行多箱时会展开成多张）；预览按毫米真实尺寸绘制，打印/PDF（M3）复用同一份版面数据。&#10;勾「行检查」= 一行只画第一张（标题写本行几张纸），再勾「全部行」= 一屏把所有行各画一张缩略扫一遍——这两态只改这里怎么看，出片仍是整份标签。" />
+                                           Text="说明：此处已是编号后的单张标签（一行多箱时会展开成多张）；预览按毫米真实尺寸绘制，打印/PDF（M3）复用同一份版面数据。&#10;勾「行检查」= 一行只画第一张（标题写本行几张纸）；再勾「全部行」= 一行摆 10 格往下排，点任意一格就跳到那一行并收起一览。&#10;哪一张要改（字探出边界之类）就点「编辑这一张…」——画布照眼前这一张的数据画。这两态只改这里怎么看，出片仍是整份标签。" />
                             </StackPanel>
                         </Grid>
                     </TabItem>

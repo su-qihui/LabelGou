@@ -6,6 +6,7 @@ using System.Threading;
 using LabelGou.App.Export;
 using LabelGou.App.ViewModels;
 using LabelGou.Core;
+using LabelGou.Core.Marks;
 using LabelGou.Core.Numbering;
 using Xunit;
 
@@ -211,6 +212,75 @@ public sealed class Step4SheetCountAndRowCheckTests : IDisposable
         Assert.Equal(8, result.Before);
         Assert.Equal(8, result.During);       // 行检查 + 全部行开着，出片仍是 8 张
         Assert.Equal(8, result.AfterOff);
+    }
+
+    // ---------- 第 70 棒：一览排十格、点格跳转、编辑这一张 ----------
+
+    [Fact]
+    public void 点缩略一格_跳到那一行并收起一览()
+    {
+        var result = OnSta(() =>
+        {
+            var vm = LoadInto();
+            vm.Sheet.SelectedSheetCount = CountOption(vm, ImpositionViewModel.SheetCountByColumn);
+            vm.Sheet.SelectedExpandColumn = vm.Sheet.ExpandColumnOptions.First(o => o.Value == "打印张数");
+            vm.RowCheck = true;
+            vm.RowCheckAll = true;
+            vm.RowThumbs[1].SelectCommand.Execute(null);
+            return (Index: vm.CurrentIndex, All: vm.RowCheckAll, Thumbs: vm.RowThumbs.Count, Info: vm.RecordInfoText);
+        });
+
+        Assert.Equal(2, result.Index);                  // 跳到他点的那一行
+        Assert.False(result.All);                       // 一览收起，回到单张
+        Assert.Equal(0, result.Thumbs);
+        Assert.Contains("olu830-70", result.Info);      // 看见的就是刚点的那一张
+    }
+
+    [Fact]
+    public void 缩略一览十格一排_格宽按可用宽算()
+    {
+        var result = OnSta(() =>
+        {
+            var vm = LoadInto();
+            vm.FitTo(1528, 700);                        // 预览区量到多宽，就按那个宽 ÷ 10 分格
+            return (Cell: vm.RowThumbItemWidth, PerRow: MainViewModel.RowThumbCellsPerRow,
+                Zoom: vm.RowThumbZoom, Used: vm.RowThumbItemWidth * MainViewModel.RowThumbCellsPerRow);
+        });
+
+        Assert.Equal(150, result.Cell, 1);              // (1528 - 28) ÷ 10
+        Assert.Equal(10, result.PerRow);
+        Assert.True(result.Used <= 1528, $"十格 {result.Used:0} DIP 放不下 1528 的预览区");
+        // 比例跟着格宽走：140 mm 的标签正好占满一格（扣掉格内边距）
+        Assert.True(Math.Abs(result.Zoom - (150 - 22) / LabelGou.Core.Units.Mm.ToDiu(140)) < 0.001);
+    }
+
+    [Fact]
+    public void 行检查时编辑器照眼前这一行的数据画()
+    {
+        var result = OnSta(() =>
+        {
+            var vm = LoadInto();
+            vm.Sheet.SelectedSheetCount = CountOption(vm, ImpositionViewModel.SheetCountByColumn);
+            vm.Sheet.SelectedExpandColumn = vm.Sheet.ExpandColumnOptions.First(o => o.Value == "打印张数");
+            var off = vm.EditorPreviewRecord.GetText(MarkFieldKey.ItemNo);
+            vm.RowCheck = true;
+            vm.CurrentIndex = 2;
+            return (off, vm.EditorPreviewRecord.GetText(MarkFieldKey.ItemNo));
+        });
+
+        Assert.Equal("olu830-35", result.Item1);        // 关着仍是第 1 张（第 65 棒③ 的口径不变）
+        Assert.Equal("olu830-70", result.Item2);        // 开着就是他点的那一行——改越界看得见现场
+    }
+
+    [Fact]
+    public void 一览排版与入口都在XAML里()
+    {
+        var xaml = RepoFile("src", "LabelGou.App", "MainWindow.xaml");
+
+        Assert.Contains("ItemWidth=\"{Binding DataContext.RowThumbItemWidth", xaml);   // 十格一排靠它
+        Assert.Contains("Command=\"{Binding SelectCommand}\"", xaml);                   // 每格可点
+        Assert.Contains("编辑这一张…", xaml);                                       // 从预览直接进编辑器（仍走 ③ 步那一个入口）
+        Assert.Contains("Click=\"OnEditTemplateClick\"", xaml);
     }
 
     // ---------- 界面拓扑（XAML 文本判据） ----------
