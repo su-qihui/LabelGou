@@ -227,10 +227,7 @@ public class BarcodeEncoderTests
     public void EAN13的可读数字分成三段_每位压在自己那七个模块上()
     {
         var encoding = BarcodeEncoder.Encode(CdrSample, BarcodeSymbology.Ean13);
-        // 条区高给等比那份（60 mm 宽的 EAN-13：一位 0.5684 mm × 75 份 ≈ 43 mm）。
-        // 第 56 棒起再矮就被高度封顶——条缩窄并在框里居中，下面这些逐格坐标得整体加一个居中偏移，
-        // 而这条测的是「数字压在自己那 7 个模块上」，与扁框无关，所以拿一只不封顶层来量。
-        var geometry = BarcodeBars.Build(encoding, 0, 0, 60, 0, 43);
+        var geometry = BarcodeBars.Build(encoding, 0, 0, 60, 0, 20);
         var module = geometry.ModuleMm;
         var hri = BarcodeBars.BuildHri(encoding, 0, 60, geometry);
 
@@ -493,10 +490,8 @@ public class BarcodeEncoderTests
     public void 二五码按CDR那框铺_窄线与条数都对得上()
     {
         // CDR 的 code25 框宽 67.89 mm，实测窄条 0.3386 mm、71 根条。
-        // 条区高给等比那份（26 mm ≈ 69 × 0.3386 + 延长）：第 56 棒起再矮就被高度封顶，
-        // 窄线会跟着条区高变细，量的就不再是 CDR 实测的那个宽度。
         var encoding = BarcodeEncoder.Encode("1234567891231", BarcodeSymbology.Code25);
-        var g = BarcodeBars.Build(encoding, 0, 0, 67.89, 0, 26);
+        var g = BarcodeBars.Build(encoding, 0, 0, 67.89, 0, 20);
         Assert.Null(g.Warning);
         Assert.Equal(71, g.Bars.Count);
         Assert.InRange(g.ModuleMm, 0.330, 0.340);           // CDR 实测 0.3386
@@ -521,7 +516,7 @@ public class BarcodeEncoderTests
         var encoding = BarcodeEncoder.Encode("4006381333931", BarcodeSymbology.Ean13);
         Assert.Equal(11, encoding.QuietZoneModules);                // GS1 的静区下限还记着(第 23 棒)
         Assert.Equal(3.0, encoding.QuietZoneMm, 3);                 // 但铺条时走 CDR 的固定 3 mm(第 41 棒)
-        var g = BarcodeBars.Build(encoding, 0, 0, 100, 0, 75);      // 条区高给 100 mm 宽等比那份：75 × 一位
+        var g = BarcodeBars.Build(encoding, 0, 0, 100, 0, 10);
         Assert.Null(g.Warning);
         // 100 mm 扣掉两侧各 3 mm 静区 → 94 mm 铺给 95 个模块 → 往下取整到 0.0001
         Assert.Equal(0.9894, g.ModuleMm, 4);
@@ -535,7 +530,7 @@ public class BarcodeEncoderTests
     public void 模块窄到扫不出时照样画但必须警告()
     {
         var encoding = BarcodeEncoder.Encode("4006381333931", BarcodeSymbology.Ean13);
-        var g = BarcodeBars.Build(encoding, 0, 0, 20, 0, 12);   // 条区高给够（12 mm ≈ 69 × 0.15 + 延长），让「窄」是宽卡出来的
+        var g = BarcodeBars.Build(encoding, 0, 0, 20, 0, 10);
         Assert.InRange(g.ModuleMm, 0.001, BarcodeBars.MinModuleMm);
         Assert.Contains("0.15", g.Warning);           // (20-6)/95 = 0.1474 → 取整 0.147 → 显示 0.15
         Assert.Contains("扫", g.Warning);

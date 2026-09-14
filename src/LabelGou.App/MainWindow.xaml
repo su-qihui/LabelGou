@@ -399,6 +399,10 @@
                                      ToolTip="只有整批共用一个码时才手填；正常情况请选上面那一列" />
 
                             <WrapPanel Margin="0,6,0,0">
+                                <TextBlock Text="高(mm)：" VerticalAlignment="Center" />
+                                <TextBox Text="{Binding Barcode.HeightMm, UpdateSourceTrigger=PropertyChanged}"
+                                         Width="46" VerticalAlignment="Center" Margin="0,0,12,0"
+                                         ToolTip="条码带的高（含下面那行可读数字）。常用 12~18 mm" />
                                 <CheckBox Content="条码下方印那串数字" IsChecked="{Binding Barcode.ShowText}"
                                           VerticalAlignment="Center" Margin="0,0,12,0"
                                           ToolTip="默认要：扫不出时人还能报号" />
