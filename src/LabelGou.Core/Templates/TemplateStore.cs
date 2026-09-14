@@ -203,7 +203,12 @@ public sealed class TemplateStore
         }
     }
 
-    private static string MakeFileName(LabelTemplate template)
+    /// <summary>
+    /// 这份模板存盘时的文件名——<strong>全项目只有这一处算法</strong>。
+    /// <para>公开它的理由：编辑器退出时那句「要存储对文档“xxx.json”的更改吗」要报名字，
+    /// 而<strong>还没存过</strong>的那份也得报出「保存后会得到的那个名字」，App 层不能自己再拼一遍（第 57 棒）。</para>
+    /// </summary>
+    public static string MakeFileName(LabelTemplate template)
     {
         var invalid = Path.GetInvalidFileNameChars();
         var raw = new string((template.Name ?? "模板").Where(ch => !invalid.Contains(ch) && !char.IsWhiteSpace(ch)).ToArray());

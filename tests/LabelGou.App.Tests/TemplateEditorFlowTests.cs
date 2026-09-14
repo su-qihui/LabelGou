@@ -819,18 +819,37 @@ public class TemplateEditorFlowTests
     });
 
     [Fact]
-    public void AnsweringNoKeepsTheEditorOpenWithItsChanges() => OnStaThread(() =>
+    public void AnsweringCancelKeepsTheEditorOpenWithItsChanges() => OnStaThread(() =>
     {
         var folder = Path.Combine(Path.GetTempPath(), "labelgou-close-no-" + Guid.NewGuid().ToString("N")[..6]);
         Directory.CreateDirectory(folder);
         var vm = NewVm(folder);
         vm.AddTextCommand.Execute(null);                       // 弄脏
         var count = vm.Template.Elements.Count;
-        var window = new TemplateEditorWindow(vm) { AskSaveBeforeClose = () => false };
+        var closed = false;
+        var window = new TemplateEditorWindow(vm) { AskSaveBeforeClose = () => TemplateEditorWindow.SavePromptAnswer.Cancel };
+        window.Closed += (_, _) => closed = true;
 
         window.Close();
-        Assert.True(vm.IsDirty);                               // 「否」＝留下继续编辑，改动没丢
+        Assert.False(closed);                                  // 「取消」＝没关
+        Assert.True(vm.IsDirty);                               // 改动还在，回去继续编辑
         Assert.Equal(count, vm.Template.Elements.Count);
+    });
+
+    [Fact]
+    public void AnsweringNoClosesWithoutSavingAnything() => OnStaThread(() =>
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "labelgou-close-discard-" + Guid.NewGuid().ToString("N")[..6]);
+        Directory.CreateDirectory(folder);
+        var vm = NewVm(folder);
+        vm.AddTextCommand.Execute(null);                       // 弄脏
+        var closed = false;
+        var window = new TemplateEditorWindow(vm) { AskSaveBeforeClose = () => TemplateEditorWindow.SavePromptAnswer.Discard };
+        window.Closed += (_, _) => closed = true;
+
+        window.Close();
+        Assert.True(closed, "点「否」就是不存直接走：窗口得关掉");
+        Assert.Empty(Directory.GetFiles(folder, "*.json"));    // 而盘上一个字都没写
     });
 
     [Fact]
@@ -840,13 +859,16 @@ public class TemplateEditorFlowTests
         Directory.CreateDirectory(folder);
         var vm = NewVm(folder);
         vm.AddTextCommand.Execute(null);                       // 弄脏
-        var window = new TemplateEditorWindow(vm) { AskSaveBeforeClose = () => true };
+        var closed = false;
+        var window = new TemplateEditorWindow(vm) { AskSaveBeforeClose = () => TemplateEditorWindow.SavePromptAnswer.Save };
+        window.Closed += (_, _) => closed = true;
 
         window.Close();
         // "保存"走 BeginInvoke（Normal）：外层 STA 帧是 Send 优先级，泵必须用更低优先级才会把它消化掉
         System.Windows.Threading.Dispatcher.CurrentDispatcher.Invoke(() => { },
             System.Windows.Threading.DispatcherPriority.Background);
-        Assert.False(vm.IsDirty);                              // 「保存」＝存盘并放行关闭
+        Assert.False(vm.IsDirty);                              // 「是」＝存盘并放行关闭
         Assert.True(Directory.GetFiles(folder, "*.json").Length > 0, "说好了保存，模板库里却没有文件");
+        Assert.True(closed, "存完了窗口还开着：等于把「是」当成了「取消」");
     });
 }

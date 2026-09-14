@@ -72,6 +72,12 @@ public sealed class TemplateEditorViewModel : ObservableObject
         BuildCommands();
     }
 
+    /// <summary>
+    /// 弹窗里报给用户的那个文件名（第 57 棒）：存过就是磁盘上的那份，<strong>还没存过</strong>就报
+    /// 「保存后会得到的名字」——名字只认 <see cref="TemplateStore.MakeFileName"/> 这一处算法，不在这里再拼一遍。
+    /// </summary>
+    internal string DocumentFileName => _savedFileName ?? TemplateStore.MakeFileName(_template);
+
     /// <summary>画布需要重绘。</summary>
     public event Action? CanvasChanged;
 

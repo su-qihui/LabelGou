@@ -22,11 +22,26 @@ public sealed partial class TemplateEditorWindow : Window
     private readonly TemplateEditorViewModel _editor;
 
     /// <summary>
-    /// 未保存时关窗口问一句的判定（true＝保存后关闭，false＝留下继续编辑）。
-    /// <para>第 55 棒按用户口径做成"左『保存』右『否』"的自定义对话框（MessageBox 改不了按钮字）；
-    /// 这个字段留成可替换——单测换掉它就不弹窗，关闭路径照样被钉。</para>
+    /// 未保存时关窗口问一句的判定（可替换：单测换掉它就不弹窗，三条关闭路径各自被钉）。
+    /// <para>第 57 棒按用户口径换成原生的三键提示：「<strong>是(Y)</strong> 存盘并关闭、
+    /// <strong>否(N)</strong> 不存直接关闭（改动就丢了）、<strong>取消</strong> 留下继续编辑」。
+    /// 前一版是"左『保存』右『否』"的两键框——那颗『否』其实只等于这里的『取消』，
+    /// 想不存就走当时只能先点工具条的「放弃改动」，他要点三键那种熟悉的问法。</para>
     /// </summary>
-    internal Func<bool> AskSaveBeforeClose { get; set; }
+    internal Func<SavePromptAnswer> AskSaveBeforeClose { get; set; }
+
+    /// <summary>退出编辑器时那句问话的三个答案。</summary>
+    internal enum SavePromptAnswer
+    {
+        /// <summary>是：存盘并关闭。</summary>
+        Save,
+
+        /// <summary>否：不存盘直接关闭（本次改动就此丢掉）。</summary>
+        Discard,
+
+        /// <summary>取消：不关，回去继续编辑。</summary>
+        Cancel,
+    }
 
     public TemplateEditorWindow(TemplateEditorViewModel editor)
     {
@@ -63,58 +78,34 @@ public sealed partial class TemplateEditorWindow : Window
     {
         base.OnClosing(e);
         if (!_editor.IsDirty || AllowCloseWithoutPrompt) return;
-        if (!AskSaveBeforeClose())
+        switch (AskSaveBeforeClose())
         {
-            e.Cancel = true;                       // 「否」＝回去继续编辑；要丢弃改动请走工具条「放弃改动」，不误丢
-            return;
+            case SavePromptAnswer.Cancel:
+                e.Cancel = true;                       // 取消＝留下继续编辑
+                return;
+
+            case SavePromptAnswer.Discard:
+                return;                                // 否＝不存就走：本次改动就此丢掉（磁盘上还是上次存的那份）
         }
-        // 「保存」：先取消本次关闭，事件返回后再执行保存——VM 的 Save() 成功路径自己会再 Close 一次
+        // 是＝存盘并关闭：先取消本次关闭，事件返回后再执行保存——VM 的 Save() 成功路径自己会再 Close 一次
         // （AllowCloseWithoutPrompt 放行）。在 OnClosing 里直接跑保存命令 = 关闭中重入 Close，WPF 当场抛。
         e.Cancel = true;
         Dispatcher.BeginInvoke(new Action(() => _editor.SaveCommand.Execute(null)));
     }
 
-    /// <summary>「左保存右否」的小对话框（MessageBox 给不了这两个字）。返回 true＝刚点了「保存」。</summary>
-    private bool ShowSavePrompt()
+    /// <summary>
+    /// 那句三键问话（第 57 棒，用户原话照抄）：「要在退出之前存储对 LabelGou 文档“文件名”的保存更改吗？」。
+    /// <para>用原生 MessageBox 而不是自己画：他要的就是 是(Y)／否(N)／取消 这三颗键与它们的排位、快捷键，
+    /// 原生框给的顺序和助记符正是那一份，自己画反而每次都要重新对一遍。</para>
+    /// </summary>
+    private SavePromptAnswer ShowSavePrompt() => MessageBox.Show(this,
+            $"要在退出之前存储对 LabelGou 文档“{_editor.DocumentFileName}”的保存更改吗？",
+            "LabelGou", MessageBoxButton.YesNoCancel, MessageBoxImage.Question) switch
     {
-        var save = new Button { Content = "保存", MinWidth = 88, IsDefault = true, Margin = new Thickness(0, 0, 8, 0) };
-        var no = new Button { Content = "否", MinWidth = 88, IsCancel = true };
-        var clicked = false;
-        Window box = null!;
-        save.Click += (_, _) => { clicked = true; box.DialogResult = true; };   // DialogResult 一并关掉框
-        box = new Window
-        {
-            Title = "模板未保存",
-            SizeToContent = SizeToContent.Height,
-            Width = 430,
-            Owner = this,
-            WindowStartupLocation = WindowStartupLocation.CenterOwner,
-            ShowInTaskbar = false,
-            ResizeMode = ResizeMode.NoResize,
-            Background = new SolidColorBrush(Color.FromRgb(0xF4, 0xF5, 0xF7)),
-            Content = new StackPanel
-            {
-                Margin = new Thickness(16),
-                Children =
-                {
-                    new TextBlock
-                    {
-                        Text = "这个模板还有没保存的改动。\n\n「保存」＝存盘并关闭；「否」＝回去继续编辑（想丢弃改动请点工具条的「放弃改动」，这里不代丢）。",
-                        TextWrapping = TextWrapping.Wrap,
-                        Margin = new Thickness(0, 0, 0, 14),
-                    },
-                    new StackPanel
-                    {
-                        Orientation = Orientation.Horizontal,
-                        HorizontalAlignment = HorizontalAlignment.Right,
-                        Children = { save, no },
-                    },
-                },
-            },
-        };
-        box.ShowDialog();
-        return clicked;
-    }
+        MessageBoxResult.Yes => SavePromptAnswer.Save,
+        MessageBoxResult.No => SavePromptAnswer.Discard,
+        _ => SavePromptAnswer.Cancel,      // 取消键、Esc、连右上角的叉都算「不关」
+    };
 
     // ---------- 图层行按住上下拖＝换位（第 55 棒） ----------
 
