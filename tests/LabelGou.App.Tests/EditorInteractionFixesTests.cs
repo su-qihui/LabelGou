@@ -146,6 +146,33 @@ public class EditorInteractionFixesTests
         => LayoutEngine.Build(template, record, new LayoutContext(1, 1, "体检.xlsx"))
             .Items.OfType<LabelGou.Core.Layout.TextItem>().Count();
 
+    /// <summary>第 66 棒：占位符在预览那条数据里取不到值时必须当场点名——不能一边留个空框，一边写「目前没有问题，可以保存」。</summary>
+    [Fact]
+    public void TheEditorNamesAnyRowThatWouldPrintEmpty() => OnSta(() =>
+    {
+        var template = new LabelTemplate { Id = "user.b66", Name = "空行点名看样", WidthMm = 140, HeightMm = 100, PaddingMm = 4, BorderMm = 0 };
+        template.Elements.Add(new TemplateElement
+        {
+            Kind = ElementKind.Text, Text = "Ctns：{{col:本行箱数}}件", X = 6, Y = 6, Width = 60, Height = 12, FontSizePt = 12,
+        });
+        template.Elements.Add(new TemplateElement
+        {
+            Kind = ElementKind.Text, Text = "托盘：{{col:这一列根本不存在}}", X = 6, Y = 24, Width = 60, Height = 12, FontSizePt = 12,
+        });
+        var vm = NewVm("empty", template);
+        // 像真表的一条记录：有推算量本行箱数，没有那个列名。
+        // （不递记录时 TemplateSample 会给每个 col 令牌都补上列名，永远"有值"，那样这条判据测不到东西。）
+        vm.PreviewRecord = MarkRecord.Builder()
+            .SetRow(1, "订单.xlsx").Set(MarkFieldKey.Consignee, "WALMART")
+            .SetCustom("col:本行箱数", "5")
+            .Build();
+
+        Assert.True(vm.Issues.Any(m => m.Contains("{{col:这一列根本不存在}}", StringComparison.Ordinal)
+                                       && m.Contains("没有值", StringComparison.Ordinal)),
+            $"Issues=[{string.Join("||", vm.Issues)}]");
+        Assert.DoesNotContain(vm.Issues, m => m.Contains("{{col:本行箱数}}", StringComparison.Ordinal));   // 有值的那一行不该被误报
+    });
+
     [Fact]
     public void DeleteWorksThroughTheWindowEvenWhenTheCanvasHasNoFocus() => OnSta(() =>
     {

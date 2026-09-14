@@ -40,6 +40,31 @@ public class BuiltInTemplateAuditTests
         Assert.True(bad.Count == 0, "内置模板出厂带病：\n" + string.Join("\n", bad));
     }
 
+    /// <summary>
+    /// 内置模板引用的每一个占位符，样例数据里都得有值（第 66 棒，用户：「Ctns 那行不见了，我叫你调好，
+    /// 你留了一行只有框没有字的空墨迹」）。取不到值就命中「变量全空整条隐藏」——编辑器、缩略图、
+    /// 导出预览、没编号时的主预览全都少这一行，而校验还会说"没问题"。
+    /// </summary>
+    [Fact]
+    public void EveryBuiltInTemplateResolvesAllOfItsTokensAgainstTheSample()
+    {
+        var bad = new List<string>();
+        foreach (var template in BuiltInTemplates.All())
+        {
+            var layout = LayoutEngine.Build(template, SampleRecords.StandardSample(), new LayoutContext(1, 1, "样例.xlsx"));
+            foreach (var token in layout.UnresolvedTokens)
+            {
+                var braces = "{{" + token + "}}";
+                var who = template.Elements
+                    .Select((e, i) => (e, i))
+                    .Where(x => (x.e.Text ?? string.Empty).Contains(braces, StringComparison.OrdinalIgnoreCase))
+                    .Select(x => x.i + 1).ToList();
+                bad.Add($"「{template.Name}」{braces} 在样例里没有值（第 {string.Join("、", who)} 个元素）");
+            }
+        }
+        Assert.True(bad.Count == 0, "这些内置模板的占位符拿样例数据取不到值，那一行会整条消失：\n" + string.Join("\n", bad));
+    }
+
     private static string Summarize(TemplateElement e) =>
         e.Kind == ElementKind.Barcode ? $"条码 {e.Text}"
         : e.Kind == ElementKind.Image ? $"图片 {System.IO.Path.GetFileName(e.ImagePath ?? "")}"

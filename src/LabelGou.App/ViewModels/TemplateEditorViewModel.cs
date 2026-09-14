@@ -2010,7 +2010,37 @@ public sealed class TemplateEditorViewModel : ObservableObject
         CanvasChanged?.Invoke();
     }
 
-    public void RecomputeIssues() => RecomputeIssues(WithInkOverflow(TemplateValidator.Validate(_template)));
+    public void RecomputeIssues() => RecomputeIssues(WithUnresolvedTokens(WithInkOverflow(TemplateValidator.Validate(_template))));
+
+    /// <summary>
+    /// 预览用的这条数据里<strong>取不到值的占位符</strong>，逐条点名（第 66 棒，用户：「我和你说不见了是你把这个调好，
+    /// 你直接给他删了还留空墨迹」——他那行只有框没有字，右边却写着「目前没有问题，可以保存」）。
+    /// <para>「变量全空整条隐藏」是刻意的口径（那格空着就别印），但**别印**不等于**别说**：
+    /// 这里只报 Warning（不拦存盘），说清是哪几个元素、哪几个占位符，让人当场知道这一行会是空的。</para>
+    /// </summary>
+    private IReadOnlyList<TemplateIssue> WithUnresolvedTokens(IReadOnlyList<TemplateIssue> issues)
+    {
+        if (SampleLayout.UnresolvedTokens.Count == 0) return issues;
+
+        var list = issues.ToList();
+        foreach (var token in SampleLayout.UnresolvedTokens)
+        {
+            var braces = "{{" + token + "}}";
+            var refs = new List<string>();
+            var firstRef = -1;
+            for (var i = 0; i < _template.Elements.Count; i++)
+                if ((_template.Elements[i].Text ?? string.Empty).Contains(braces, StringComparison.OrdinalIgnoreCase))
+                {
+                    refs.Add($"第 {i + 1} 个");
+                    if (firstRef < 0) firstRef = i;
+                }
+            if (refs.Count == 0) continue;      // 版面报的令牌没有元素直接引用（字段别名一类），不硬编给某个元素
+            list.Add(new TemplateIssue(IssueLevel.Warning,
+                $"{string.Join("、", refs)}引用的 {braces} 在预览用的这条数据里没有值——那一行印出来会是空的（整条会被隐藏）。" +
+                "④ 步编号后才有这个推算量，或者检查列名对不对。", firstRef));
+        }
+        return list;
+    }
 
     /// <summary>
     /// 永不折行的文本，越界只能按<strong>看得见的墨迹</strong>判（Core 量不了字，这里用屏幕上那份样例版面量）。

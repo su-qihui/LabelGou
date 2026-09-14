@@ -656,5 +656,10 @@ public static class SampleRecords
         .Set(MarkFieldKey.Origin, "MADE IN CHINA")
         .Set(MarkFieldKey.Remarks, "THIS SIDE UP / 防潮")
         .SetCustom("col:托盘号", "PLT-0007")
+        // 两个内置推算量必须在样例里也有值：行式骨架的第四行就是「Ctns：{{col:本行箱数}}件」，
+        // 缺了它，凡拿这份样例量版面的地方（编辑器画布、模板缩略图、导出预览、还没编号时的主预览）
+        // 都会命中「变量全空整条隐藏」——无声少印一行（用户截图里那个只有框没有字的空行就是它）。
+        .SetCustom("col:组内序", "1")
+        .SetCustom("col:本行箱数", "5")
         .Build();
 }
