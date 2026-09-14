@@ -36,6 +36,9 @@ public sealed record BarStrip(double X, double Width, bool IsGuard = false);
 /// <param name="GuardBarsHeight"><strong>保护条</strong>的高（毫米）；这一族没有保护条时等于 <paramref name="BarsHeight"/>。
 /// <para>UPC/EAN 的起止与正中那几根条按规范比数据条高出一截，扫码枪靠它们找边界与中点。
 /// 用户 2026-09-11 拿 Corel BARCODE WIZARD 当参照物点名要的，差多少见 <see cref="BarcodeBars.GuardExtensionModules"/>。</para></param>
+/// <param name="CenterOffsetMm">整组条往右让了多少毫米——第 58 棒按 CDR 的 X 尺寸画时，
+/// 符号可能比元素框窄（框是用户拖的），多出来的两头是<strong>留白不是静区</strong>：静区仍是制式声明的数，
+/// 首末那几位可读数字要贴着自己的条，所以这个偏移得单独带出去给 <see cref="BarcodeBars.BuildHri"/> 用。</param>
 public sealed record BarcodeGeometry(
     IReadOnlyList<BarStrip> Bars,
     double ModuleMm,
@@ -43,7 +46,8 @@ public sealed record BarcodeGeometry(
     double BarsHeight,
     double QuietZoneMm,
     string? Warning,
-    double GuardBarsHeight = 0);
+    double GuardBarsHeight = 0,
+    double CenterOffsetMm = 0);
 
 /// <summary>
 /// 把模块序列铺成毫米矩形。
@@ -73,6 +77,18 @@ public static class BarcodeBars
     /// 不再用「可读数字带占 22%」那套经验值（那套在框高不是 81X 时会把条拉扁）。</para>
     /// </summary>
     public const int HeightUnits = 81;
+
+    /// <summary>
+    /// CDR 在「条形码高度(H) = 1.0」时，<strong>数据条高合几个窄元素宽</strong>——老模板封顶用的就是它。
+    /// <para>实测自用户导出的那张样本 <c>labelgou-CL\条码\图形1.svg</c>：X = 0.33795 mm、
+    /// 数据条 23.366 mm → 23.366 ÷ 0.33795 = <strong>69.14</strong>（同一张样本里保护条全长 25.398 ÷ X = 75.15、
+    /// 整框 27.43 ÷ X = 81.16，三处都是量的不是凑的）。</para>
+    /// <para><strong>为什么按数据条封顶、不按条区那 75.15</strong>：我们的可读数字带有 2.5 mm 的可读下限
+    /// （<see cref="MinTextBandMm"/>，第五轮定的——扁框里 5/81 只剩 0.86 mm 连字都放不下），
+    /// 所以条区比 CDR 的少一截；按 75.15 封顶会把 CDR 自己那只等比框（38.1 × 27.43）也误伤，
+    /// 那条逐毫米钉子当场红给我看了。按 69.14 封顶则只咬"真被压扁"的框。</para>
+    /// </summary>
+    public const double CdrDataBarUnits = 69.14;
 
     /// <summary>条顶到框顶占几份（框高的 1/81）。</summary>
     public const int TopMarginUnits = 1;
@@ -141,8 +157,10 @@ public static class BarcodeBars
     /// <param name="width">元素框宽（毫米，静区算在里面）。</param>
     /// <param name="barsY">条的顶（毫米，可读文字在下面时这里就是文字上方的那条线）。</param>
     /// <param name="barsHeight">条区的总高（毫米）。有保护条时这一格由保护条吃满，数据条相应矮一截。</param>
+    /// <param name="sizing">CDR 口径的尺寸参数（第 58 棒）。<strong>给了它，位宽就来自 X 尺寸而不是框宽</strong>——
+    /// 框再怎么拉也拉不肥条，符号比框窄时整组居中；null＝照旧按框宽算（老模板输出逐字不变）。</param>
     public static BarcodeGeometry Build(BarcodeEncoding encoding, double x, double y, double width,
-        double barsY, double barsHeight)
+        double barsY, double barsHeight, BarcodeSizing? sizing = null)
     {
         if (encoding is not { Ok: true })
             return new BarcodeGeometry(Array.Empty<BarStrip>(), 0, barsY, barsHeight, 0, encoding?.Error ?? "条码没编出来。");
@@ -160,9 +178,49 @@ public static class BarcodeBars
         // 往下取整到 0.01mm：宁可留一点白，也不要超出框（超出就裁掉了，裁掉的可能是最后一根条）。
         // 这里算出来的是「一位」的宽；对外报的 ModuleMm 是「最窄那根线」的宽（宽窄比制里窄 = 2 位）。
         var bit = Math.Floor(barsWidth / totalModules / ModuleStepMm) * ModuleStepMm;
+        var frameBit = bit;
+        var centerOffset = 0.0;
+        string? sizingWarning = null;
+        if (sizing is { ModuleMm: > 0 } size && bit > 0)
+        {
+            // 第 58 棒的主修：X 尺寸照 CDR 由「打印机分辨率 × 缩放比例」算（整像素量化），**框宽不再参与条的胖瘦**。
+            // 从前只按框宽算，用户把框画成 92 × 12 mm 就把 9 位码撑成 0.6 mm 粗杠——那就是他报的"扁"。
+            var xBit = size.ModuleMm / encoding.NarrowBits;
+            var used = encoding.Modules * xBit + (quietIsMm ? quietMm * 2 : quietModules * xBit * 2);
+            if (used <= width + 1e-9)
+            {
+                bit = xBit;
+                centerOffset = (width - used) / 2;      // 居中挪的是整组条，静区仍是制式那个数（见 CenterOffsetMm）
+            }
+            else
+            {
+                sizingWarning = $"这只框（{width:0.#} mm）比缩放比例要求的符号还窄：已按框宽把 X 从 " +
+                                $"{size.ModuleMm:0.###} mm 收到 {frameBit * encoding.NarrowBits:0.###} mm。" +
+                                "要照参数画就把框拉宽，或把缩放比例调小。";
+            }
+        }
         var module = bit * encoding.NarrowBits;
+        var heightBound = false;
+        if (sizing is null && module > barsHeight / CdrDataBarUnits)
+        {
+            // 老模板（没有尺寸参数那四格）这一路：从前只按框宽算，框多扁条就多粗——用户拿截图点名要的"别再把条码压扁"。
+            // 上限照 CDR 在 H=1.0 时量出来的数据条比例（见 CdrDataBarUnits 的出处），再扁也不许比 CDR 自己画的更粗。
+            bit = Math.Floor(barsHeight / CdrDataBarUnits / encoding.NarrowBits / ModuleStepMm) * ModuleStepMm;
+            module = bit * encoding.NarrowBits;
+            heightBound = true;
+            centerOffset = Math.Max(0, (width - (encoding.Modules * bit + (quietIsMm ? quietMm * 2 : quietModules * bit * 2))) / 2);
+        }
         var quiet = quietIsMm ? quietMm : quietModules * bit;
-        string? warning = null;
+        // 向导那格「条形码宽度减少值」：出纸时每根黑条两侧各让出半个像素，补偿喷墨/热转印的网点增益。
+        // 位置与空白都不动，只把条画窄——所以它必须真的参与画，不然那一格就是个骗人的旋钮。
+        var reductionMm = sizing is null || sizing.Dpi <= 0 ? 0 : sizing.WidthReductionPx / sizing.Dpi * 25.4;
+        if (sizing is not null && reductionMm >= module && module > 0)
+        {
+            sizingWarning = (sizingWarning is { Length: > 0 } sw ? sw + " " : "") +
+                            $"宽度减少值 {sizing!.WidthReductionPx:0.##} 像素已经不小于一个窄元素（{module:0.###} mm）：条会被画没了，这里按不减少画。请把它调小。";
+            reductionMm = 0;
+        }
+        string? warning = sizingWarning;
         if (bit <= 0)
         {
             return new BarcodeGeometry(Array.Empty<BarStrip>(), 0, barsY, barsHeight, 0,
@@ -171,8 +229,12 @@ public static class BarcodeBars
         if (module < MinModuleMm)
         {
             // 判「扫不扫得出」看的是窄线宽（module），不是位宽（bit）——宽窄比制一位只有半根窄线。
-            warning = $"最窄的线只有 {module:0.00} mm（低于常用底线 {MinModuleMm:0.00} mm）：这么密的码手持枪很可能扫不出来，" +
-                      $"建议把框拉宽到 {(int)Math.Ceiling(encoding.Modules / (double)encoding.NarrowBits * MinModuleMm) + quiet * 2:0} mm 以上，或改选更短的列。";
+            var tooNarrow = heightBound
+                ? $"这只框太矮，条已按 CDR 的比例（数据条高 = 窄元素宽的 {CdrDataBarUnits:0.##} 倍）缩到 {module:0.00} mm，" +
+                  $"低于常用底线 {MinModuleMm:0.00} mm：手持枪很可能扫不出来。把条码框拉高或拉窄一点，或改选更短的列。"
+                : $"最窄的线只有 {module:0.00} mm（低于常用底线 {MinModuleMm:0.00} mm）：这么密的码手持枪很可能扫不出来，" +
+                  $"建议把框拉宽到 {(int)Math.Ceiling(encoding.Modules / (double)encoding.NarrowBits * MinModuleMm) + quiet * 2:0} mm 以上，或改选更短的列。";
+            warning = warning is { Length: > 0 } ? warning + " " + tooNarrow : tooNarrow;
         }
 
         // 保护条从条区总高里"往下伸"：顶线与数据条齐平，底线更低——这与 CDR 样本里
@@ -187,7 +249,7 @@ public static class BarcodeBars
         var dataBarsHeight = barsHeight - guardExtension;
 
         var bars = new List<BarStrip>();
-        var cursor = x + quiet;
+        var cursor = x + quiet + centerOffset;
         var run = 0;
         var runStart = 0;
         for (var i = 0; i < encoding.Bits.Length; i++)
@@ -200,15 +262,15 @@ public static class BarcodeBars
             }
             if (run > 0)
             {
-                bars.Add(new BarStrip(cursor, run * bit, IsGuardRun(runStart, guards)));
+                bars.Add(new BarStrip(cursor, Math.Max(0, run * bit - reductionMm), IsGuardRun(runStart, guards)));
                 cursor += run * bit;
                 run = 0;
             }
             cursor += bit;
         }
-        if (run > 0) bars.Add(new BarStrip(cursor, run * bit, IsGuardRun(runStart, guards)));
+        if (run > 0) bars.Add(new BarStrip(cursor, Math.Max(0, run * bit - reductionMm), IsGuardRun(runStart, guards)));
 
-        return new BarcodeGeometry(bars, module, barsY, dataBarsHeight, quiet, warning, guardBarsHeight);
+        return new BarcodeGeometry(bars, module, barsY, dataBarsHeight, quiet, warning, guardBarsHeight, centerOffset);
     }
 
     /// <summary>这根条的起点是否落在某个保护条区间里（条与空是交替的，落区间内的那几根就是保护条）。</summary>
@@ -237,17 +299,19 @@ public static class BarcodeBars
 
         var module = geometry.ModuleMm;
         var quiet = geometry.QuietZoneMm;
-        var barsOrigin = x + quiet;
+        var offset = geometry.CenterOffsetMm;
+        var barsOrigin = x + quiet + offset;
         var glyphs = new List<HriGlyph>();
         foreach (var seg in encoding.HriSegments)
         {
             if (seg.Text.Length == 0) continue;
 
             // 骑静区的那几位（EAN-13 的首位、UPC 的数字系统位与校验位）：静区是固定毫米，
-            // 位置直接按框的左右边界算，不走模块坐标。
+            // 位置直接按框的左右边界算，不走模块坐标。整组条居中时基准跟着一起挪——
+            // 不然这个数字会落到那截留白的正中，离自己的条十万八千里。
             if (seg.Anchor != HriAnchor.Bars)
             {
-                var origin = seg.Anchor == HriAnchor.LeftQuiet ? x : x + width - quiet;
+                var origin = seg.Anchor == HriAnchor.LeftQuiet ? x + offset : x + width - offset - quiet;
                 var cell = quiet / seg.Text.Length;
                 for (var i = 0; i < seg.Text.Length; i++)
                     glyphs.Add(new HriGlyph(seg.Text[i], origin + i * cell, cell));

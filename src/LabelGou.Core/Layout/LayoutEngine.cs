@@ -354,7 +354,7 @@ public static class LayoutEngine
                     // 这一格给的是「条区总高」：有保护条的 UPC/EAN 一族由保护条吃满，数据条自己矮一截（见 BarcodeBars）。
                     var barsZoneHeight = Math.Max(1, element.Height - topMargin - textBand);
                     var geometry = BarcodeBars.Build(encoding, element.X, element.Y, element.Width,
-                        element.Y + topMargin, barsZoneHeight);
+                        element.Y + topMargin, barsZoneHeight, element.BarcodeSize);
                     // 可读数字的逐字格子：只有 UPC/EAN 一族有。别的制式留空，渲染端按老规矩整串居中。
                     var hri = element.ShowBarcodeText && encoding.Ok
                         ? BarcodeBars.BuildHri(encoding, element.X, element.Width, geometry)

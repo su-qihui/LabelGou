@@ -398,11 +398,25 @@
                                      IsEnabled="{Binding Barcode.IsFixedTextEntry}"
                                      ToolTip="只有整批共用一个码时才手填；正常情况请选上面那一列" />
 
+                            <!--  尺寸照 CorelDRAW 条码向导那四格（第 58 棒）：条的胖瘦由 X 尺寸＝打印分辨率×缩放比例算，
+                                 不再有一格"高(mm)"让人填——从前那格就是"条码被压扁"的根。  -->
                             <WrapPanel Margin="0,6,0,0">
-                                <TextBlock Text="高(mm)：" VerticalAlignment="Center" />
-                                <TextBox Text="{Binding Barcode.HeightMm, UpdateSourceTrigger=PropertyChanged}"
-                                         Width="46" VerticalAlignment="Center" Margin="0,0,12,0"
-                                         ToolTip="条码带的高（含下面那行可读数字）。常用 12~18 mm" />
+                                <TextBlock Text="缩放比例(%)" Style="{StaticResource Hint}" VerticalAlignment="Center" />
+                                <TextBox Text="{Binding Barcode.ScalePercent, UpdateSourceTrigger=PropertyChanged}"
+                                         Width="46" VerticalAlignment="Center" Margin="4,0,12,0"
+                                         ToolTip="100 % = CorelDRAW 的标称 X（0.013 英寸，@300dpi 正好 4 像素）。要更宽的码就加大它——高会跟着一起长，那是条码的规矩；想宽而不高请调下面那个高度倍数" />
+                                <TextBlock Text="高度倍数" Style="{StaticResource Hint}" VerticalAlignment="Center" />
+                                <TextBox Text="{Binding Barcode.HeightFactor, UpdateSourceTrigger=PropertyChanged}"
+                                         Width="40" VerticalAlignment="Center" Margin="4,0,12,0"
+                                         ToolTip="向导里那格「条形码高度(H)」，默认 1.0。它只乘在高上，不碰条的宽瘦" />
+                                <TextBlock Text="打印分辨率(dpi)" Style="{StaticResource Hint}" VerticalAlignment="Center" />
+                                <TextBox Text="{Binding Barcode.Dpi, UpdateSourceTrigger=PropertyChanged}"
+                                         Width="46" VerticalAlignment="Center" Margin="4,0,12,0"
+                                         ToolTip="向导默认 300。X 会向上取整到这台机器的整像素——半像素在热转印机上会糊边" />
+                                <TextBlock Text="宽度减少(像素)" Style="{StaticResource Hint}" VerticalAlignment="Center" />
+                                <TextBox Text="{Binding Barcode.WidthReductionPx, UpdateSourceTrigger=PropertyChanged}"
+                                         Width="40" VerticalAlignment="Center" Margin="4,0,12,0"
+                                         ToolTip="向导那格「条形码宽度减少值」，默认 1 像素：出纸时每根条两侧各让半个像素，补偿网点增益" />
                                 <CheckBox Content="条码下方印那串数字" IsChecked="{Binding Barcode.ShowText}"
                                           VerticalAlignment="Center" Margin="0,0,12,0"
                                           ToolTip="默认要：扫不出时人还能报号" />

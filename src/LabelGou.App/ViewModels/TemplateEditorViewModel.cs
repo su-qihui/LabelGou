@@ -375,6 +375,13 @@ public sealed class TemplateEditorViewModel : ObservableObject
             return;
         }
         var margin = Math.Min(4, _template.WidthMm * 0.04);
+        var availW = Math.Max(20, _template.WidthMm - margin * 2);
+        var availH = Math.Max(6, _template.HeightMm - margin * 2);
+        // 尺寸照 CorelDRAW 的账：X 由「打印分辨率 × 缩放比例」定，框由「窄元素数 × X」算出来——
+        // 不再"通栏宽 + 写死 12 mm 高"（那只正是他报的扁码）。塞不下就降 X，不压扁条。
+        var encoding = BarcodeEncoder.Encode(BarcodePlaceholder, BarcodeSymbology.Code128);
+        var sizing = new BarcodeSizing().FittedTo(encoding, availW, availH);
+        var (barW, barH) = sizing.BoxOf(encoding);
         var element = new TemplateElement
         {
             Kind = ElementKind.Barcode,
@@ -383,13 +390,16 @@ public sealed class TemplateEditorViewModel : ObservableObject
             ShowBarcodeText = true,
             FontSizePt = 8,
             ThicknessMm = 0.35,
-            X = margin,
-            Y = Math.Max(margin, _template.HeightMm - 12 - margin),
-            Width = Math.Max(20, _template.WidthMm - margin * 2),
-            Height = Math.Min(12, Math.Max(6, _template.HeightMm - margin * 2)),
+            BarcodeSize = sizing,
+            X = margin + Math.Max(0, (availW - barW) / 2),
+            Y = Math.Max(margin, _template.HeightMm - barH - margin),
+            Width = barW,
+            Height = barH,
         };
         AddElement(element, "条码（Code128 占位）");
-        StatusText = $"已放一只 {BarcodeSymbology.Code128} 占位条码（{BarcodePlaceholder}）：先摆位置，条码列对接后把「内容」改成那一列的字段就是真条码。";
+        StatusText = $"已放一只 {BarcodeSymbology.Code128} 占位条码（{BarcodePlaceholder}）：" +
+                     $"X = {sizing.ModuleMm:0.###} mm，条码带 {barW:0.##} × {barH:0.##} mm（照 CorelDRAW 向导那四格算的）。" +
+                     "先摆位置，条码列对接后把「内容」改成那一列的字段就是真条码。";
     }
 
     /// <summary>占位条码的内容——只为摆位，不代表任何真货。</summary>

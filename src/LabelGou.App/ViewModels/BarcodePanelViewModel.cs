@@ -48,9 +48,21 @@ public sealed class BarcodePanelViewModel : ObservableObject
     private string? _selectedSource;
     private string _fixedText = string.Empty;
     private ChoiceOption<BarcodePlacement>? _selectedPlacement;
-    private double _heightMm = 14;
     private bool _showText = true;
     private string _preview = "先选它读哪一列。";
+
+    // 第 58 棒：条码的尺寸照 CorelDRAW 条码向导那四格（从前这里是一格写死的「高(mm)」，
+    // 用户 2026-09-14：「条码还是扁的……把人家框架抄过来」）。
+    private int _dpi = BarcodeSizing.DefaultDpi;
+    private double _scalePercent = BarcodeSizing.DefaultScalePercent;
+    private double _heightFactor = BarcodeSizing.DefaultHeightFactor;
+    private double _widthReductionPx = BarcodeSizing.DefaultWidthReductionPx;
+
+    /// <summary>试编那一次真正编出来的编码——摆框的尺寸由它和上面四格算出来（编不出来就是 null）。</summary>
+    private BarcodeEncoding? _probeEncoding;
+
+    /// <summary>当前四格拼出的尺寸参数（写进模板元素的就是它，schema v12）。</summary>
+    public BarcodeSizing Sizing => new(_dpi, _scalePercent, _heightFactor, _widthReductionPx);
 
     public BarcodePanelViewModel(ILabelSource source, Func<TemplateElement, string, (bool Ok, string Message)> apply)
     {
@@ -152,15 +164,51 @@ public sealed class BarcodePanelViewModel : ObservableObject
         }
     }
 
-    /// <summary>条码带的高（毫米，含下面那行可读数字）。</summary>
-    public double HeightMm
+    /// <summary>打印机分辨率（dpi）——向导默认 300。X 尺寸要向上取整到这台机器的整像素，选 600 会更细一档。</summary>
+    public int Dpi
     {
-        get => _heightMm;
+        get => _dpi;
         set
         {
-            if (Set(ref _heightMm, Math.Max(6, value))) Refresh();
+            if (Set(ref _dpi, Math.Clamp(value, 72, 2400))) Refresh();
         }
     }
+
+    /// <summary>缩放比例（%）：100 % 就是 CDR 的标称 X（0.013 英寸 @300dpi = 4 像素）。要更宽的码就加大它——高会跟着长，那是规矩。</summary>
+    public double ScalePercent
+    {
+        get => _scalePercent;
+        set
+        {
+            if (Set(ref _scalePercent, Math.Clamp(value, 1, 1000))) Refresh();
+        }
+    }
+
+    /// <summary>条形码高度倍数——向导那格「条形码高度(H)」，只乘在高上。想要"宽而不高"是加大缩放＋调小这个倍数，不是压扁框。</summary>
+    public double HeightFactor
+    {
+        get => _heightFactor;
+        set
+        {
+            if (Set(ref _heightFactor, Math.Clamp(value, 0.1, 5))) Refresh();
+        }
+    }
+
+    /// <summary>条形码宽度减少值（像素）：出纸时每根条两侧各让半个像素，补偿网点增益。不参与符号宽度。</summary>
+    public double WidthReductionPx
+    {
+        get => _widthReductionPx;
+        set
+        {
+            if (Set(ref _widthReductionPx, Math.Clamp(value, 0, 8))) Refresh();
+        }
+    }
+
+    /// <summary>只读那一格：向导上的「符号宽度」——窄元素数 × X（不含静区）。</summary>
+    public string SymbolWidthText => _probeEncoding is { } enc
+        ? $"符号宽度 {Sizing.SymbolWidthMm(enc):0.###} mm（X = {Sizing.ModuleMm:0.###} mm，" +
+          $"{BarcodeSizing.NarrowElements(enc)} 个窄元素）"
+        : "符号宽度：选好列、编出来才知道（它＝窄元素数 × X）。";
 
     public bool ShowText
     {
@@ -249,39 +297,68 @@ public sealed class BarcodePanelViewModel : ObservableObject
         Visible = true,
     };
 
-    /// <summary>把元素摆进具体那张标签的毫米框里。通栏留 4 mm 页边，右上角占右半幅。</summary>
+    /// <summary>摆放位置空出来的那条带：左边界、可用宽，以及它是贴在标签底边还是顶边。</summary>
+    private (double Left, double Width, bool AtBottom) SlotOf(LabelTemplate template)
+    {
+        var margin = Math.Min(4, template.WidthMm * 0.04);
+        return (SelectedPlacement?.Value ?? BarcodePlacement.Bottom) switch
+        {
+            BarcodePlacement.Top => (margin, template.WidthMm - margin * 2, false),
+            BarcodePlacement.TopRight => (template.WidthMm * 0.5 + margin / 2, template.WidthMm * 0.5 - margin * 1.5, false),
+            _ => (margin, template.WidthMm - margin * 2, true),
+        };
+    }
+
+    /// <summary>
+    /// 这只码在该模板上实际用的尺寸参数与框大小（第 58 棒）。
+    /// <para>尺寸由「X 尺寸 × 窄元素数」算出来（CDR 的账），<strong>不是</strong>由框宽反算；
+    /// 只有当算出来的框塞不进这条位置时，才把缩放比例降到位——降的是 X（仍取整像素），不是把条压扁。</para>
+    /// <para>还没编出来（第一行没值、校验位不对…）时无从知道窄元素数，退回「铺满这条位置 + 14 mm 高」，
+    /// 与从前那一格「高(mm)=14」同形，不至于给不出框。</para>
+    /// </summary>
+    private (BarcodeSizing Sizing, double Width, double Height) SizingFor(LabelTemplate? template, bool fit)
+    {
+        var sizing = Sizing;
+        var margin = template is null ? 4 : Math.Min(4, template.WidthMm * 0.04);
+        var availWidth = template is null ? 80.0 : SlotOf(template).Width;
+        var availHeight = template is null ? 20.0 : Math.Max(6, template.HeightMm - margin * 2);
+        if (_probeEncoding is not { } encoding) return (sizing, availWidth, Math.Min(14, availHeight));
+
+        var (width, height) = sizing.BoxOf(encoding, ShowText);
+        if (fit)
+        {
+            sizing = sizing.FittedTo(encoding, availWidth, availHeight, ShowText);
+            (width, height) = sizing.BoxOf(encoding, ShowText);
+        }
+        return (sizing, width, height);
+    }
+
+    /// <summary>
+    /// 把元素摆进具体那张标签的毫米框里：宽按摆放位置给（通栏留 4 mm 页边，右上角占右半幅），
+    /// <strong>框的大小由 X 尺寸算</strong>（第 58 棒），算出来比这条位置窄就在里面水平居中——
+    /// 绝不再把条码拉去填满框（那就是他报的"扁"）。
+    /// </summary>
     private void PlaceInto(TemplateElement element, LabelTemplate template)
     {
         var margin = Math.Min(4, template.WidthMm * 0.04);
-        var height = Math.Min(_heightMm, template.HeightMm - margin * 2);
-        switch (SelectedPlacement?.Value ?? BarcodePlacement.Bottom)
-        {
-            case BarcodePlacement.Top:
-                element.X = margin;
-                element.Y = margin;
-                element.Width = template.WidthMm - margin * 2;
-                element.Height = height;
-                break;
-
-            case BarcodePlacement.TopRight:
-                element.X = template.WidthMm * 0.5 + margin / 2;
-                element.Y = margin;
-                element.Width = template.WidthMm * 0.5 - margin * 1.5;
-                element.Height = height;
-                break;
-
-            default:
-                element.X = margin;
-                element.Y = template.HeightMm - height - margin;
-                element.Width = template.WidthMm - margin * 2;
-                element.Height = height;
-                break;
-        }
+        var (left, availWidth, atBottom) = SlotOf(template);
+        var (sizing, width, height) = SizingFor(template, fit: true);
+        element.BarcodeSize = sizing;
+        element.X = left + Math.Max(0, (availWidth - width) / 2);
+        element.Y = atBottom ? template.HeightMm - height - margin : margin;
+        element.Width = width;
+        element.Height = height;
     }
 
-    /// <summary>拿这张表第一行真值试编一次（走的就是生产那条 <see cref="LayoutEngine"/> 路，不另写一套判据）。</summary>
+    /// <summary>
+    /// 拿这张表第一行真值试编一次（走的就是生产那条 <see cref="LayoutEngine"/> 路，不另写一套判据）。
+    /// <para><strong>两趟</strong>：第一趟只为问出「这一格在第一行到底是什么值」——X 尺寸算出来的符号宽度
+    /// 要先知道这串数字编出来占几个窄元素，而算框之前它是未知的；第二趟换成算出来的真框，
+    /// 于是预览里的比例、模块宽、条数就是加到模板之后会得到的那一份。</para>
+    /// </summary>
     private void Refresh()
     {
+        _probeEncoding = null;
         var expression = DataExpression();
         var symbology = SelectedSymbology?.Value ?? BarcodeSymbology.Code128;
         if (expression.Length == 0)
@@ -290,21 +367,49 @@ public sealed class BarcodePanelViewModel : ObservableObject
                 ? "还没填那串数字。"
                 : "还没选列。表里的列名都在下面这个下拉里——条码在哪一列就选哪一列。";
             PreviewImage = null;
+            Raise(nameof(SymbolWidthText));
             return;
         }
 
         // 预览按「加到模板后」的实际尺寸画——用户 2026-09-11：「按照实际效果来而不是固定的这个数值压成什么样了」。
-        // 条码在不同宽度的框里模块宽不同，拿一个写死的宽度去预览，预览里的比例就是错的、和右边模板对不上。
         var template = _source.Template;
-        double barW = 80, barH = Math.Max(10, _heightMm);
-        if (template is not null)
+        var (_, probeW, probeH) = SizingFor(template, fit: false);
+        var (layout, item) = Probe(expression, symbology, probeW, probeH);
+        if (item is null)
         {
-            var placed = new TemplateElement { Kind = ElementKind.Barcode };
-            PlaceInto(placed, template);
-            barW = placed.Width;
-            barH = placed.Height;
+            Preview = "这一格在这张表的第一行没值（所以它不会画）。换一列，或先核对那一列是不是真的空着。";
+            PreviewImage = null;
+            Raise(nameof(SymbolWidthText));
+            return;
         }
-        var probe = new LabelTemplate { WidthMm = barW, HeightMm = barH, BorderMm = 0 };
+        if (item.Error is { Length: > 0 } error)
+        {
+            Preview = "编不出来：" + error;
+            PreviewImage = null;
+            Raise(nameof(SymbolWidthText));
+            return;
+        }
+
+        // 编得出来才知道窄元素数 → X 尺寸与符号宽度才算得出（同一台编码器，不开第二套判据）。
+        _probeEncoding = BarcodeEncoder.Encode(item.Data, symbology);
+        var (sizing, barW, barH) = SizingFor(template, fit: true);
+        var (second, secondItem) = Probe(expression, symbology, barW, barH);
+        layout = second;
+        item = secondItem ?? item;
+
+        var note = item.Data.Equals(expression, StringComparison.Ordinal) ? string.Empty : "（已按规范补齐）";
+        Preview = $"第一行会编成 {item.Data}{note}：{symbology.ShortName()}，{item.Bars.Count} 根条，" +
+                  $"X = {sizing.ModuleMm:0.###} mm（缩放 {sizing.ScalePercent:0.#} %、高度 ×{sizing.HeightFactor:0.##}），" +
+                  $"条码带 {barW:0.##} × {barH:0.##} mm。{(item.Warning is { Length: > 0 } w ? "注意：" + w : string.Empty)}";
+        Raise(nameof(SymbolWidthText));
+        RenderPreview(layout);
+    }
+
+    /// <summary>把这一格的第一行真值装进一只指定大小的框里排一次版——试编的两趟与预览图都从这儿来。</summary>
+    private (LabelLayout Layout, BarcodeItem? Item) Probe(string expression, BarcodeSymbology symbology,
+        double widthMm, double heightMm)
+    {
+        var probe = new LabelTemplate { WidthMm = widthMm, HeightMm = heightMm, BorderMm = 0 };
         probe.Elements.Add(new TemplateElement
         {
             Kind = ElementKind.Barcode,
@@ -312,32 +417,15 @@ public sealed class BarcodePanelViewModel : ObservableObject
             Symbology = symbology,
             ShowBarcodeText = ShowText,
             FontSizePt = 8,
+            BarcodeSize = Sizing,
             X = 0,
             Y = 0,
-            Width = barW,
-            Height = barH,
+            Width = widthMm,
+            Height = heightMm,
         });
-
         var record = _source.RawRecords.FirstOrDefault() ?? SampleRecords.StandardSample();
         var layout = LayoutEngine.Build(probe, record, new LayoutContext(1, Math.Max(1, _source.RawRecords.Count), "试编"));
-        var item = layout.Items.OfType<BarcodeItem>().FirstOrDefault();
-        if (item is null)
-        {
-            Preview = "这一格在这张表的第一行没值（所以它不会画）。换一列，或先核对那一列是不是真的空着。";
-            PreviewImage = null;
-            return;
-        }
-        if (item.Error is { Length: > 0 } error)
-        {
-            Preview = "编不出来：" + error;
-            PreviewImage = null;
-            return;
-        }
-
-        var note = item.Data.Equals(expression, StringComparison.Ordinal) ? string.Empty : "（已按规范补齐）";
-        Preview = $"第一行会编成 {item.Data}{note}：{symbology.ShortName()}，{item.Bars.Count} 根条，" +
-                  $"模块 {item.ModuleMm:0.00} mm。{(item.Warning is { Length: > 0 } w ? "注意：" + w : string.Empty)}";
-        RenderPreview(layout);
+        return (layout, layout.Items.OfType<BarcodeItem>().FirstOrDefault());
     }
 
     /// <summary>把预览版面画成位图（走 <see cref="LabelRenderer"/> 同一条画法——预览和正式输出必须一张脸）。</summary>

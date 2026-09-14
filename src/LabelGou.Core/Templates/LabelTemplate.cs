@@ -281,6 +281,15 @@ public sealed class TemplateElement
     public bool ShowBarcodeText { get; set; } = true;
 
     /// <summary>
+    /// 条码的<strong>尺寸参数</strong>（<see cref="ElementKind.Barcode"/> 专用）——照 CorelDRAW 条码向导那四格：
+    /// 打印机分辨率、缩放比例、条形码高度倍数、宽度减少值。第 58 棒新增。
+    /// <para><strong>有它，条的胖瘦就由 X 尺寸定，不由框宽定</strong>（用户 2026-09-14：「条码还是扁的……
+    /// 把人家框架抄过来」）；<strong>null＝按框宽算</strong>，老模板文件不写这个字段，输出与从前逐字相同。</para>
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public Barcodes.BarcodeSizing? BarcodeSize { get; set; }
+
+    /// <summary>
     /// 旋转角度（<strong>度，绕元素中心，正值顺时针</strong>）。默认 0 = 不转，第 43 棒新增。
     /// <para>CDR 式任意角度。可转的只有 Text / Rect / Image / Vector；
     /// 条码直接 Error（歪码扫描枪认不出，宁可别转），线段转不转由两端点说话、不设此字段。</para>
@@ -368,7 +377,11 @@ public sealed class LabelTemplate
     /// 它们的填充 / 描边 / 笔色用的就是 v8 那几件字段，不新造第二套外观。</remarks>
     /// <remarks>v11 = 第 53 棒给曲线加 <see cref="TemplateElement.Closed"/>（闭合标志，多边形/矩形"转换为曲线"的落点）。
     /// <strong>缺字段 = false = 开口曲线 = 逐字旧行为</strong>，现有模板文件还是一个都不用更新。</remarks>
-    public const int CurrentSchemaVersion = 11;
+    /// <remarks>v12 = 第 58 棒给条码加 <see cref="TemplateElement.BarcodeSize"/>（CorelDRAW 条码向导那四格：
+    /// 打印机分辨率 / 缩放比例 / 条形码高度倍数 / 宽度减少值）。<strong>缺字段 = null = 按框宽算位宽 = 逐字旧行为</strong>，
+    /// 现有模板文件还是一个都不用更新；带上它，条的胖瘦就由 X 尺寸定（框再怎么拖也拉不肥条）——
+    /// 这是用户 2026-09-14 指名"把 CDR 那套参数搬过来、别自己发明比例"的落点。JSON 里它是一个小对象。</remarks>
+    public const int CurrentSchemaVersion = 12;
 
     /// <summary>稳定标识，如 <c>builtin.standard-100x80</c>。用户模板用 <c>user.xxx</c>。</summary>
     public string Id { get; set; } = "user." + Guid.NewGuid().ToString("N")[..8];
