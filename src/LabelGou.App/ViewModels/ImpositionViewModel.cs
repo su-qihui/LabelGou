@@ -525,6 +525,63 @@ public sealed class ImpositionViewModel : ObservableObject
         return $"已按「{ColumnLabel.SingleLine(header)}」这一列数张数（一行写几张就出几张整张纸）";
     }
 
+    /// <summary>
+    /// 「一行打几张纸」的两档（用户 2026-09-14：④ 步那块「写的挺乱的，我都看不懂了……改成张数就好了，
+    /// 默认是一张，也可以绑定 x 列」）。
+    /// <para>真源仍是 <see cref="Mode"/>：这一档只是把「张数」从「件号怎么编」里拆出来给人看。
+    /// 选「按表里某一列」时走引擎的展开档（每张各占一个号），所以件号那一档同时被锁成强制重排 ——
+    /// 这不是新规矩，是原来第三档本来就带的语义，从前藏在一个下拉里没人分得清。</para>
+    /// </summary>
+    public const string SheetCountOne = "one";
+
+    public const string SheetCountByColumn = "column";
+
+    public ObservableCollection<ChoiceOption<string>> SheetCountOptions { get; } = new()
+    {
+        new(SheetCountOne, "1 张（默认：一行一个模板出一张纸）"),
+        new(SheetCountByColumn, "按表里某一列（那一列写 5 就出 5 张纸）"),
+    };
+
+    public ChoiceOption<string>? SelectedSheetCount
+    {
+        get => SheetCountOptions.FirstOrDefault(o => o.Value == (IsExpandMode ? SheetCountByColumn : SheetCountOne));
+        set
+        {
+            if (value is null) return;
+            Mode = value.Value == SheetCountByColumn ? NumberingMode.ExpandByCartonTotal : NumberStyle;
+        }
+    }
+
+    private NumberingMode _numberStyle = NumberingMode.KeepData;
+
+    /// <summary>
+    /// 「件号怎么编」的两档：沿用表里的 / 强制重排。张数选了「按列」时这一档锁成强制重排
+    /// （展开出来的每张都要占号，不然 5 张纸会印成同一个件号）。
+    /// </summary>
+    public ObservableCollection<ChoiceOption<NumberingMode>> NumberStyleOptions { get; } = new()
+    {
+        new(NumberingMode.KeepData, "沿用表里的件号（缺项才按规则补）"),
+        new(NumberingMode.ForceSequence, "强制重排：忽略表里件号，按规则连续编号"),
+    };
+
+    public NumberingMode NumberStyle
+    {
+        get => _numberStyle;
+        set
+        {
+            if (_numberStyle == value) return;
+            _numberStyle = value;
+            if (!IsExpandMode) Mode = value;
+            Raise(nameof(SelectedNumberStyle));
+        }
+    }
+
+    public ChoiceOption<NumberingMode>? SelectedNumberStyle
+    {
+        get => NumberStyleOptions.FirstOrDefault(o => o.Value == (IsExpandMode ? NumberingMode.ForceSequence : _numberStyle));
+        set { if (value is not null) NumberStyle = value.Value; }
+    }
+
     public NumberingMode Mode
     {
         get => _mode;
@@ -533,12 +590,18 @@ public sealed class ImpositionViewModel : ObservableObject
             if (!Set(ref _mode, value)) return;
             if (SelectedMode?.Value != value) SelectedMode = ModeOptions.FirstOrDefault(o => o.Value == value);
             Raise(nameof(IsExpandMode));
+            Raise(nameof(IsNumberStyleEnabled));
+            Raise(nameof(SelectedSheetCount));
+            Raise(nameof(SelectedNumberStyle));
             RecomputeNumbering();
         }
     }
 
     /// <summary>只有「按每行的张数展开」这一档才需要选展开列，界面拿它灰掉那个下拉。</summary>
     public bool IsExpandMode => Mode == NumberingMode.ExpandByCartonTotal;
+
+    /// <summary>展开档下每张纸都要占一个号，所以「件号怎么编」被锁成强制重排 —— 界面灰掉那颗，别留假旋钮。</summary>
+    public bool IsNumberStyleEnabled => !IsExpandMode;
 
     public NumberingScope Scope
     {
@@ -635,6 +698,7 @@ public sealed class ImpositionViewModel : ObservableObject
         _suffix = saved.Suffix;
         _copies = saved.Copies;
         _expandColumn = saved.ExpandCountColumn;
+        _numberStyle = saved.Mode == NumberingMode.ExpandByCartonTotal ? _numberStyle : saved.Mode;
         SelectedMode = ModeOptions.FirstOrDefault(o => o.Value == _mode) ?? SelectedMode;
         SelectedScope = ScopeOptions.FirstOrDefault(o => o.Value == _scope) ?? SelectedScope;
         SelectedGroup = GroupOptions.FirstOrDefault(o => Equals(o.Value, _groupBy)) ?? SelectedGroup;
@@ -651,6 +715,8 @@ public sealed class ImpositionViewModel : ObservableObject
     private void RaiseAll()
     {
         Raise(nameof(Mode));
+        Raise(nameof(SelectedSheetCount));
+        Raise(nameof(SelectedNumberStyle));
         Raise(nameof(Scope));
         Raise(nameof(SelectedExpandColumn));
         Raise(nameof(GroupBy));

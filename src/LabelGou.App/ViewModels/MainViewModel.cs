@@ -400,9 +400,11 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
     private void OnNumberedLabelsChanged(IReadOnlyList<MarkRecord> labels)
     {
         _records = labels;
+        RebuildRowSheets();            // 行检查的行表跟着标签集走（第 69 棒）
         CurrentIndex = labels.Count > 0 ? 1 : 0;
         Raise(nameof(RecordTotal));
         RebuildLayout();
+        RebuildRowThumbs();
     }
 
     IReadOnlyList<MarkRecord> ILabelSource.RawRecords => _rawRecords;
@@ -611,6 +613,7 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
                 RebuildLayout();
                 Sheet.RebuildPlan();
                 RebuildIssueLines();
+                RebuildRowThumbs();       // 缩略一览里每张都来自这份模板，换了就得重画
                 RememberTemplateId(value?.Id);
                 Raise(nameof(TemplateSheetHint));
                 if (sheetNote.Length > 0) StatusMessage = sheetNote;
@@ -654,6 +657,7 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
             {
                 RebuildLayout();
                 RebuildIssueLines();
+                RebuildRowThumbs();     // 一览里那排也得跟着改字，不然单张一个样、一览另一个样
                 RememberTextCase(value);
                 StatusMessage = $"唛头文字已改为「{value.ChineseName()}」（预览与打印/PDF/图片/SVG 同一口径，表里的原值没动）。";
             }
@@ -1015,7 +1019,130 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         private set => Set(ref _tokenNoteText, value);
     }
 
-    public int RecordTotal => _records.Count;
+    /// <summary>
+    /// 预览总条数：<strong>行检查开着 = 表格行数</strong>（一行一张），关着 = 要出的标签张数。
+    /// <para>只影响预览的翻页，不影响出片：<see cref="CreatePageSource"/> 拿的仍是整份标签集。</para>
+    /// </summary>
+    public int RecordTotal => RowCheck ? _rowSheets.Count : _records.Count;
+
+    private readonly List<RowSheet> _rowSheets = new();
+
+    private bool _rowCheck;
+
+    /// <summary>
+    /// 行检查（用户 2026-09-14：「直接在单个标签页面添加一个开关（行检查）就把张数缩略了」）。
+    /// <para>开着时一行只画<strong>该行的第一张</strong>，翻页按表格行走 —— 一行五张纸的货不必为核对内容翻五遍。
+    /// 每张纸的件号仍是各自的号，所以看到的这一张就是那一行的第一张真品，不是拼出来的示意。</para>
+    /// </summary>
+    public bool RowCheck
+    {
+        get => _rowCheck;
+        set
+        {
+            if (!Set(ref _rowCheck, value)) return;
+            RebuildRowSheets();
+            CurrentIndex = Math.Min(Math.Max(1, CurrentIndex), RecordTotal);
+            RebuildLayout();
+            RebuildRowThumbs();
+            Raise(nameof(RecordTotal));
+            StatusMessage = value
+                ? $"行检查开了：{RecordTotal} 行各看一张（一行几张纸的只画第一张），关掉回到逐张看。"
+                : "行检查已关，逐张翻。";
+        }
+    }
+
+    private bool _rowCheckAll;
+
+    /// <summary>「折叠」那颗开关：开 = 全部行缩略一览（一屏各画一张，纵向滚着扫），关 = 当前行单张。</summary>
+    public bool RowCheckAll
+    {
+        get => _rowCheckAll;
+        set
+        {
+            if (!Set(ref _rowCheckAll, value)) return;
+            RebuildRowThumbs();
+        }
+    }
+
+    /// <summary>
+    /// 缩略一览的固定小比例。这一态把 +/- 与适应窗口整排藏掉：31 格真尺寸会糊成一团，
+    /// 要看细的就关掉「全部行」回到单张（或去整版拼版那页放大）。
+    /// </summary>
+    public double RowThumbZoom => 0.4;
+
+    /// <summary>缩略一览的内容：一行一张，标题写「第几行 · 货号 · 本行几张」。</summary>
+    public ObservableCollection<RowThumb> RowThumbs { get; } = new();
+
+    /// <summary>把当前标签集按<strong>数据行</strong>折成行表（标签本来就按行序产出，所以相邻同号就是一行）。</summary>
+    private void RebuildRowSheets()
+    {
+        _rowSheets.Clear();
+        for (var i = 0; i < _records.Count; i++)
+        {
+            var record = _records[i];
+            var last = _rowSheets.Count > 0 ? _rowSheets[^1] : null;
+            if (last is not null && last.SourceRowIndex == record.SourceRowIndex) last.SheetCount++;
+            else _rowSheets.Add(new RowSheet(record.SourceRowIndex, i + 1, record.GetText(MarkFieldKey.ItemNo)));
+        }
+    }
+
+    private RowSheet? RowSheetAt(int ordinal) => ordinal >= 1 && ordinal <= _rowSheets.Count ? _rowSheets[ordinal - 1] : null;
+
+    /// <summary>行检查下按「第几行」画那张（取该行第一张标签）。</summary>
+    private LabelLayout? BuildLayoutForRow(int ordinal)
+        => RowSheetAt(ordinal) is { } row ? BuildLayoutFor(row.FirstLabelIndex) : null;
+
+    /// <summary>缩略一览只在「行检查 + 全部行」两颗开关都开着时才有内容，其余时候清空不占内存。</summary>
+    private void RebuildRowThumbs()
+    {
+        RowThumbs.Clear();
+        if (!_rowCheck || !_rowCheckAll) return;
+        for (var ordinal = 1; ordinal <= _rowSheets.Count; ordinal++)
+        {
+            var row = _rowSheets[ordinal - 1];
+            RowThumbs.Add(new RowThumb(RowTitle(ordinal, row), BuildLayoutForRow(ordinal)));
+        }
+    }
+
+    private string RowTitle(int ordinal, RowSheet row)
+        => $"第 {ordinal} / {_rowSheets.Count} 行：{(string.IsNullOrWhiteSpace(row.ItemNo) ? "（无货号）" : row.ItemNo)}，本行 {row.SheetCount} 张";
+
+    /// <summary>行检查的标题：第几行 / 共几行 · 货号 · 本行几张纸。</summary>
+    private string? RowCheckInfo(int ordinal) => RowSheetAt(ordinal) is { } row ? RowTitle(ordinal, row) : null;
+
+    /// <summary>一行折出来的检查条目：数据行号、该行第一张标签的序号、本行几张纸、货号（标题用）。</summary>
+    public sealed class RowSheet
+    {
+        public RowSheet(int sourceRowIndex, int firstLabelIndex, string itemNo)
+        {
+            SourceRowIndex = sourceRowIndex;
+            FirstLabelIndex = firstLabelIndex;
+            ItemNo = itemNo;
+        }
+
+        public int SourceRowIndex { get; }
+
+        public int FirstLabelIndex { get; }
+
+        public string ItemNo { get; }
+
+        /// <summary>本行要出几张纸（一行一张时就是 1；按列展开后是那一列的数，含「每件贴几张」的份数）。</summary>
+        public int SheetCount { get; set; } = 1;
+    }
+
+    /// <summary>缩略一览里的一格：标题 + 那一行第一张的版面。</summary>
+    public sealed class RowThumb
+    {
+        public RowThumb(string title, LabelLayout? layout)
+        {
+            Title = title;
+            Layout = layout;
+        }
+
+        public string Title { get; }
+
+        public LabelLayout? Layout { get; }
+    }
 
     /// <summary>当前预览第几条（1 起）；0 表示示意预览。</summary>
     public int CurrentIndex
@@ -1975,16 +2102,18 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
             return;
         }
 
-        var layout = BuildLayoutFor(_currentIndex);
+        var layout = RowCheck ? BuildLayoutForRow(_currentIndex) : BuildLayoutFor(_currentIndex);
         if (layout is null)
         {
             CurrentLayout = null;
             return;
         }
 
-        RecordInfoText = _currentIndex >= 1 && _currentIndex <= _records.Count
-            ? $"第 {_currentIndex} / {_records.Count} 张标签 · 来自数据第 {_records[_currentIndex - 1].SourceRowIndex} 行"
-            : "示意预览（未导入数据）";
+        RecordInfoText = RowCheck
+            ? RowCheckInfo(_currentIndex) ?? "示意预览（未导入数据）"
+            : _currentIndex >= 1 && _currentIndex <= _records.Count
+                ? $"第 {_currentIndex} / {_records.Count} 张标签 · 来自数据第 {_records[_currentIndex - 1].SourceRowIndex} 行"
+                : "示意预览（未导入数据）";
 
         CurrentLayout = layout;
 

@@ -17,6 +17,9 @@
         <mvvm:StepIndexToVisibilityConverter x:Key="StepEq" />
         <!--  「只在纸与模板对不上时才插一句」的提示与按钮用（空串就整块收起，不留一行空白） -->
         <mvvm:StringNotEmptyToVisibilityConverter x:Key="HasText" />
+        <BooleanToVisibilityConverter x:Key="BoolVis" />
+        <!-- 反着藏一颗控件用的（④ 步「更多」展开时收起常用那两行、单标签开「全部行」时收起单张那层） -->
+        <mvvm:InverseBooleanToVisibilityConverter x:Key="InvBoolVis" />
     </Window.Resources>
 
     <DockPanel>
@@ -546,17 +549,18 @@
 
                             <Separator Margin="0,10" />
 
-                            <TextBlock Text="件号 No.x / y 规则" FontWeight="Bold" Margin="0,0,0,4" />
+                            <TextBlock Text="一行打几张纸" FontWeight="Bold" Margin="0,0,0,4" />
 
                             <Grid>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="Auto" />
                                     <ColumnDefinition Width="*" />
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Text="怎么编：" VerticalAlignment="Center" />
-                                <ComboBox Grid.Column="1" ItemsSource="{Binding Sheet.ModeOptions}"
-                                          SelectedItem="{Binding Sheet.SelectedMode}"
-                                          DisplayMemberPath="Label" />
+                                <TextBlock Text="张数：" VerticalAlignment="Center" />
+                                <ComboBox Grid.Column="1" ItemsSource="{Binding Sheet.SheetCountOptions}"
+                                          SelectedItem="{Binding Sheet.SelectedSheetCount}"
+                                          DisplayMemberPath="Label"
+                                          ToolTip="默认 1 张：一行一个模板出一张纸。&#10;选「按表里某一列」就按那一列的数展开（列里写 5 就出 5 张纸），每件各占一个件号。" />
                             </Grid>
 
                             <Grid Margin="0,4,0,0">
@@ -577,45 +581,75 @@
                                     <ColumnDefinition Width="Auto" />
                                     <ColumnDefinition Width="*" />
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Text="口径：" VerticalAlignment="Center" />
-                                <ComboBox Grid.Column="1" ItemsSource="{Binding Sheet.ScopeOptions}"
-                                          SelectedItem="{Binding Sheet.SelectedScope}"
-                                          DisplayMemberPath="Label" />
+                                <TextBlock Text="每件贴几张：" VerticalAlignment="Center" />
+                                <TextBox Grid.Column="1" Text="{Binding Sheet.Copies, UpdateSourceTrigger=PropertyChanged}"
+                                         ToolTip="一箱左右各贴一张就填 2。它跟上面的「张数」不是一回事：张数是一行有几箱（各占一个号），这里是一箱的同一张纸多印几份（号不变）。" />
                             </Grid>
 
-                            <Grid Margin="0,4,0,0">
+                            <Separator Margin="0,10" />
+
+                            <TextBlock Text="件号 No.x / y 怎么编" FontWeight="Bold" Margin="0,0,0,4" />
+
+                            <Grid>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="Auto" />
                                     <ColumnDefinition Width="*" />
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Text="分组：" VerticalAlignment="Center" />
-                                <ComboBox Grid.Column="1" ItemsSource="{Binding Sheet.GroupOptions}"
-                                          SelectedItem="{Binding Sheet.SelectedGroup}"
-                                          DisplayMemberPath="Label" />
+                                <TextBlock Text="件号：" VerticalAlignment="Center" />
+                                <ComboBox Grid.Column="1" ItemsSource="{Binding Sheet.NumberStyleOptions}"
+                                          SelectedItem="{Binding Sheet.SelectedNumberStyle}"
+                                          DisplayMemberPath="Label"
+                                          IsEnabled="{Binding Sheet.IsNumberStyleEnabled}"
+                                          ToolTip="张数选了「按表里某一列」时这里锁成强制重排：展开出来的每张都得占一个号，不然五行纸会印成同一个件号。" />
                             </Grid>
 
-                            <UniformGrid Columns="4" Margin="0,4,0,0">
-                                <TextBlock Text="起始号" Style="{StaticResource Hint}" />
-                                <TextBox Text="{Binding Sheet.Start, UpdateSourceTrigger=PropertyChanged}" />
-                                <TextBlock Text="步长" Style="{StaticResource Hint}" VerticalAlignment="Center" />
-                                <TextBox Text="{Binding Sheet.Step, UpdateSourceTrigger=PropertyChanged}" />
-                            </UniformGrid>
+                            <!-- 起始号 / 步长 / 补零 / 前后缀 / 口径 / 分组：店里常年不动的几格，默认收起来，
+                                 免得它们把上面那两件事（打几张、件号怎么编）淹了（用户：这块写的挺乱的） -->
+                            <Expander Header="更多（起始号 · 步长 · 补零 · 前后缀 · 口径 · 分组）" IsExpanded="False" Margin="0,6,0,0">
+                                <StackPanel Margin="0,6,0,0">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="口径：" VerticalAlignment="Center" />
+                                        <ComboBox Grid.Column="1" ItemsSource="{Binding Sheet.ScopeOptions}"
+                                                  SelectedItem="{Binding Sheet.SelectedScope}"
+                                                  DisplayMemberPath="Label" />
+                                    </Grid>
 
-                            <UniformGrid Columns="4" Margin="0,4,0,0">
-                                <TextBlock Text="补零位数" Style="{StaticResource Hint}" />
-                                <TextBox Text="{Binding Sheet.PadDigits, UpdateSourceTrigger=PropertyChanged}"
-                                         ToolTip="填 3 则 7 号印成 007；填 0 不补零" />
-                                <TextBlock Text="每张份数" Style="{StaticResource Hint}" VerticalAlignment="Center" />
-                                <TextBox Text="{Binding Sheet.Copies, UpdateSourceTrigger=PropertyChanged}"
-                                         ToolTip="一箱左右各贴一张就填 2（件号仍只占一个号，总件数不变）" />
-                            </UniformGrid>
+                                    <Grid Margin="0,4,0,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="分组：" VerticalAlignment="Center" />
+                                        <ComboBox Grid.Column="1" ItemsSource="{Binding Sheet.GroupOptions}"
+                                                  SelectedItem="{Binding Sheet.SelectedGroup}"
+                                                  DisplayMemberPath="Label" />
+                                    </Grid>
 
-                            <UniformGrid Columns="4" Margin="0,4,0,0">
-                                <TextBlock Text="前缀" Style="{StaticResource Hint}" />
-                                <TextBox Text="{Binding Sheet.Prefix, UpdateSourceTrigger=PropertyChanged}" />
-                                <TextBlock Text="后缀" Style="{StaticResource Hint}" VerticalAlignment="Center" />
-                                <TextBox Text="{Binding Sheet.Suffix, UpdateSourceTrigger=PropertyChanged}" />
-                            </UniformGrid>
+                                    <UniformGrid Columns="4" Margin="0,4,0,0">
+                                        <TextBlock Text="起始号" Style="{StaticResource Hint}" />
+                                        <TextBox Text="{Binding Sheet.Start, UpdateSourceTrigger=PropertyChanged}" />
+                                        <TextBlock Text="步长" Style="{StaticResource Hint}" VerticalAlignment="Center" />
+                                        <TextBox Text="{Binding Sheet.Step, UpdateSourceTrigger=PropertyChanged}" />
+                                    </UniformGrid>
+
+                                    <UniformGrid Columns="4" Margin="0,4,0,0">
+                                        <TextBlock Text="补零位数" Style="{StaticResource Hint}" />
+                                        <TextBox Text="{Binding Sheet.PadDigits, UpdateSourceTrigger=PropertyChanged}"
+                                                 ToolTip="填 3 则 7 号印成 007；填 0 不补零" />
+                                        <TextBlock Text="前缀" Style="{StaticResource Hint}" VerticalAlignment="Center" />
+                                        <TextBox Text="{Binding Sheet.Prefix, UpdateSourceTrigger=PropertyChanged}" />
+                                    </UniformGrid>
+
+                                    <UniformGrid Columns="4" Margin="0,4,0,0">
+                                        <TextBlock Text="后缀" Style="{StaticResource Hint}" />
+                                        <TextBox Text="{Binding Sheet.Suffix, UpdateSourceTrigger=PropertyChanged}" />
+                                    </UniformGrid>
+                                </StackPanel>
+                            </Expander>
 
                             <Border BorderBrush="#D8DDE3" BorderThickness="1" Background="White" MaxHeight="110" Margin="0,6,0,0">
                                 <ScrollViewer VerticalScrollBarVisibility="Auto">
@@ -826,11 +860,22 @@
                                 <Button Content="末件 ⏭" Command="{Binding LastRecordCommand}" />
                                 <Button Content="示意预览" Command="{Binding SamplePreviewCommand}" ToolTip="用内置样例数据看版式效果" />
                                 <Separator Width="14" Background="Transparent" />
-                                <Button Content="－" Command="{Binding ZoomOutCommand}" MinWidth="34" />
-                                <Button Content="＋" Command="{Binding ZoomInCommand}" MinWidth="34" />
-                                <Button Content="适应窗口" Click="OnFitClick" Margin="6,0,10,0" />
-                                <CheckBox x:Name="AutoFitBox" Content="自动适应" IsChecked="True" VerticalAlignment="Center"
-                                          Margin="0,0,10,0" />
+                                <!-- 行检查（用户 2026-09-14：「直接在单个标签页面添加一个开关（行检查）就把张数缩略了，
+                                     还有开关（折叠）可以全部检查和单个检查」）：一行几张纸的货，核对内容时只看第一张 -->
+                                <CheckBox Content="行检查（一行一张）" IsChecked="{Binding RowCheck}" VerticalAlignment="Center"
+                                          Margin="0,0,8,0"
+                                          ToolTip="开着：翻页按表格行走，一行只画该行的第一张（一行五张纸不必翻五遍）。&#10;关着：逐张翻（一张纸一条）。只影响这里怎么看，打印与导出仍是整份标签。" />
+                                <CheckBox Content="全部行" IsChecked="{Binding RowCheckAll}" VerticalAlignment="Center"
+                                          Margin="0,0,8,0" IsEnabled="{Binding RowCheck}"
+                                          ToolTip="开着：一屏把所有行各画一张缩略，纵向滚着扫一遍（这一态用固定小比例，放大按钮先收起）。&#10;关着：只看当前那一行的一张。" />
+                                <Separator Width="14" Background="Transparent" />
+                                <StackPanel Orientation="Horizontal" Visibility="{Binding RowCheckAll, Converter={StaticResource InvBoolVis}}">
+                                    <Button Content="－" Command="{Binding ZoomOutCommand}" MinWidth="34" />
+                                    <Button Content="＋" Command="{Binding ZoomInCommand}" MinWidth="34" />
+                                    <Button Content="适应窗口" Click="OnFitClick" Margin="6,0,10,0" />
+                                    <CheckBox x:Name="AutoFitBox" Content="自动适应" IsChecked="True" VerticalAlignment="Center"
+                                              Margin="0,0,10,0" />
+                                </StackPanel>
                                 <CheckBox x:Name="GuideBox" Content="显示要素边框" IsChecked="{Binding ShowGuides}"
                                           VerticalAlignment="Center" />
                             </WrapPanel>
@@ -838,23 +883,56 @@
                             <Border Grid.Row="1" x:Name="PreviewHost" Background="#E7EAEE"
                                     BorderBrush="#CDD3DA" BorderThickness="1"
                                     SizeChanged="OnPreviewHostSizeChanged">
-                                <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
-                                              Background="Transparent" Padding="12">
-                                    <ContentControl HorizontalAlignment="Center" VerticalAlignment="Center">
-                                        <render:LabelPreviewControl Layout="{Binding CurrentLayout}"
-                                                                    Zoom="{Binding Zoom}"
-                                                                    ShowGuides="{Binding ShowGuides}"
-                                                                    HorizontalAlignment="Center"
-                                                                    VerticalAlignment="Center" />
-                                    </ContentControl>
-                                </ScrollViewer>
+                                <Grid>
+                                    <!-- 单个检查：当前这一张（行检查开着就是一行的第一张） -->
+                                    <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
+                                                  Background="Transparent" Padding="12"
+                                                  Visibility="{Binding RowCheckAll, Converter={StaticResource InvBoolVis}}">
+                                        <ContentControl HorizontalAlignment="Center" VerticalAlignment="Center">
+                                            <render:LabelPreviewControl Layout="{Binding CurrentLayout}"
+                                                                        Zoom="{Binding Zoom}"
+                                                                        ShowGuides="{Binding ShowGuides}"
+                                                                        HorizontalAlignment="Center"
+                                                                        VerticalAlignment="Center" />
+                                        </ContentControl>
+                                    </ScrollViewer>
+
+                                    <!-- 全部检查：一行一张缩略，WrapPanel 排开，纵向滚着扫 -->
+                                    <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
+                                                  Background="Transparent" Padding="8"
+                                                  Visibility="{Binding RowCheckAll, Converter={StaticResource BoolVis}}">
+                                        <ItemsControl ItemsSource="{Binding RowThumbs}" HorizontalAlignment="Center">
+                                            <ItemsControl.ItemsPanel>
+                                                <ItemsPanelTemplate>
+                                                    <WrapPanel Orientation="Horizontal" />
+                                                </ItemsPanelTemplate>
+                                            </ItemsControl.ItemsPanel>
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <StackPanel Margin="6" VerticalAlignment="Top">
+                                                        <TextBlock Text="{Binding Title}" FontSize="11.5" FontWeight="Bold"
+                                                                   Margin="0,0,0,3" />
+                                                        <Border Background="White" BorderBrush="#CDD3DA" BorderThickness="1"
+                                                                Padding="4" HorizontalAlignment="Center">
+                                                            <render:LabelPreviewControl Layout="{Binding Layout}"
+                                                                                        Zoom="{Binding DataContext.RowThumbZoom,
+                                                                                                  RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                                                                        ShowGuides="{Binding DataContext.ShowGuides,
+                                                                                                  RelativeSource={RelativeSource AncestorType=ItemsControl}}" />
+                                                        </Border>
+                                                    </StackPanel>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </ScrollViewer>
+                                </Grid>
                             </Border>
 
                             <StackPanel Grid.Row="2" Margin="0,8,0,0">
                                 <TextBlock Text="{Binding TokenNoteText}" Style="{StaticResource Hint}"
                                            Foreground="#B25A00" TextWrapping="Wrap" />
                                 <TextBlock Style="{StaticResource Hint}" TextWrapping="Wrap"
-                                           Text="说明：此处已是编号后的单张标签（一行多箱时会展开成多张）；预览按毫米真实尺寸绘制，打印/PDF（M3）复用同一份版面数据。" />
+                                           Text="说明：此处已是编号后的单张标签（一行多箱时会展开成多张）；预览按毫米真实尺寸绘制，打印/PDF（M3）复用同一份版面数据。&#10;勾「行检查」= 一行只画第一张（标题写本行几张纸），再勾「全部行」= 一屏把所有行各画一张缩略扫一遍——这两态只改这里怎么看，出片仍是整份标签。" />
                             </StackPanel>
                         </Grid>
                     </TabItem>
