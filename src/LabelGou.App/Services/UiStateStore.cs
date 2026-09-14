@@ -5,7 +5,7 @@ using System.Text.Json;
 namespace LabelGou.App.Services;
 
 /// <summary>
-/// 界面状态：上次用的模板、纸规、文字大小写与① 步表格高度。刻意只记这几样，不做"什么都能记住"。
+/// 界面状态：上次用的模板、纸规、模板→纸规的绑定、文字大小写与① 步表格高度。刻意只记这几样，不做"什么都能记住"。
 /// </summary>
 public sealed class UiState
 {
@@ -14,6 +14,14 @@ public sealed class UiState
 
     /// <summary>上次选中的纸规 id。</summary>
     public string? SheetSpecId { get; set; }
+
+    /// <summary>
+    /// 模板 → 纸规 的绑定（第 68 棒，用户 2026-09-14：「模版和纸归是绑定的，若后续再次使用那个模板
+    /// 纸归也会变成此模板对应纸归」）。记的是<strong>他上一次为这份模板挑的那张纸</strong>，
+    /// 所以下次再用这份模板时纸规跟着回来；他没挑过（这一格没有）就退回按单枚尺寸找预设档。
+    /// <para><strong>null = 没记过</strong>：旧状态文件缺这个字段时行为零变化（只按尺寸预设档走）。</para>
+    /// </summary>
+    public Dictionary<string, string>? TemplateSheetIds { get; set; }
 
     /// <summary>
     /// 唛头文字大小写口径（2026-09-08 用户要的三档开关）。<strong>默认按表格里的</strong>：

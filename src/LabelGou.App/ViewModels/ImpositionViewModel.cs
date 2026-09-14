@@ -216,6 +216,7 @@ public sealed class ImpositionViewModel : ObservableObject
             LoadWorkingFromSelection();
             RebuildPlan();
             RememberSheetSpecId(value?.Spec.Id);
+            RememberTemplateBinding(value?.Spec.Id);
             // 第 17 棒：主 VM 要在纸规换了之后重算「模板尺寸与这张纸配不配」那句提示。
             SheetSelectionChanged?.Invoke();
         }
@@ -227,10 +228,116 @@ public sealed class ImpositionViewModel : ObservableObject
     /// <summary>构造兜底那一次赋值不写盘（第 23 棒：与 MainViewModel.RememberTemplateId 同一个理由）。</summary>
     private bool _bootstrapping;
 
+    /// <summary>第 68 棒：正在按模板自动换纸。那不算用户的选择，所以既不当作绑定来记，也不写全局「上次用的纸」。</summary>
+    private bool _applyingTemplateSheet;
+
+    /// <summary>
+    /// 上一次「按模板自动换纸」说的那句人话；没换就是空串。
+    /// <para>留成属性而不是直接写状态栏：换模板有时会连带换纸（第 68 棒），而自动挑模板那条路
+    /// <c>PickTemplateFittingData</c> 紧跟着要写自己那句——两句都得让他看见，只留一句就是暗改了他另一件事。</para>
+    /// </summary>
+    public string SheetFollowNote { get; private set; } = string.Empty;
+
+    /// <summary>
+    /// 纸规跟着模板走（用户 2026-09-14：「只要长宽是 140×100，纸规自动变成 280×200 的 2×2 排布」
+    /// 「模版和纸归是绑定的，若后续再次使用那个模板纸归也会变成此模板对应纸归」）。
+    /// <para>两步判据，前一步命中就不再看后一步：
+    /// ① <strong>这份模板绑过纸</strong>（他自己为它挑过一张，见 <see cref="RememberTemplateBinding"/>）—— 用它，
+    /// 这条就是「再用那个模板，纸也回来」，也是他手动改纸之后不会被系统档顶掉的理由；
+    /// ② <strong>按单枚尺寸找预设档</strong>（一开四 / 一开八 / 大开二 / 小开二 / A4 小标那些填了刀模的）：
+    /// 他手上这张就在候选里，就不搬（同样是 140×100，他从「自己另存的那张一开四」换到另一份 140×100 模板，
+    /// 没道理被换成内置那一张），否则正着对得上的优先，其次才是转 90° 对得上的。
+    /// 两步都没有（新建的怪尺寸模板）就<strong>保持现状不建纸规</strong>，纸由他在 ④ 步自己定 —— 那是他给的口径。</para>
+    /// <para>「一页一枚」与 A4/A3 这类<strong>刀模留空（跟随模板）</strong>的档不算尺寸匹配的证据：它们天生装得下任何模板，
+    /// 拿它们当「已经配好」就永远跳不到一开四那一档了。它们能被记住，靠的是第 ① 步（他点过就是他的选择）。</para>
+    /// <para>只换下拉里真存着的那一张，不新建、不改谁的刀模；<strong>不跳步骤</strong>（他明确说「不用跳转到④页面」）。
+    /// ④ 步那句错配提示旁的「换成配套模板」是反过来的动作（拿模板去就纸），所以那条路会临时不接这一步，
+    /// 见 <c>MainViewModel._suppressSheetFollow</c>。</para>
+    /// </summary>
+    /// <param name="follow">
+    /// false = 这一次换模板<strong>不</strong>连带换纸（④ 步「换成配套模板」：那是拿模板来就他手上这张纸）。
+    /// 进来仍会把上一次的说明清空，免得他看到一句属于上一次的「纸规已跟到…」。
+    /// </param>
+    /// <returns>一句人话（什么都没换就是空串）。</returns>
+    public string ApplySheetForTemplate(bool follow = true)
+    {
+        SheetFollowNote = string.Empty;
+        if (!follow) return string.Empty;
+        var template = _source.Template;
+        if (template is null) return string.Empty;
+        var (w, h) = (template.WidthMm, template.HeightMm);
+
+        var hit = BoundSheetOption(template.Id) ?? SizeMatchedOption(w, h);
+        if (hit is null || ReferenceEquals(hit, SelectedSheetOption)) return string.Empty;
+
+        _applyingTemplateSheet = true;
+        try
+        {
+            SelectedSheetOption = hit;
+        }
+        finally
+        {
+            _applyingTemplateSheet = false;
+        }
+
+        SheetFollowNote = $"模板「{template.Name}」是 {w:0.#}×{h:0.#} mm，纸规已跟到「{hit.Spec.Name}」；"
+                          + "不合适就在 ④ 步换一张，换完这张就归这份模板了。";
+        return SheetFollowNote;
+    }
+
+    /// <summary>与 MainViewModel.TemplateSheetHint 同一口径：0.6 mm 以内就是同一张刀模。</summary>
+    private static bool Nearly(double a, double b) => Math.Abs(a - b) < 0.6;
+
+    /// <summary>这份模板绑过的那张纸（纸规被删了、或没记过 → null，退回下一条判据）。</summary>
+    private SheetOption? BoundSheetOption(string templateId)
+    {
+        var store = _uiState;
+        if (store is null) return null;
+        var bound = store.Load().TemplateSheetIds?.TryGetValue(templateId, out var id) == true ? id : null;
+        return string.IsNullOrEmpty(bound) ? null : SheetOptions.FirstOrDefault(o => o.Spec.Id == bound);
+    }
+
+    /// <summary>按单枚尺寸找预设档：他现在这张就在候选里则不搬，其次正着对得上的，最后才是转 90° 对得上的。</summary>
+    private SheetOption? SizeMatchedOption(double w, double h)
+    {
+        SheetOption? exact = null;
+        SheetOption? swapped = null;
+        foreach (var option in SheetOptions)
+        {
+            var spec = option.Spec;
+            if (spec.FollowsLabel || spec.FollowTemplateSize) continue;
+            var same = Nearly(spec.LabelWidthMm, w) && Nearly(spec.LabelHeightMm, h);
+            if (same && ReferenceEquals(option, SelectedSheetOption)) return option;
+            if (same) exact ??= option;
+            else if (swapped is null && Nearly(spec.LabelWidthMm, h) && Nearly(spec.LabelHeightMm, w)) swapped = option;
+        }
+        return exact ?? swapped;
+    }
+
+    /// <summary>
+    /// 他自己换纸那一下：把「这份模板 → 这张纸」记下来（第 68 棒绑定的写入点，只此一处）。
+    /// <para>自动接手（<see cref="_applyingTemplateSheet"/>）与启动兜底（<see cref="_bootstrapping"/>）都不记：
+    /// 前者不是他的选择，后者那时模板还没选好。</para>
+    /// </summary>
+    private void RememberTemplateBinding(string? specId)
+    {
+        var store = _uiState;
+        var templateId = _source.Template?.Id;
+        if (store is null || _bootstrapping || _applyingTemplateSheet) return;
+        if (string.IsNullOrEmpty(templateId) || string.IsNullOrEmpty(specId)) return;
+
+        var state = store.Load();
+        state.TemplateSheetIds ??= new Dictionary<string, string>();
+        if (state.TemplateSheetIds.TryGetValue(templateId, out var existing)
+            && string.Equals(existing, specId, StringComparison.Ordinal)) return;
+        state.TemplateSheetIds[templateId] = specId;
+        store.Save(state);
+    }
+
     /// <summary>把纸规 id 写进界面状态；与已记的相同就不写盘（启动那一次赋值不该产生 IO）。</summary>
     private void RememberSheetSpecId(string? specId)
     {
-        if (_bootstrapping) return;     // 启动兜底不写盘（第 23 棒）
+        if (_bootstrapping || _applyingTemplateSheet) return;     // 启动兜底与自动跟模板都不写盘（第 23、68 棒）
         var store = _uiState;
         if (store is null || string.IsNullOrEmpty(specId)) return;
         var state = store.Load();

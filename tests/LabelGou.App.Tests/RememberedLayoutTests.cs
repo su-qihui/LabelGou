@@ -31,7 +31,9 @@ public sealed class RememberedLayoutTests : IDisposable
         var store = new UiStateStore(_dir);
         store.Save(new UiState
         {
-            TemplateId = BuiltInTemplates.IdRowsFour,
+            // 模板故意用「标准箱唛 100×80」：第 68 棒之后纸规跟着模板走，而 140×100 那档有预设的一开四，
+            // 拿它当起点测不到「单靠上次记的那张纸」这一条（他手工点过的纸另有绑定，见 TemplateSheetBindingTests）。
+            TemplateId = BuiltInTemplates.IdStandard,
             SheetSpecId = BuiltInSheetSpecs.IdA3,
         });
 
@@ -41,7 +43,7 @@ public sealed class RememberedLayoutTests : IDisposable
             return (Template: vm.SelectedTemplate?.Id, Sheet: vm.Sheet.SelectedSheetOption?.Spec.Id);
         });
 
-        Assert.Equal(BuiltInTemplates.IdRowsFour, result.Template);
+        Assert.Equal(BuiltInTemplates.IdStandard, result.Template);
         Assert.Equal(BuiltInSheetSpecs.IdA3, result.Sheet);
     }
 
@@ -80,8 +82,12 @@ public sealed class RememberedLayoutTests : IDisposable
         // 兜底跟 ReloadTemplates 用同一个档：行式四行（上一版构造兜 IdStandard、刷新兜 IdRowsFour，
         // 冷启动与触发一次刷新后看到的不是同一套；而九字段的标准箱唛厂牌表根本填不满）
         Assert.Equal(BuiltInTemplates.IdRowsFour, result.Template);
-        // 记的那套没了就退回当前默认档（一页一枚），而不是退成 null 让界面空着
-        Assert.Equal(BuiltInSheetSpecs.IdOnePerLabel, result.Sheet);
+        // 记的那套没了就退回当前默认档（一页一枚），而不是退成 null 让界面空着。
+        // 第 68 棒之后这一条要看两件事：兜底那份模板是 140×100，纸规会跟着模板走到预设的一开四，
+        // 所以「退回一页一枚」已经不是终点了；这条真正钉的是<strong>不许空着</strong>，那一条仍然成立
+        // （自动跟过去的纸不写盘，他记的那条不会被顶掉——见 TemplateSheetBindingTests）。
+        Assert.NotNull(result.Sheet);
+        Assert.Equal(BuiltInSheetSpecs.IdCut4_280x200, result.Sheet);
     }
 
     [Fact]

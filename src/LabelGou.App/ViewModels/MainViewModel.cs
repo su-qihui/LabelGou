@@ -161,6 +161,13 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
     /// <summary>自动接手换模板那一次不写盘（只顶一次，下一次用户手工选还是会被记住）。</summary>
     private bool _suppressTemplateRemember;
 
+    /// <summary>
+    /// 这一次换模板<strong>不</strong>连带换纸（第 68 棒，只顶一次）。
+    /// <para>用它的只有 ④ 步那句错配提示旁的「换成配套模板」：那个动作是拿模板去就他手上这张纸，
+    /// 换完再按模板把纸搬走，等于把他刚点下的修复撤销一遍。</para>
+    /// </summary>
+    private bool _suppressSheetFollow;
+
     /// <summary>构造兜底那一次赋值不写盘（第 23 棒：记的模板被删了时，兜底 id 不得顶掉用户记的那条）。</summary>
     private bool _bootstrapping;
 
@@ -299,6 +306,7 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
     {
         var match = MatchingTemplateOption;
         if (match is null) return;
+        _suppressSheetFollow = true;      // 这一步是拿模板来就纸，别再按模板把纸搬走（第 68 棒）
         SelectedTemplate = match;
         StatusMessage = $"已换成与「{Sheet.SelectedSheetOption?.Spec.Name}」同尺寸的模板：{match.Name}（{match.SizeText}）。";
         Raise(nameof(TemplateSheetHint));
@@ -595,11 +603,17 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
             {
                 TemplateInfoText = DescribeTemplate(value?.Template);
                 BumpDataGeneration();
+                // 第 68 棒：纸规跟着模板走（用户「只要长宽是 140×100，纸规自动变成 280×200 的 2×2 排布」）。
+                // 排在重算之前——拿旧纸先排一遍再换纸就是白算一趟，而且那一版的枚数会闪一下。
+                // 这里不碰 StepIndex：他明确说「不用跳转到④页面」。
+                var sheetNote = Sheet.ApplySheetForTemplate(follow: !_suppressSheetFollow);
+                _suppressSheetFollow = false;
                 RebuildLayout();
                 Sheet.RebuildPlan();
                 RebuildIssueLines();
                 RememberTemplateId(value?.Id);
                 Raise(nameof(TemplateSheetHint));
+                if (sheetNote.Length > 0) StatusMessage = sheetNote;
             }
         }
     }
@@ -1744,7 +1758,9 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         var name = SelectedTemplate?.Name ?? "原模板";
         _suppressTemplateRemember = true;
         SelectedTemplate = best.Option;
-        StatusMessage = $"这张表能把「{best.Option.Name}」填到 {best.Fit.Rate:P0}（比「{name}」贴），已自动改用前者；在第 3 步可以随时换回。";
+        StatusMessage = $"这张表能把「{best.Option.Name}」填到 {best.Fit.Rate:P0}（比「{name}」贴），已自动改用前者；在第 3 步可以随时换回。"
+                        // 换模板会连带换纸（第 68 棒）：两句都要让他看见，只留一句就是暗改了他另一件事。
+                        + (Sheet.SheetFollowNote.Length > 0 ? "\n" + Sheet.SheetFollowNote : string.Empty);
         RebuildIssueLines();
     }
 
