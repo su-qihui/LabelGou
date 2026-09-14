@@ -151,6 +151,8 @@
                                 HorizontalAlignment="Stretch" MinWidth="0" />
                     </StackPanel>
                     <StackPanel>
+                        <ToggleButton Content="形状" IsChecked="{Binding IsNodeTool}" Margin="2,2"
+                                      ToolTip="转换点工具（CorelDRAW 形状工具，原文「编辑对象的节点」）：&#10;曲线——拖节点/拖柄、双击线段加一个点、选中点按 Delete 删掉；&#10;多边形/矩形——抓顶点会先「转换为曲线」（CDR 同口径），带圆角的矩形不给转并说原因。" />
                         <Button Content="文本" Command="{Binding AddTextCommand}" Margin="2,2"
                                 ToolTip="加一个文本元素（可含字段占位符）" />
                         <ToggleButton Content="曲线" IsChecked="{Binding IsBezierTool}" Margin="2,2"
@@ -161,10 +163,8 @@
                                       ToolTip="椭圆形工具（CorelDRAW 原文「绘制椭圆形和圆形」）：按下拖出一只、松手定形；按住 Ctrl 拖＝限制为正圆；按住 Shift 拖＝从中心张开。只点一下给一只默认 20mm 的圆。Esc 取消。" />
                         <ToggleButton Content="多边形" IsChecked="{Binding IsPolygonTool}" Margin="2,2"
                                       ToolTip="多边形工具（CorelDRAW 原文「绘制多边形」）：同一种拖法，落下来是正多边形，首点朝上；默认五边，边数在属性面板改。按住 Ctrl＝外接盒保持正方。Esc 取消。" />
-                        <ToggleButton Content="形状" IsChecked="{Binding IsNodeTool}" Margin="2,2"
-                                      ToolTip="转换点工具（CorelDRAW 形状工具，原文「编辑对象的节点」）：&#10;曲线——拖节点/拖柄、双击线段加一个点、选中点按 Delete 删掉；&#10;多边形/矩形——抓顶点会先「转换为曲线」（CDR 同口径），带圆角的矩形不给转并说原因。" />
                         <Button Content="条码" Command="{Binding AddBarcodeCommand}" Margin="2,2"
-                                ToolTip="放一只 Code128 占位条码（123456789）用来摆位置——条码列对接后，把右边「内容」栏改成那一列的字段就是真条码。&#10;模板里已有条码时，这颗直接选中它来调整，不放第二只。" />
+                                ToolTip="放一只 Code128 占位条码（123456789）用来摆位置——尺寸照 CorelDRAW 条码向导那四格算，不是拉满一条。&#10;模板里已有条码时，这颗直接选中它来调整，不放第二只。" />
                         <Separator Margin="2,6" Background="#DDDDDD" />
                         <Button Content="图片" Command="{Binding AddImageCommand}" Margin="2,2" ToolTip="加 Logo 或条码图，会复制到模板目录" />
                         <Button Content="复制" Command="{Binding DuplicateCommand}" Margin="2,2" ToolTip="复制选中元素（偏移 2mm）" />
@@ -195,7 +195,8 @@
 
                 <GroupBox x:Name="LayerBox">
                     <GroupBox.Header>
-                        <TextBlock Text="图层（按住行上下拖＝换位）" Style="{StaticResource StepTitle}" />
+                        <TextBlock Text="图层（最上面＝压在上面的）" Style="{StaticResource StepTitle}"
+                                   ToolTip="与 CorelDRAW 的「对象管理器」同口径：列表最上面那条就是盖在上面的那个；编号仍是落位序号，01 = 最先画的那一层（最底层）。按住行上下拖＝换位。" />
                     </GroupBox.Header>
                     <DockPanel>
                         <UniformGrid DockPanel.Dock="Bottom" Rows="1" Columns="4" Margin="0,6,0,0">
@@ -205,7 +206,7 @@
                             <Button Content="置最上" Command="{Binding BringToFrontCommand}" MinWidth="0" Margin="0,0,3,0" ToolTip="压在别的元素上面" />
                             <Button Content="置最下" Command="{Binding SendToBackCommand}" MinWidth="0" ToolTip="垫到别的元素下面" />
                         </UniformGrid>
-                        <ListBox x:Name="LayerList" ItemsSource="{Binding Elements}" SelectedItem="{Binding SelectedRow}"
+                        <ListBox x:Name="LayerList" ItemsSource="{Binding LayerRows}" SelectedItem="{Binding SelectedRow}"
                                  HorizontalContentAlignment="Stretch" FontFamily="Consolas, Microsoft YaHei" MaxHeight="260"
                                  PreviewMouseLeftButtonDown="LayerList_PreviewMouseLeftButtonDown"
                                  PreviewMouseMove="LayerList_PreviewMouseMove"

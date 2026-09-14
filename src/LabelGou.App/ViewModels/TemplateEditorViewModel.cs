@@ -78,6 +78,25 @@ public sealed class TemplateEditorViewModel : ObservableObject
     /// </summary>
     internal string DocumentFileName => _savedFileName ?? TemplateStore.MakeFileName(_template);
 
+    private MarkRecord? _previewRecord;
+
+    /// <summary>
+    /// 画布上"印出来长什么样"那一层用的记录（第 59 棒③，用户：「条码在外栏设置好时，内部要显示表格里
+    /// 第一个条码，而不是『EAN-13 只能编…』那句错误」）。主窗口打开编辑器时把表里第一行递进来；
+    /// 没递（还没导表、或单测直接 new）就退回 <see cref="TemplateSample"/> 编的样例值。
+    /// <para>为什么非得递真值：<c>TemplateSample</c> 给 <c>{{col:X}}</c> 补的是<strong>列名本身</strong>——
+    /// 文字行看着挺像那么回事，条码却拿"国际条码"四个字去编 EAN-13，当场被判"只能编数字"，
+    /// 画布上就只剩那句红字（他截图里那条）。</para>
+    /// </summary>
+    public MarkRecord? PreviewRecord
+    {
+        get => _previewRecord;
+        set
+        {
+            if (Set(ref _previewRecord, value)) RebuildSample();
+        }
+    }
+
     /// <summary>画布需要重绘。</summary>
     public event Action? CanvasChanged;
 
@@ -101,6 +120,14 @@ public sealed class TemplateEditorViewModel : ObservableObject
     public bool IsBuiltInSource { get; set; }
 
     public ObservableCollection<ElementRow> Elements { get; } = new();
+
+    /// <summary>
+    /// 图层列表显示用的那份次序（第 59 棒④）：<strong>最上面的对象排在最上面</strong>——照 CorelDRAW 的
+    /// 「对象管理器」，也照用户的直觉（他报「编辑面板显示在上面的，外面预览却画在下面 ✗」）。
+    /// <para>只是显示次序，<see cref="Elements"/> 的落位下标不动（0 = 最底层 = 最先画），
+    /// 所以五出口、命令、命中、撤销全都不必翻；拖动落位经 <see cref="MoveLayerToRow"/> 翻译回下标。</para>
+    /// </summary>
+    public IReadOnlyList<ElementRow> LayerRows { get; private set; } = Array.Empty<ElementRow>();
 
     public IReadOnlyList<FieldOption> FieldOptions { get; } = BuildFieldOptions();
 
@@ -512,9 +539,16 @@ public sealed class TemplateEditorViewModel : ObservableObject
         SelectedRow = Elements.FirstOrDefault(r => ReferenceEquals(r.Element, element));
         Touch();
         RebuildSample();
-        StatusText = moved > from ? "已把这一层往下挪。" : "已把这一层往上挪。";
+        StatusText = moved > from ? "已把这一层往上挪（盖在别的元素上面）。" : "已把这一层往下挪（垫到别的元素下面）。";
         return true;
     }
+
+    /// <summary>
+    /// 列表行号 → 落位下标的唯一翻译口（第 59 棒④：图层列表倒过来显示后，拖动手势拿到的行号不再是下标）。
+    /// <para>翻译只允许存在这一处——窗口那边只管"拖到列表第几行"，不知道底下是正序还是倒序。</para>
+    /// </summary>
+    public bool MoveLayerToRow(TemplateElement element, int rowIndex)
+        => MoveLayerTo(element, Elements.Count - 1 - rowIndex);
 
     private static string LayerStatus(int delta, int from, int to)
     {
@@ -1475,6 +1509,7 @@ public sealed class TemplateEditorViewModel : ObservableObject
                 RebuildSample();
             }
             WarnWhenScalingCappedByBandWidth(element, before, after, dx, dy);
+            if (element.Kind == ElementKind.Barcode) SyncBarcodeSizing(element, before);
         }
 
         RebuildSample();
@@ -1507,6 +1542,33 @@ public sealed class TemplateEditorViewModel : ObservableObject
         var rel = _dragInkRel;
         if (rel is null) return null;
         return (element.X + rel.Value.X, element.Y + rel.Value.Y, rel.Value.Width, rel.Value.Height);
+    }
+
+    /// <summary>
+    /// 条码拖完之后，把框的变化翻译回 CorelDRAW 向导那两格（第 59 棒①，用户：「拖右下角等比放大时
+    /// 只对条码进行拉长，并没有等比放大」）。
+    /// <para>病根：X 尺寸来自参数、条高来自框，所以拖角只是把框拉大——条只跟着变高，看着就是"拉长"。
+    /// 翻译规则照 CDR：<strong>宽说了算</strong>——框宽变成几倍，缩放比例就乘几倍（条真的变粗）；
+    /// 拖<strong>角</strong>时高跟着同比例走（等比）；拖<strong>上下边</strong>＝那格「条形码高度」；
+    /// 拖<strong>左右边</strong>＝只改 X。高度倍数按拖完的框高回写，否则下一次按 <c>BoxOf</c> 算会把用户拖出来的高又改回去。</para>
+    /// </summary>
+    private void SyncBarcodeSizing(TemplateElement element,
+        (double X, double Y, double Width, double Height) before)
+    {
+        if (element.BarcodeSize is not { } sizing || before.Width <= 0 || element.Width <= 0) return;
+        var ratio = element.Width / before.Width;
+        var isCorner = (_dragHandle & (ResizeHandle.Left | ResizeHandle.Right)) != 0
+                       && (_dragHandle & (ResizeHandle.Top | ResizeHandle.Bottom)) != 0;
+        if (isCorner && before.Height > 0) element.Height = before.Height * ratio;
+
+        var units = element.ShowBarcodeText
+            ? BarcodeBars.HeightUnits
+            : BarcodeBars.HeightUnits - BarcodeBars.TopMarginUnits - BarcodeBars.TextBandUnits;
+        var scaled = sizing with { ScalePercent = Math.Clamp(sizing.ScalePercent * ratio, 1, 1000) };
+        var fullHeightMm = units * scaled.ModuleMm;
+        element.BarcodeSize = fullHeightMm > 0
+            ? scaled with { HeightFactor = Math.Clamp(element.Height / fullHeightMm, 0.05, 20) }
+            : scaled;
     }
 
     /// <summary>
@@ -1852,6 +1914,8 @@ public sealed class TemplateEditorViewModel : ObservableObject
         Elements.Clear();
         for (var i = 0; i < _template.Elements.Count; i++) Elements.Add(new ElementRow(i, _template.Elements[i]));
         SelectedRow = keep is null ? null : Elements.FirstOrDefault(r => ReferenceEquals(r.Element, keep)) ?? Elements.LastOrDefault();
+        LayerRows = Elements.Reverse().ToList();
+        Raise(nameof(LayerRows));
         CanvasChanged?.Invoke();
     }
 
@@ -1865,7 +1929,7 @@ public sealed class TemplateEditorViewModel : ObservableObject
             // 第 42 棒：样例记录改用 TemplateSample.ForTemplate —— 按这份模板实际引用的列补样例值，
             // 否则 AI 行式模板里那些 {{col:列名}} 全取不到值、整行被隐藏，画布就成了”框在字没了”
             // （用户报的第三条）。这条只服务”给人看版面”，出纸闸那条路一律不用它（见 TemplateSample 注释）。
-            SampleLayout = LayoutEngine.Build(_template, TemplateSample.ForTemplate(_template),
+            SampleLayout = LayoutEngine.Build(_template, PreviewRecord ?? TemplateSample.ForTemplate(_template),
                 new LayoutContext(1, 1, "样例数据.xlsx", IncludeReference: true));
         }
         catch (Exception ex)

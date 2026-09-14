@@ -112,7 +112,8 @@ public sealed class PropertyPanelLayoutTests
         Assert.True(layerBox.TranslatePoint(new Point(0, 0), root).X > 700, "图层面板不在右侧");
         Assert.True(list.Items.Count == 2, $"图层列表没吃到数据（{list.Items.Count} 行）");
         var first = Assert.IsType<ElementRow>(list.Items[0]);
-        Assert.Same(template.Elements[0], first.Element);            // 落位顺序：第一行是最下层（第 55 棒换回原样）
+        Assert.Same(template.Elements[^1], first.Element);            // 第 59 棒④：列表最上面＝压在上面的（CDR 对象管理器）；落位下标本身不动
+        Assert.Same(template.Elements[0], ((ElementRow)list.Items[1]).Element);   // 最底层排在最后一行
         return true;
     });
 }

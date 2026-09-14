@@ -369,6 +369,8 @@ public partial class MainWindow : Window
         var vm = new TemplateEditorViewModel(working, _viewModel.Templates, savedFileName)
         {
             IsBuiltInSource = asBuiltInCopy,
+            // 表里第一行递给画布：③ 步刚对接的条码列，在这儿就该看得见真码而不是列名（第 59 棒③）。
+            PreviewRecord = _viewModel.RawRecords.FirstOrDefault(),
         };
         var window = new TemplateEditorWindow(vm) { Owner = this };
         window.Saved += saved => _viewModel.ReloadTemplates(saved.Id);

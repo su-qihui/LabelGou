@@ -136,7 +136,7 @@ public sealed partial class TemplateEditorWindow : Window
             _editor.CaptureLayerDrag();            // 一次拖动只录一步撤销：越过几行都退得回拖之前（撤销按手势数）
             _layerDragCaptured = true;
         }
-        if (_editor.MoveLayerTo(_layerDragRow.Element, target))
+        if (_editor.MoveLayerToRow(_layerDragRow.Element, target))
         {
             list.CaptureMouse();                   // 越过行之后指针可能划过别的行甚至划出列表：抓稳，松手才交还
             e.Handled = true;
