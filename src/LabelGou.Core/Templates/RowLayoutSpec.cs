@@ -154,7 +154,12 @@ public sealed class RowLayoutSpec
                 FontSizePt = sizePt,
                 Bold = row.Bold,
                 Align = row.Align,
-                // 撑满行只许一行：值变长时宁可缩字号，也不要换行后挤出这条带
+                // 第 64 棒①（用户：「把默认模板修一下，有些超出去或者有问题」）：每行的折行宽度就按这条行带来算。
+                // 从前这里是 0＝永不折行，长值只能靠缩字号，而缩字号有 62 % 下限兜不住——客户名/货号一长就排出标签，
+                // 第 61 棒裁切上线后就成了"字被切掉一截"。给了折行宽度，TextFit 才能靠"折行 + 缩字"把值塞进这条带。
+                WrapWidthMm = usableW,
+                // 撑满行仍是一行：单行才有缩到 30 % 的额度（TextFit.MinSingleLineEmSizeRatio，真样件回归加的），
+                // 给它两行反而掉回 62 % 下限——110pt 的大字第二行就装不下、排出标签（我一开始就改错了这里）。
                 MaxLines = row.Stretch ? 1 : 3,
                 ShrinkToFit = true,
             });
