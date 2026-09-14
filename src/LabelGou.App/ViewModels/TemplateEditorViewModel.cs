@@ -93,7 +93,11 @@ public sealed class TemplateEditorViewModel : ObservableObject
         get => _previewRecord;
         set
         {
-            if (Set(ref _previewRecord, value)) RebuildSample();
+            if (Set(ref _previewRecord, value))
+            {
+                RebuildSample();
+                RecomputeIssues();     // 画布换了真值，问题列表也得跟着按同一份重量（否则一边真一边假）
+            }
         }
     }
 
@@ -851,6 +855,12 @@ public sealed class TemplateEditorViewModel : ObservableObject
     public int PathIndex { get; private set; } = -1;
 
     /// <summary>
+    /// 正在画的那一条元素的<strong>引用</strong>。<see cref="PathIndex"/> 只是下标：中途撤销会把元素换成克隆体、
+    /// 删除会让它变短，于是下一个落点就可能写进占同一下标的无关元素里（第 62 棒审计）。写回前用它对身份。
+    /// </summary>
+    private TemplateElement? _pathElement;
+
+    /// <summary>
     /// 贝塞尔工具下按下鼠标：落下一个节点。<strong>只点不按＝尖角＝这一笔是直线段</strong>
     /// （CorelDRAW 的口径，2026-09-13 用户看图更正：不按 Shift 本来就是直线，只有把点拖开才弯）。
     /// <para>第一个点会真的建一个元素（走 <see cref="TemplateFactory.AddElement"/> 那一路，
@@ -880,6 +890,7 @@ public sealed class TemplateEditorViewModel : ObservableObject
             // 而节点与方向线只在"选中"时才画——用户看到的就是"拖第二下什么预览都没有"。
             RefreshElements();
             var placed = _template.Elements[outcome.Index];
+            _pathElement = placed;           // 下标会漂（撤销换对象、删元素变短），写回前拿这个引用对一下
             SelectedRow = Elements.FirstOrDefault(r => ReferenceEquals(r.Element, placed));
             // 落点以元素为准：AddElement 找不到原位时会把它挪到最近的空位，拿点击坐标当第一个节点就会与元素对不上。
             _path.Add(new CurveNode(placed.X, placed.Y, 0, 0, 0, 0));
@@ -951,6 +962,7 @@ public sealed class TemplateEditorViewModel : ObservableObject
         WritePath();
         _path.Clear();
         PathIndex = -1;
+        _pathElement = null;
         Touch();
         RebuildSample();
         RecomputeIssues();
@@ -966,6 +978,7 @@ public sealed class TemplateEditorViewModel : ObservableObject
         _path.Clear();
         if (PathIndex >= 0 && PathIndex < _template.Elements.Count) _template.Elements.RemoveAt(PathIndex);
         PathIndex = -1;
+        _pathElement = null;
         ReleaseCapture();
         RefreshElements();
         RebuildSample();
@@ -980,6 +993,7 @@ public sealed class TemplateEditorViewModel : ObservableObject
         _path.Clear();
         if (index >= 0 && index < _template.Elements.Count) _template.Elements.RemoveAt(index);
         PathIndex = -1;
+        _pathElement = null;
         ReleaseCapture();
         RefreshElements();
         RebuildSample();
@@ -991,6 +1005,13 @@ public sealed class TemplateEditorViewModel : ObservableObject
     private void WritePath()
     {
         if (PathIndex < 0 || PathIndex >= _template.Elements.Count || _path.Count < 1) return;
+        if (_pathElement is null || !ReferenceEquals(_template.Elements[PathIndex], _pathElement))
+        {
+            // 画到一半撤销/删过元素：下标处已经不是我那一条了，把节点写进去就是毁别人的元素。干净收尾。
+            AbandonPath();
+            StatusText = "这条曲线画到一半时被撤销/删掉了，已放弃这一笔（没写进别的元素）。";
+            return;
+        }
         var pts = _path.Count == 1
             ? new List<CurveNode> { _path[0], _path[0] }          // 只点了一下：零长度线，等下一个点
             : new List<CurveNode>(_path);
@@ -1565,7 +1586,8 @@ public sealed class TemplateEditorViewModel : ObservableObject
         var ratio = element.Width / before.Width;
         var isCorner = (_dragHandle & (ResizeHandle.Left | ResizeHandle.Right)) != 0
                        && (_dragHandle & (ResizeHandle.Top | ResizeHandle.Bottom)) != 0;
-        if (isCorner && before.Height > 0) element.Height = before.Height * ratio;
+        if (isCorner && before.Height > 0)
+            element.Height = Math.Min(before.Height * ratio, _template.HeightMm);   // ResizeBy 的夹紧管不到这一步（第 62 棒：拖角放大能把框顶出纸外）
 
         var units = element.ShowBarcodeText
             ? BarcodeBars.HeightUnits
@@ -1603,6 +1625,22 @@ public sealed class TemplateEditorViewModel : ObservableObject
     public void EndDrag()
     {
         if (_dragMode == DragMode.None) return;
+        // 只点了一下、什么都没挪：不置脏，也不留一步空撤销（第 62 棒审计——点选几下就"未保存"，
+        // 而撤销栈上限 50 会被这些空步吃光，真历史反而挤掉了）。
+        if (_dragSnapshot is not null && _dragIndex >= 0 && _dragIndex < _template.Elements.Count
+            && TemplateHistory.Same(_dragSnapshot, _template.Elements[_dragIndex]))
+        {
+            _dragMode = DragMode.None;
+            _dragIndex = -1;
+            _dragSnapshot = null;
+            _dragHandle = ResizeHandle.None;
+            _curveHit = null;
+            _activeGuides = Array.Empty<GuideLine>();
+            _history.DiscardTop();
+            Editing?.Reload();
+            CanvasChanged?.Invoke();
+            return;
+        }
         _dragMode = DragMode.None;
         _dragIndex = -1;
         _dragSnapshot = null;
@@ -1628,6 +1666,7 @@ public sealed class TemplateEditorViewModel : ObservableObject
         _curveHit = null;
         _activeGuides = Array.Empty<GuideLine>();
         ReleaseCapture();
+        Editing?.Reload();       // 元素已回原位，面板那几格也得跟着回去（EndDrag 有这一步，这里原来漏了）
         StatusText = "已取消这次拖动。";
     }
 
@@ -1870,6 +1909,9 @@ public sealed class TemplateEditorViewModel : ObservableObject
         target.Nodes = snapshot.Nodes is { } nodes ? new List<CurveNode>(nodes) : null;
         target.StartOut = snapshot.StartOut;
         target.EndIn = snapshot.EndIn;
+        // 第 62 棒审计：条码那四格尺寸参数也在这族里——不恢复，拖角每帧把缩放比例自乘一次（一次拖动就能顶到
+        // 1000 % 上限、条粗得像栅栏，且撤销只能退回拖动前）。
+        target.BarcodeSize = snapshot.BarcodeSize;
     }
 
     /// <summary>改动之前录一步快照（同一属性的连续输入只录第一次，避免打字打出一个栈）。</summary>
@@ -1928,9 +1970,13 @@ public sealed class TemplateEditorViewModel : ObservableObject
     public void RefreshElements()
     {
         var keep = SelectedRow?.Element;
+        var keepOrdinal = SelectedRow?.Ordinal ?? -1;      // 撤销/重做会把元素换成克隆体，引用必然找不回（第 62 棒）
         Elements.Clear();
         for (var i = 0; i < _template.Elements.Count; i++) Elements.Add(new ElementRow(i, _template.Elements[i]));
-        SelectedRow = keep is null ? null : Elements.FirstOrDefault(r => ReferenceEquals(r.Element, keep)) ?? Elements.LastOrDefault();
+        SelectedRow = Elements.Count == 0 ? null
+            : keep is null ? null
+            : Elements.FirstOrDefault(r => ReferenceEquals(r.Element, keep))
+              ?? (keepOrdinal >= 0 && keepOrdinal < Elements.Count ? Elements[keepOrdinal] : Elements.LastOrDefault());
         LayerRows = Elements.Reverse().ToList();
         Raise(nameof(LayerRows));
         CanvasChanged?.Invoke();
@@ -2023,6 +2069,9 @@ public sealed class TemplateEditorViewModel : ObservableObject
 
     private void RecomputeIssues(IReadOnlyList<TemplateIssue> issues)
     {
+        // Core 量不到墨迹，"字排到纸外"那条只能由这里补——补在唯一的写入口上，
+        // 否则存盘后拿 Store 的结果一覆盖，那条提示就凭空消失（第 62 棒审计）。
+        issues = WithInkOverflow(issues);
         Issues = issues.Select(i => i.Message).ToList();
         HasError = issues.HasError();
         Raise(nameof(Issues));

@@ -127,6 +127,20 @@ public sealed class TemplateHistory
         _redo.Clear();
     }
 
+    /// <summary>
+    /// 丢掉最近录的那一步快照（<strong>不</strong>改动当前状态）。
+    /// <para>一次手势起手就录了快照，最后发现什么都没动时用——不然"只点一下选元素"也会吃掉一步撤销名额
+    /// （栈上限 <see cref="Limit"/>），真历史被空步挤掉。用 Undo 退这一步是错的：那会顺手往重做栈塞一个空项。</para>
+    /// </summary>
+    public void DiscardTop()
+    {
+        if (_undo.Count > 0) _undo.RemoveAt(_undo.Count - 1);
+    }
+
+    /// <summary>两个元素是否一模一样（判"这一笔手势其实没改任何东西"）。</summary>
+    public static bool Same(TemplateElement before, TemplateElement after) =>
+        JsonSerializer.Serialize(before, ProfileStore.JsonOptions) == JsonSerializer.Serialize(after, ProfileStore.JsonOptions);
+
     private static void Restore(string json, LabelTemplate current)
     {
         var snapshot = JsonSerializer.Deserialize<LabelTemplate>(json, ProfileStore.JsonOptions)

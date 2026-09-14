@@ -50,26 +50,33 @@ public sealed record BarcodeSizing(
     /// <summary>
     /// 符号宽度（向导那一格只读数）＝<strong>窄元素数 × X</strong>，不含静区。
     /// <para>窄元素数 = 我们的 <c>Modules</c>（位）÷ <c>NarrowBits</c>（一个窄元素几位）：
-    /// EAN-13 是 95 ÷ 1 = 95，CodaBar 12 位是 312 ÷ 2 = 156——两个锚点都是这么对上的。</para>
+    /// EAN-13 是 95 ÷ 1 = 95，CodaBar 12 位是 312 ÷ 2 = 156——两个锚点都是这么对上的。
+    /// <strong>这里不能整除</strong>：Code 39 的模块数是奇数（"ABC" = 143 位），整除会少算半个窄元素，
+    /// 算出来的默认框就比符号还窄，渲染端只能退回按框宽算——X 尺寸模型当场失效（第 62 棒审计抓出来的）。</para>
     /// </summary>
-    public double SymbolWidthMm(BarcodeEncoding encoding) => encoding is { Ok: true } ? NarrowElements(encoding) * ModuleMm : 0;
+    public double SymbolWidthMm(BarcodeEncoding encoding) =>
+        encoding is { Ok: true } && encoding.NarrowBits > 0
+            ? encoding.Modules / (double)encoding.NarrowBits * ModuleMm
+            : 0;
 
-    /// <summary>这只码一共多少个窄元素（向导算符号宽度用的就是它）。</summary>
+    /// <summary>窄元素数（界面读数用；奇数位宽的制式向上取整，宁可多说半个也不少算）。</summary>
     public static int NarrowElements(BarcodeEncoding encoding) =>
-        encoding is { Ok: true } && encoding.NarrowBits > 0 ? encoding.Modules / encoding.NarrowBits : 0;
+        encoding is { Ok: true } && encoding.NarrowBits > 0
+            ? (int)Math.Ceiling(encoding.Modules / (double)encoding.NarrowBits)
+            : 0;
 
     /// <summary>
     /// 按 CDR 的账，这只码在 <paramref name="showText"/> 下该占多大一只框（宽含静区、高含顶距与数字带，毫米）。
     /// <para>纵向份数照我们量 CDR 导出样本得到的那一份（<see cref="BarcodeBars.HeightUnits"/> 一族常量）再乘高度倍数：
     /// 印数字时整框 81 份（1 顶距 + 69 数据条 + 6 保护延长 + 5 数字带，实测 81.16），不印时 75 份。</para>
-    /// <para><strong>这就是"默认条码"与「加到当前模板」那一下给的尺寸</strong>——不再"通栏宽 + 写死 14 mm 高"。</para>
+    /// <para><strong>这就是"默认条码"与「加到当前模板」那一下给的尺寸</strong>——不再"通栏宽 + 写死 14 mm 高"。
+    /// 横向的静区与 <c>BarcodeBars.Build</c> 必须同一个数（那边是 静区窄元素数 × 位宽 = QZ × X，
+    /// <strong>不再乘 NarrowBits</strong>——乘了就比符号宽出 (NarrowBits−1)×QZ×X，条码永远居中留白，第 62 棒审计抓出）。</para>
     /// </summary>
     public (double Width, double Height) BoxOf(BarcodeEncoding encoding, bool showText = true)
     {
         if (encoding is not { Ok: true } || ModuleMm <= 0) return (0, 0);
-        var quiet = encoding.QuietZoneMm > 0
-            ? encoding.QuietZoneMm
-            : encoding.QuietZoneModules * encoding.NarrowBits * ModuleMm;
+        var quiet = encoding.QuietZoneMm > 0 ? encoding.QuietZoneMm : encoding.QuietZoneModules * ModuleMm;
         var width = SymbolWidthMm(encoding) + quiet * 2;
         var units = showText ? BarcodeBars.HeightUnits : BarcodeBars.HeightUnits - BarcodeBars.TopMarginUnits - BarcodeBars.TextBandUnits;
         return (width, units * ModuleMm * HeightFactor);

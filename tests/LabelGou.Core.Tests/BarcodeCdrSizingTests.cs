@@ -138,6 +138,32 @@ public class BarcodeCdrSizingTests
         Assert.Null(store.GetById(legacy.Id)?.Elements[0].BarcodeSize);
     }
 
+    /// <summary>
+    /// 各制式的默认框必须"正好包住符号"（第 62 棒审计修的两处都在这里露馅）：
+    /// 符号宽度用整除截断会把奇数位宽的制式（Code 39）少算半个窄元素 → 框比符号窄 → 退回按框宽算、X 模型失效；
+    /// 静区多乘一次 NarrowBits 会让框凭空宽出一截 → 条码永远居中留白。两头都不该出现。
+    /// </summary>
+    [Theory]
+    [InlineData(BarcodeSymbology.Code128, "123456789")]
+    [InlineData(BarcodeSymbology.Code39, "ABC")]              // 模块数 143＝奇数，整除会少半个窄元素
+    [InlineData(BarcodeSymbology.Codabar, "1234567891231")]   // 宽窄比 2.5:1
+    [InlineData(BarcodeSymbology.Code25, "1234567891231")]
+    [InlineData(BarcodeSymbology.Ean13, CdrSample)]
+    public void 默认框正好包住符号_两头只剩静区(BarcodeSymbology symbology, string value)
+    {
+        var encoding = BarcodeEncoder.Encode(value, symbology);
+        Assert.True(encoding.Ok, encoding.Error);
+        var sizing = new BarcodeSizing();
+        var (w, _) = sizing.BoxOf(encoding);
+
+        var g = BarcodeBars.Build(encoding, 0, 0, w, 0, 30, sizing);
+        Assert.True(g.CenterOffsetMm < 0.01, $"{symbology}：默认框里还留了 {g.CenterOffsetMm:0.##} mm 居中偏移——框与符号对不上");
+        Assert.True(g.Warning is null || !g.Warning.Contains("比缩放比例要求的符号还窄"), $"{symbology}：{g.Warning}");
+        // 两条路必须用同一个静区数（多乘一次 NarrowBits 就是在这里露馅）：
+        // BoxOf 给的框宽减去符号宽度再除二，要正好等于 Build 实际用的静区。
+        Assert.Equal((w - sizing.SymbolWidthMm(encoding)) / 2, g.QuietZoneMm, 4);
+    }
+
     // ---------- 帮助 ----------
 
     private static BarcodeItem Build(string value, BarcodeSymbology symbology, double width, double height, BarcodeSizing? sizing)

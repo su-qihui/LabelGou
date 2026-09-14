@@ -228,8 +228,11 @@ public sealed class TemplateEditorControl : FrameworkElement
             if (element.Kind == ElementKind.Line)
             {
                 // 画到一半的那条也要有节点方块（哪怕还没拖出柄）：CDR 就是点一下就看到点落住了。
-                var drawing = _vm is { IsDrawingPath: true, PathIndex: >= 0 }
-                    && ReferenceEquals(_vm.Template.Elements[_vm.PathIndex], element);
+                // 上界必须一起判：撤销/删元素会把 Elements 换对象或改短（画到一半按 Ctrl+Z 就是这一刻），
+                // 只当下标用不判上界 → 每次重绘抛一次越界异常，成了对话框风暴（第 62 棒审计）。
+                var drawing = _vm is { IsDrawingPath: true, PathIndex: >= 0 } path
+                    && path.PathIndex < _vm.Template.Elements.Count
+                    && ReferenceEquals(_vm.Template.Elements[path.PathIndex], element);
                 if (CurveGeometry.IsCurved(element) || drawing)
                 {
                     DrawCurveNodes(dc, element);
