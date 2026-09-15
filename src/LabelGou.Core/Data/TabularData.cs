@@ -24,7 +24,8 @@ public sealed class TabularData
         IReadOnlyList<int>? dataRowRawIndexes = null,
         SheetLayoutChoice? choice = null,
         int rawRowCount = 0,
-        IReadOnlyList<SummaryRowHit>? autoSkippedSummaryRows = null)
+        IReadOnlyList<SummaryRowHit>? autoSkippedSummaryRows = null,
+        IReadOnlyList<string[]>? rawGrid = null)
     {
         SourceFile = sourceFile;
         SheetName = sheetName;
@@ -38,6 +39,7 @@ public sealed class TabularData
         Choice = choice ?? SheetLayoutChoice.Auto;
         RawRowCount = rawRowCount > 0 ? rawRowCount : rows.Count;
         AutoSkippedSummaryRows = autoSkippedSummaryRows ?? Array.Empty<SummaryRowHit>();
+        RawGrid = rawGrid;
     }
 
     /// <summary>来源文件完整路径。</summary>
@@ -96,6 +98,13 @@ public sealed class TabularData
     /// <para>为什么必须逐行摊出来而不只报个数：§十-A-13 的原口径是「不许默默删行」——
     /// 判据再保守也有错杀的一天，错杀了要让用户一眼看到剔了谁、凭什么，才能在 ① 步关开关改回来。</para></summary>
     public IReadOnlyList<SummaryRowHit> AutoSkippedSummaryRows { get; }
+
+    /// <summary>
+    /// <strong>未切的原始网格</strong>（行号就是 Excel 的行序）。一级校验要在原表上回查证据
+    /// （列名那行上下各有什么、被剔的行到底长什么样），只看这张被切小的表会对不上行号（导入层第 1 棒）。
+    /// <para>旧调用方没递时为 null——那时校验器无事可做，如实返回空清单，不拿切过的表冒充原表。</para>
+    /// </summary>
+    public IReadOnlyList<string[]>? RawGrid { get; }
 
     /// <summary>第几条数据行对应原表第几行（1 起，给人看）；没这张对应表时退回"第 n+1 条"。</summary>
     public string RawRowLabelOf(int dataIndex)

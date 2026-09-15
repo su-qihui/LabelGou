@@ -202,6 +202,56 @@
                                       IsChecked="{Binding SkipSummaryRowsChecked}"
                                       ToolTip="只认两种形状：写着合计/TOTAL 且至多一个数值的行；孤零零一个数又恰等于那一列其余行总和的行。错杀了货行就关掉这里，一行都不自动剔" />
 
+                            <!-- 导入层第 1 棒：一级校验。表一读进来就按确定性判据扫一遍——
+                                 能确定的当场说（已自动处理）、可修的给键、软件没足够事实的只报不猜。
+                                 整层可关：关掉之后导入直接进原来的五步流程。 -->
+                            <CheckBox Content="导入后体检这张表（一级校验）"
+                                      IsChecked="{Binding HealthCheckEnabled}" Margin="0,6,0,4"
+                                      ToolTip="关掉 = 不再扫描与建议，导入后直接进原来的流程。开着不联网、不花钱，是软件自己扫这张表" />
+                            <Border Background="#FFF7EC" BorderBrush="#E0A82E" BorderThickness="1" CornerRadius="4"
+                                    Padding="8,6" Margin="0,0,0,6"
+                                    Visibility="{Binding HasHealthRows, Converter={StaticResource BoolVis}}">
+                                <StackPanel>
+                                    <Grid Margin="0,0,0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="这张表体检" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                        <Button Grid.Column="1" Content="一键修复" Command="{Binding HealthFixAllCommand}"
+                                                Margin="6,0,0,0" Padding="8,1"
+                                                ToolTip="把下面所有标着「可修」的一次落地；改完就在下面预览里看，不对就撤回" />
+                                        <Button Grid.Column="2" Content="↩ 撤回这一步" Command="{Binding HealthUndoCommand}"
+                                                Margin="6,0,0,0" Padding="8,1"
+                                                ToolTip="回到上一次修复之前的切法；可以连点，一步一步退回去" />
+                                    </Grid>
+                                    <ScrollViewer MaxHeight="160" VerticalScrollBarVisibility="Auto">
+                                        <ItemsControl ItemsSource="{Binding HealthRows}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Grid Margin="0,2">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="66" />
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="Auto" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <TextBlock Text="{Binding Tag}" FontSize="10.5" Foreground="#7A5000"
+                                                                   VerticalAlignment="Top" ToolTip="已自动处理 = 软件按判据做了；可修 = 点执行或一键修复；要你看 = 软件没有足够事实，不猜" />
+                                                        <TextBlock Grid.Column="1" Text="{Binding Text}" TextWrapping="Wrap" FontSize="11"
+                                                                   ToolTip="{Binding Detail}" />
+                                                        <Button Grid.Column="2" Content="执行" FontSize="11" Padding="7,1"
+                                                                Command="{Binding DataContext.HealthFixOneCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                CommandParameter="{Binding}"
+                                                                Visibility="{Binding CanFix, Converter={StaticResource BoolVis}}" />
+                                                    </Grid>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </ScrollViewer>
+                                </StackPanel>
+                            </Border>
+
                             <Grid Margin="0,0,0,4">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="Auto" />

@@ -303,7 +303,7 @@ public class XlsxTableReaderTests
     }
 
     [Fact]
-    public void 空行被丢弃且尾列补齐()
+    public void 中间空行保留以对齐行号_尾部空白砍掉_尾列补齐()
     {
         var rows = new List<IReadOnlyList<string>>
         {
@@ -311,13 +311,18 @@ public class XlsxTableReaderTests
             new[] { "A1", "B1" },
             Array.Empty<string>(),
             new[] { "A3", "B3", "C3" },
+            Array.Empty<string>(),      // 尾部空白：超出数据范围，该砍
         };
         var path = XlsxFixture.WriteToTempFile(XlsxFixture.Build(rows), "ragged.xlsx");
 
         var grid = XlsxTableReader.ReadRawGrid(path);
 
-        // 表头行 + 两条数据行（中间的全空行被丢）
-        Assert.Equal(3, grid.Count);
+        // 旧口径是"空行一律丢"，导入层第 1 棒翻掉了：中间那条空行在 Excel 里占着第 3 行，
+        // 删了它就把第 4 行顶成第 3 行 —— 体检清单与 AI 报的行号从此永远比人看到的小。
+        Assert.Equal(4, grid.Count);
+        Assert.All(grid[2], c => Assert.Equal(string.Empty, c));   // 第 3 行还在，只是空的
+        Assert.Equal("A3", grid[3][0]);                             // 第 4 行的号没被顶上去
+        // 尾列补齐照旧（稀疏行右边那几格补空串，不是 null）
         Assert.Equal(3, grid[1].Length);
         Assert.Equal(string.Empty, grid[1][2]);
     }

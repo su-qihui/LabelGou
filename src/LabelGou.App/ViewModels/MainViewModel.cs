@@ -208,6 +208,10 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         NextRecordCommand = new RelayCommand(() => CurrentIndex = Math.Min(RecordTotal, CurrentIndex + 1), () => CurrentIndex < RecordTotal);
         LastRecordCommand = new RelayCommand(() => CurrentIndex = RecordTotal, () => RecordTotal > 0);
         SamplePreviewCommand = new RelayCommand(() => CurrentIndex = 0);
+        HealthFixAllCommand = new RelayCommand(ApplyAllHealthFixes, () => HealthRows.Any(r => r.CanFix));
+        HealthFixOneCommand = new RelayCommand(row => ApplyHealthFix(row as HealthRow),
+            row => row is HealthRow r && r.CanFix);
+        HealthUndoCommand = new RelayCommand(UndoHealthFix, () => CanUndoHealthFix);
         ZoomInCommand = new RelayCommand(() => Zoom = Math.Min(8, Zoom * 1.25));
         ZoomOutCommand = new RelayCommand(() => Zoom = Math.Max(0.2, Zoom / 1.25));
 
@@ -468,6 +472,12 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
     public RelayCommand NextRecordCommand { get; }
     public RelayCommand LastRecordCommand { get; }
     public RelayCommand SamplePreviewCommand { get; }
+    /// <summary>① 步「一键修复」：把当前所有可修的体检发现合成一份新切法。</summary>
+    public RelayCommand HealthFixAllCommand { get; }
+    /// <summary>① 步每条发现旁的「执行」：只落点的那一条（CommandParameter 是 HealthRow）。</summary>
+    public RelayCommand HealthFixOneCommand { get; }
+    /// <summary>① 步「↩ 撤回这一步」：回退到上一次修复前的切法。</summary>
+    public RelayCommand HealthUndoCommand { get; }
     public RelayCommand ZoomInCommand { get; }
     public RelayCommand ZoomOutCommand { get; }
 
@@ -1368,8 +1378,9 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         }
         rows.Sort();
         // 用户开关过的合计行兜底原样带走：AI 没提这一项，它就不该被提案悄悄顶回来
+        // 右侧块（① 步圈出的表内文字模板/指令列）同理：提案没提它，保留用户点过的。
         return new SheetLayoutChoice(header, p.HasHeader ?? _choice.HasHeader,
-            rows.Count == 0 ? null : rows, _choice.SkipSummaryRows);
+            rows.Count == 0 ? null : rows, _choice.SkipSummaryRows, _choice.SideBlocks, _choice.ValueRules);
     }
 
     /// <summary>
@@ -1392,7 +1403,7 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
             takeHeader ? full.HeaderRowIndex : _choice.HeaderRowIndex,
             takeHeader ? full.HasHeader : _choice.HasHeader,
             takeRows ? full.ExcludedRawRows : _choice.ExcludedRawRows,
-            _choice.SkipSummaryRows);
+            _choice.SkipSummaryRows, _choice.SideBlocks, _choice.ValueRules);
     }
 
     /// <summary>回到「软件自动猜表头、不剔行」的那一份切法（用户说「改错了，恢复」时走这条）。</summary>
@@ -1418,8 +1429,7 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
             if (_suppressHeaderRowOption || value is null || Equals(value, _selectedHeaderRowOption)) return;
             var previous = _selectedHeaderRowOption;
             // 只动表头那一项：点名剔过的行与合计行开关都原样带走（并集语义不变）
-            var next = new SheetLayoutChoice(value.HeaderIndex, value.HasHeader,
-                _choice.ExcludedRawRows, _choice.SkipSummaryRows);
+            var next = _choice with { HeaderRowIndex = value.HeaderIndex, HasHeader = value.HasHeader };
             _selectedHeaderRowOption = value;
             Raise(nameof(SelectedHeaderRowOption));
             if (next == _choice) return;
@@ -1459,6 +1469,123 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
                 ? "已开合计行兜底：像合计的行会被跳过，剔了谁、凭什么会逐行写在状态栏。"
                 : "已关合计行兜底：刚才被自动跳过的行都回到数据里了。";
             Raise(nameof(SkipSummaryRowsChecked));   // 失败时 ApplySheetChoice 已把 _choice 退回原样，开关跟着退回去
+        }
+    }
+
+    /// <summary>
+    /// ① 步「这张表体检」面板的一行：一条发现 + 界面要不要给那颗修键。
+    /// <para>档位与键的对应（导入层第 1 棒，用户 2026-09-13 定的两颗键）：
+    /// <c>Notice</c> = 软件已按判据自动处理，只说一声；<c>Suggestion</c> = 有可执行调整，
+    /// 一键修复会带上它，也能逐条点；<c>Warning</c> = 有问题但软件没有足够事实去改，只报不修。</para>
+    /// </summary>
+    public sealed class HealthRow
+    {
+        public required HealthFinding Finding { get; init; }
+
+        /// <summary>面板上那一句：<strong>只放短句</strong>（用户 2026-09-13「字很长所以我所乱」）。</summary>
+        public string Text => Finding.Fact;
+
+        /// <summary>整句（含凭什么与行号）——挂在 ToolTip 上，要看细节才展开。</summary>
+        public string Detail => Finding.Describe();
+
+        public string Tag => Finding.Level switch
+        {
+            HealthLevel.Notice => "已自动处理",
+            HealthLevel.Suggestion => "可修",
+            _ => "要你看",
+        };
+
+        public bool CanFix => Finding.Fix is not null;
+    }
+
+    /// <summary>① 步的体检清单（每次读表/改切法后重扫；关掉开关就清空）。</summary>
+    public ObservableCollection<HealthRow> HealthRows { get; } = new();
+
+    public bool HasHealthRows => HealthRows.Count > 0;
+
+    /// <summary>① 步圈出去的右侧列号（自动连线跳过它们；人工连线照旧可以连——人工口子全留）。</summary>
+    private IReadOnlyList<int>? SideColumnIndexes =>
+        _choice.SideBlocks is { Count: > 0 } blocks ? blocks.Select(b => b.Column).ToList() : null;
+
+    /// <summary>切表指令是不可变 record，撤回 = 压栈/出栈，不必另造一套撤销机制。</summary>
+    private readonly List<SheetLayoutChoice> _healthUndoStack = new();
+
+    public bool CanUndoHealthFix => _healthUndoStack.Count > 0;
+
+    private bool _healthCheckEnabled = true;
+
+    /// <summary>一级校验整层开关（用户 2026-09-13 定：这一层可以选择关闭）。默认开——那些病正是没人校验才留到今天。</summary>
+    public bool HealthCheckEnabled
+    {
+        get => _healthCheckEnabled;
+        set
+        {
+            if (value == _healthCheckEnabled) return;
+            _healthCheckEnabled = value;
+            Raise(nameof(HealthCheckEnabled));
+            RefreshHealthFindings();
+            StatusMessage = value
+                ? "一级校验已打开：以后每次导入都会先扫这张表，能确定的当场说、可修的给键。"
+                : "一级校验已关闭：导入后不再扫描与建议，直接进原来的五步流程。";
+        }
+    }
+
+    /// <summary>重扫这张表。放在每次读表之后（<see cref="LoadSource"/> 末尾）——切法一改，发现就该跟着变。</summary>
+    private void RefreshHealthFindings()
+    {
+        HealthRows.Clear();
+        if (_healthCheckEnabled && _data is { } data)
+        {
+            foreach (var finding in TableHealthCheck.Scan(data))
+                HealthRows.Add(new HealthRow { Finding = finding });
+        }
+        Raise(nameof(HasHealthRows));
+        Raise(nameof(CanUndoHealthFix));
+    }
+
+    /// <summary>逐条执行：只落这一条。</summary>
+    private void ApplyHealthFix(HealthRow? row)
+    {
+        if (row?.Finding.Fix is not { } fix) return;
+        _healthUndoStack.Add(_choice);
+        var (ok, msg) = ApplySheetChoice(fix.Apply(_choice));
+        if (!ok)
+        {
+            _healthUndoStack.RemoveAt(_healthUndoStack.Count - 1);
+            StatusMessage = "这条修复没改成（表保持原样）：" + msg;
+            return;
+        }
+        StatusMessage = $"已修：{row.Finding.Fact}。在 ① 步预览里核对一眼，不对就点「↩ 撤回这一步」。";
+    }
+
+    /// <summary>一键修复：把当前所有可修的调整合成一份新切法，一次重读（不是逐条重读 N 遍）。</summary>
+    private void ApplyAllHealthFixes()
+    {
+        var fixable = HealthRows.Where(r => r.CanFix).ToList();
+        if (fixable.Count == 0) return;
+        _healthUndoStack.Add(_choice);
+        var next = fixable.Aggregate(_choice, (current, row) => row.Finding.Fix!.Apply(current));
+        var (ok, msg) = ApplySheetChoice(next);
+        if (!ok)
+        {
+            _healthUndoStack.RemoveAt(_healthUndoStack.Count - 1);
+            StatusMessage = "一键修复没改成（表保持原样）：" + msg;
+            return;
+        }
+        StatusMessage = $"一键修复 {fixable.Count} 处：{msg}。确认这张表切对了再往下走；要退回点「↩ 撤回这一步」。";
+    }
+
+    private void UndoHealthFix()
+    {
+        if (_healthUndoStack.Count == 0) return;
+        var previous = _healthUndoStack[^1];
+        _healthUndoStack.RemoveAt(_healthUndoStack.Count - 1);
+        var (ok, msg) = ApplySheetChoice(previous);
+        if (ok) StatusMessage = $"已撤回这一步：{msg}";
+        else
+        {
+            _healthUndoStack.Add(previous);
+            StatusMessage = "撤回失败（表保持当前样子）：" + msg;
         }
     }
 
@@ -1545,13 +1672,19 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
             ColumnOptions = new ObservableCollection<ColumnOption> { new(-1, "（不映射）") };
             for (var c = 0; c < data.ColumnCount; c++)
             {
-                ColumnOptions.Add(new ColumnOption(c, $"{HeaderRowDetector.ColumnLetter(c)} · {data.Headers[c]}"));
+                // 人工口子全留：圈出去的列照样列得出来、照样能手连，只是名字上说清它被认成了什么。
+                var asSide = _choice.SideBlocks?.FirstOrDefault(b => b.Column == c);
+                var mark = asSide is null ? string.Empty
+                    : asSide.Kind == SideBlockKind.TextTemplate ? "（① 步圈为表内文字模板）" : "（① 步圈为指令）";
+                ColumnOptions.Add(new ColumnOption(c, $"{HeaderRowDetector.ColumnLetter(c)} · {data.Headers[c]}{mark}"));
             }
             Raise(nameof(ColumnOptions));
             // ① 步的「列名那一行」下拉跟着这张表重列，选中项摆回当前切法（第 24 棒）。
             BuildHeaderRowOptions();
             // ③ 步那个条码栏目列的是「这张表真有的列」，所以换表之后必须重列一次。
             Barcode.RefreshSources();
+            // 导入层第 1 棒：表一读进来就体检一遍（切法变了也要重扫——上一轮的发现可能已经被这一轮的修复消掉了）。
+            RefreshHealthFindings();
 
             // 优先套用已保存的同格式方案，其次自动猜
             ProfileName = Path.GetFileNameWithoutExtension(data.SourceFile);
@@ -1579,7 +1712,7 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
                 }
                 else
                 {
-                    _working = MappingSuggester.Suggest(data.Headers, ProfileName);
+                    _working = MappingSuggester.Suggest(data.Headers, ProfileName, SideColumnIndexes);
                     StatusMessage = "已按表头自动连接字段，请检查后点「应用映射」。";
                 }
             }
@@ -1793,7 +1926,8 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
 
         var previousFixed = _working is null ? null : new Dictionary<string, string>(_working.FixedValues);
         _working = MappingSuggester.Suggest(data.Headers,
-            string.IsNullOrWhiteSpace(ProfileName) ? "自动匹配方案" : ProfileName.Trim());
+            string.IsNullOrWhiteSpace(ProfileName) ? "自动匹配方案" : ProfileName.Trim(),
+            SideColumnIndexes);
         // 重接列不该抹掉已经填好的整批固定值（它们与列无关）
         if (previousFixed is not null)
         {

@@ -113,11 +113,17 @@ public static class TableImporter
             ? (sheetName ?? ListSheets(filePath).FirstOrDefault() ?? "Sheet1")
             : "CSV";
 
+        // 值改写（导入层第 1 棒）：照用户点过名的规则改这一份视图里的值——
+        // 磁盘上的 xlsx 原件永远不动，所以它和剔行、圈右侧列一样是一条可撤回的指令。
+        var rows = choice is { ValueRuleCount: > 0 }
+            ? TableHealthCheck.ApplyValueRules(detection.DataRows, choice.ValueRules!)
+            : detection.DataRows;
+
         return new TabularData(
             Path.GetFullPath(filePath),
             actualSheet,
             detection.Headers,
-            detection.DataRows,
+            rows,
             detection.HeaderRowIndex,
             encoding,
             detection.PreambleRows,
@@ -125,7 +131,8 @@ public static class TableImporter
             detection.DataRowRawIndexes,
             choice ?? SheetLayoutChoice.Auto,
             detection.RawRowCount,
-            detection.AutoSkippedSummaryRows);
+            detection.AutoSkippedSummaryRows,
+            grid);
     }
 
     /// <summary>

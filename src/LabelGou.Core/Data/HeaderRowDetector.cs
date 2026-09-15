@@ -6,8 +6,9 @@ namespace LabelGou.Core.Data;
 /// <summary>
 /// 表头行识别 + 表头归一化。
 /// <para>
-/// 工厂发来的表极少"第一行就是干净表头"：常见前导标题行、空行、多行复合表头。
-/// 因此在候选前几行中按<strong>字段别名命中数</strong>为主、非空覆盖率与"像不像标签"为辅打分，
+/// 工厂发来的表极少"第一行就是干净表头"：常见前导标题行、空行、多行复合表头，
+/// 也有整张表把列名写在<strong>最后一行</strong>的（TOP：411 行，列名在 r410）。
+/// 因此对<strong>全表每一行</strong>按字段别名命中数为主、非空覆盖率与"像不像标签"为辅打分，
 /// 选出最可能是表头的那一行。<strong>其上方的行原样留着</strong>（第 20 棒改）：
 /// 工厂爱把「纸规 280×200」「外箱尺寸 60×40×30」「共 155 件」这类话写在前几行，
 /// 以前一律丢弃，于是 AI 想看也看不到，人想知道它凭什么猜也无处查。
@@ -16,8 +17,15 @@ namespace LabelGou.Core.Data;
 /// </summary>
 public static class HeaderRowDetector
 {
-    /// <summary>只在前 N 行里找表头（再往后基本就是数据了）。</summary>
-    public const int ScanWindow = 8;
+    /// <summary>
+    /// 行号惩罚的封顶（单位：分）。
+    /// <para><strong>为什么必须有这个顶</strong>：打分原本只扫前 8 行，<c>-rowIndex * 0.15</c> 最多扣到 1.05 分，
+    /// 作用仅是"同分时偏好在上的行"。导入层第 1 棒把扫描窗扩到<strong>全表</strong>之后，这条线性惩罚
+    /// 会把表尾的真表头直接压死——TOP 那张 411 行表的列名写在<strong>第 410 行</strong>，按原式要吃 −61.5 分，
+    /// 而它第一行是货（+2.86 分），于是永远认不回来。封顶后：前 20 行之内仍按原斜率偏好靠上的行，
+    /// 再往下不再累加——同分依然偏上，但不至于把真表头挤出赛场。</para>
+    /// </summary>
+    private const double RowIndexPenaltyCap = 3.0;
 
     /// <summary>识别结果。</summary>
     /// <param name="HeaderRowIndex">表头所在行（0 起）；<b>-1 = 用户说这张表没表头</b>。</param>
@@ -83,10 +91,33 @@ public static class HeaderRowDetector
             .ToList();
 
         var preamble = new List<IReadOnlyList<string>>(Math.Max(0, headerIndex));
-        for (var r = 0; r < headerIndex; r++) preamble.Add(Pad(grid[r], width));   // 到表头那一行为止（不含它本身）
-
         var dataRows = new List<IReadOnlyList<string>>(Math.Max(0, grid.Count - firstDataRow));
         var rawIndexes = new List<int>(dataRows.Capacity);
+
+        // 数据在表头<strong>之上</strong>（TOP 形状：411 行表把列名写在第 410 行，货全在上面）。
+        // 不补这一支的话，认出列名反而切出一张零行的表——比认错表头还没用。
+        // 条件刻意收窄：表头之上至少两行有内容、表头之下再没有没被剔的行。
+        // 普通工厂表（表头在上、前几行是批注）走下面那条原路，行为与第 20 棒起一字不差。
+        var aboveContent = CountContentRows(grid, 0, Math.Max(0, headerIndex), excluded);
+        var belowContent = CountContentRows(grid, firstDataRow, grid.Count, excluded);
+        var dataAboveHeader = headerIndex >= 0 && aboveContent >= 2 && belowContent == 0;
+
+        if (dataAboveHeader)
+        {
+            for (var r = 0; r < grid.Count; r++)
+            {
+                if (r == headerIndex) continue;
+                var row = grid[r];
+                if (row.All(string.IsNullOrWhiteSpace)) continue;
+                if (excluded is not null && excluded.Contains(r)) continue;
+                dataRows.Add(Pad(row, width));
+                rawIndexes.Add(r);
+            }
+            return new DetectionResult(headerIndex, headers, dataRows, preamble, rawIndexes, grid.Count, autoReported);
+        }
+
+        for (var r = 0; r < headerIndex; r++) preamble.Add(Pad(grid[r], width));   // 到表头那一行为止（不含它本身）
+
         for (var r = firstDataRow; r < grid.Count; r++)
         {
             var row = grid[r];
@@ -102,6 +133,19 @@ public static class HeaderRowDetector
         return new DetectionResult(headerIndex, headers, dataRows, preamble, rawIndexes, grid.Count, autoReported);
     }
 
+    /// <summary>数 [from, to) 这段行里「有内容且没被点名剔除」的行数。</summary>
+    private static int CountContentRows(
+        IReadOnlyList<string[]> grid, int from, int to, HashSet<int>? excluded)
+    {
+        var n = 0;
+        for (var r = Math.Max(0, from); r < Math.Min(to, grid.Count); r++)
+        {
+            if (excluded is not null && excluded.Contains(r)) continue;
+            if (grid[r].Any(c => !string.IsNullOrWhiteSpace(c))) n++;
+        }
+        return n;
+    }
+
     /// <summary>把一行补齐到表宽（Excel 的稀疏行右边那几格根本不存在，不是空串）。</summary>
     private static string[] Pad(string[] row, int width)
     {
@@ -112,13 +156,17 @@ public static class HeaderRowDetector
         return padded;
     }
 
-    /// <summary>按打分找表头行（前 <see cref="ScanWindow"/> 行里得分最高的那行）。</summary>
+    /// <summary>
+    /// 给<strong>全表每一行</strong>打分，取最高分那行当表头。
+    /// <para>为什么不再只扫前几行（导入层第 1 棒）：工厂表的列名不总在上面——TOP 那张 411 行表
+    /// 把列名写在最后一行（r410），上面 409 行全是货。只扫前 8 行时软件会把 r1 当表头，
+    /// 结果 409 行全部绑不上字段，而真表头那一行反倒被当成一条货印出来。</para>
+    /// </summary>
     private static int BestHeaderIndex(IReadOnlyList<string[]> grid, int width)
     {
-        var candidates = Math.Min(ScanWindow, grid.Count);
         var bestIndex = 0;
         var bestScore = double.MinValue;
-        for (var i = 0; i < candidates; i++)
+        for (var i = 0; i < grid.Count; i++)
         {
             var score = Score(grid[i], width, i);
             if (score > bestScore)
@@ -146,7 +194,7 @@ public static class HeaderRowDetector
         score += coverage * 3.0;
         score += (double)labelish / width * 2.0;
         score += Math.Min(aliasHits, 8) * 4.0;                // 别名命中主导
-        score -= rowIndex * 0.15;                             // 同等条件下偏好在上的行
+        score -= Math.Min(rowIndex * 0.15, RowIndexPenaltyCap);   // 同等条件偏好在上的行，但扣到顶就停（见 RowIndexPenaltyCap）
         if (nonEmpty < 2) score -= 5;                         // 只有一格基本不是表头
         return score;
     }
@@ -160,22 +208,46 @@ public static class HeaderRowDetector
         return true;
     }
 
-    /// <summary>该文本是否命中某个标准字段的别名。</summary>
-    private static bool AliasHit(string cell)
+    /// <summary>
+    /// 全部别名的归一化集合（<strong>归一化口径与 <see cref="Normalize"/> 同一个函数</strong>，两处各写一份必走样）。
+    /// <para>为什么要收合成一张表：扫描窗扩到全表之后，每一行的每一格都要问一次"这是不是列名"。
+    /// 原来每次问都要把整份字段目录连别名重扫一遍（411 行 × 7 格 × 全目录），长表上是纯浪费。</para>
+    /// </summary>
+    internal static readonly Lazy<HashSet<string>> AliasKeys = new(() =>
     {
-        var text = Normalize(cell);
-        if (text.Length == 0) return false;
+        var set = new HashSet<string>(StringComparer.Ordinal);
         foreach (var def in MarkFieldCatalog.All)
         {
-            if (string.Equals(text, Normalize(def.ChineseName), StringComparison.Ordinal)) return true;
-            if (def.EnglishLabel.Length > 1 && string.Equals(text, Normalize(def.EnglishLabel), StringComparison.Ordinal)) return true;
-            foreach (var alias in def.Aliases)
-            {
-                if (text == Normalize(alias)) return true;
-            }
+            set.Add(Normalize(def.ChineseName));
+            if (def.EnglishLabel.Length > 1) set.Add(Normalize(def.EnglishLabel));
+            foreach (var alias in def.Aliases) set.Add(Normalize(alias));
+        }
+        set.Remove(string.Empty);
+        return set;
+    });
+
+    /// <summary>
+    /// 这一格是不是一个标准字段名：<strong>整格命中，或它的任一分段命中</strong>都算。
+    /// <para>为什么要分段（导入层第 1 棒实测）：真表的列名普遍一格写中英两行——
+    /// <c>件数⏎CTN</c>、<c>货号⏎ITEM NO:</c>、<c>装件数⏎PCS/CTN</c>。<see cref="Normalize"/> 刻意删掉所有空白，
+    /// 于是「件数⏎CTN」粘成「件数ctn」，词典里没这个词 → 整张表一个别名都不命中。
+    /// TOP 那张 411 行表的真表头写在最后一行，就是靠「件数」「ctn」这两段才被认出来的。</para>
+    /// <para>口径仍是<strong>精确相等</strong>，不做包含匹配——包含会抢列（§五-66）。</para>
+    /// </summary>
+    public static bool IsKnownFieldName(string? cell)
+    {
+        var text = cell?.Trim() ?? string.Empty;
+        if (text.Length == 0) return false;
+        if (AliasKeys.Value.Contains(Normalize(text))) return true;
+        foreach (var segment in text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (AliasKeys.Value.Contains(Normalize(segment))) return true;
         }
         return false;
     }
+
+    /// <summary>该文本（或分段）是否命中某个标准字段的别名。</summary>
+    private static bool AliasHit(string cell) => IsKnownFieldName(cell);
 
     /// <summary>归一化表头：去空白、去内部空格与常见符号，便于匹配与展示。</summary>
     public static string Normalize(string? text)

@@ -837,6 +837,12 @@ public static class XlsxTableReader
         }
 
         var width = maxCol + 1;
+        // 网格下标必须等于 Excel 的行号：以前从「第一个有值的行」起铺，金沐的表头在 Excel 第 2 行、
+        // 在网格里却是第 0 行，于是体检面板、合计行的理由、AI 报的行号统统比人看到的小 1，
+        // 而贴图锚点（AnchorRow）本来就按 Excel 行号算 —— 两套序号并存一定错配（§五-29 同族）。
+        // 代价上限 2000 行：首个有值行落在 2000 行开外的不是唛头表，不为它铺两千行空数组，
+        // 那种表仍按老办法从第一个有值的行起铺（行号会偏，但现实里遇不到）。
+        if (minRow <= 2000) minRow = 0;
         var grid = new List<string[]>(maxRow - minRow + 1);
         for (var r = minRow; r <= maxRow; r++)
         {

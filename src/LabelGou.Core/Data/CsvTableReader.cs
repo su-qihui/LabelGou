@@ -150,10 +150,17 @@ public static class CsvTableReader
 /// </summary>
 public static class GridNormalizer
 {
+    /// <summary>
+    /// 把网格补齐成等宽。<strong>行号必须保住</strong>：前导与中间的空白行原样留着（它们在 Excel 里各占一行，
+    /// 删掉就等于把后面所有行的号往前挪——体检清单说「第 33 行」而人看到的是 34 行，AI 报的行号也跟着偏）。
+    /// 只砍尾部那片空白：它超出数据范围，留着只会让「原表共 N 行」虚高。
+    /// </summary>
     public static List<string[]> Normalize(List<string[]> raw)
     {
-        var kept = raw.Where(r => r.Any(c => !string.IsNullOrWhiteSpace(c))).ToList();
-        if (kept.Count == 0) return kept;
+        var end = raw.Count;
+        while (end > 0 && !raw[end - 1].Any(c => !string.IsNullOrWhiteSpace(c))) end--;
+        var kept = raw.Take(end).ToList();
+        if (kept.Count == 0) return new List<string[]>();
 
         var width = kept.Max(r => r.Length);
         var result = new List<string[]>(kept.Count);

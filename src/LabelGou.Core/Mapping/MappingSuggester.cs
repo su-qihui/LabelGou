@@ -16,7 +16,11 @@ namespace LabelGou.Core.Mapping;
 public static class MappingSuggester
 {
     /// <summary>按表头生成一份自动映射好的方案。</summary>
-    public static MappingProfile Suggest(IReadOnlyList<string> headers, string profileName = "自动匹配方案")
+    /// <param name="skipColumns">不参与自动连线的列号（① 步一级校验圈出去的右侧列：表内文字模板与指令）。
+    /// <para>为什么要这个口子：那些列被认成"版式参照/指令"之后，再自动连一个字段上去就是印到纸上的废纸；
+    /// 跳过发生在候选生成阶段，其余列的下标一个都不动。</para></param>
+    public static MappingProfile Suggest(IReadOnlyList<string> headers, string profileName = "自动匹配方案",
+        IReadOnlyList<int>? skipColumns = null)
     {
         var profile = MappingProfile.CreateFor(headers, profileName);
 
@@ -25,6 +29,7 @@ public static class MappingSuggester
 
         for (var c = 0; c < headers.Count; c++)
         {
+            if (skipColumns is not null && skipColumns.Contains(c)) continue;
             var normalized = HeaderRowDetector.Normalize(headers[c]);
             if (normalized.Length == 0) continue;
 

@@ -19,11 +19,20 @@ namespace LabelGou.Core.Data;
 /// <param name="SkipSummaryRows">自动跳过疑似合计/小计行（第 24 棒，§十-A-13 的最小改法）。
 /// <para>只在递了指令（含 <see cref="Auto"/>）时生效；命中的行会逐行说出剔了谁、凭什么（见
 /// <see cref="DetectionResult.AutoSkippedSummaryRows"/>），不默默删行；关掉即一行不剔。</para></param>
+/// <param name="SideBlocks">被认成<strong>右侧块</strong>的列（导入层第 1 棒）：厂方抄在数据区右侧的
+/// 表内文字模板、或写给操作者的指令。这些列不参与字段映射、不出唛头，但<strong>原样留着</strong>交给
+/// 版式层当参照——它们不是脏数据，删了就等于把「无参照不出模板」的参照物扔了。</param>
+/// <param name="ValueRules">值改写规则（导入层第 1 棒补）：把表里<strong>写歪了的内容</strong>在软件里改对，
+/// 例如按指令「张数等于件数」把件数列的数填进张数列、删掉货号 <c>*144</c> 这种重复尾巴。
+/// <para><strong>只改软件里的这一份视图</strong>：磁盘上用户的 xlsx 原件永远不动（用户 2026-09-13 定的
+/// 「只在软件内调整，导出是可选项」）。所以它和 SideBlocks 一样是可撤回的一条指令，不是一次写盘。</para></param>
 public sealed record SheetLayoutChoice(
     int? HeaderRowIndex = null,
     bool HasHeader = true,
     IReadOnlyList<int>? ExcludedRawRows = null,
-    bool SkipSummaryRows = true)
+    bool SkipSummaryRows = true,
+    IReadOnlyList<SideBlock>? SideBlocks = null,
+    IReadOnlyList<ValueRule>? ValueRules = null)
 {
     /// <summary>不加任何指令的那一份（自动猜表头、不点名剔行；合计行兜底仍默认开）。</summary>
     public static readonly SheetLayoutChoice Auto = new();
@@ -31,8 +40,18 @@ public sealed record SheetLayoutChoice(
     /// <summary>剔除的行数（界面与日志要说清"剔了几行"，不能让行数悄悄变少；不含自动跳过的合计行）。</summary>
     public int ExcludedCount => ExcludedRawRows?.Count ?? 0;
 
+    /// <summary>被圈出去的右侧列数。</summary>
+    public int SideBlockCount => SideBlocks?.Count ?? 0;
+
+    /// <summary>值改写规则条数。</summary>
+    public int ValueRuleCount => ValueRules?.Count ?? 0;
+
+    /// <summary>这一列是否被圈成右侧块（映射层与拼版据此跳过它）。</summary>
+    public bool IsSideColumn(int column) => SideBlocks?.Any(b => b.Column == column) ?? false;
+
     /// <summary>这条指令是不是"什么都没点名"（用来决定状态栏要不要多说一句）。</summary>
-    public bool IsDefault => HeaderRowIndex is null && HasHeader && ExcludedCount == 0 && SkipSummaryRows;
+    public bool IsDefault => HeaderRowIndex is null && HasHeader && ExcludedCount == 0
+        && SkipSummaryRows && SideBlockCount == 0 && ValueRuleCount == 0;
 
     /// <summary>给人看的一行（状态栏与 AI 提案确认窗共用；不说人话的留痕等于没留）。</summary>
     public string Describe()
@@ -42,6 +61,42 @@ public sealed record SheetLayoutChoice(
         else if (HeaderRowIndex is int row) parts.Add($"表头固定在原表第 {row + 1} 行");
         if (ExcludedCount > 0) parts.Add($"剔除 {ExcludedCount} 行不当数据");
         if (!SkipSummaryRows) parts.Add("合计行兜底已关：一行都不自动剔");
+        if (SideBlocks is { Count: > 0 } side)
+            parts.Add($"右侧 {side.Count} 列不当数据：" +
+                      string.Join("、", side.Select(b => $"{HeaderRowDetector.ColumnLetter(b.Column)} 列" +
+                                   (b.Kind == SideBlockKind.TextTemplate ? "（表内文字模板，留着给版式当参照）" : "（指令）"))));
+        if (ValueRules is { Count: > 0 } rules)
+            parts.Add("值改写：" + string.Join("、", rules.Select(ValueRuleText)));
         return parts.Count == 0 ? "切法：软件自动猜表头，不剔行" : "切法：" + string.Join("；", parts);
     }
+
+    /// <summary>一条值改写规则的人话（界面上那句短说得更细一点用）。</summary>
+    public static string ValueRuleText(ValueRule rule) => rule.Kind switch
+    {
+        ValueRuleKind.FillColumnFrom =>
+            $"{HeaderRowDetector.ColumnLetter(rule.TargetColumn)} 列的数值改成 {HeaderRowDetector.ColumnLetter(rule.SourceColumn)} 列的数值",
+        ValueRuleKind.StripStarTail =>
+            $"删掉 {HeaderRowDetector.ColumnLetter(rule.TargetColumn)} 列里 * 号及其后面的部分",
+        _ => "一条值改写规则",
+    };
+}
+
+/// <summary>值改写的种类。</summary>
+public enum ValueRuleKind
+{
+    /// <summary>目标列每行的值改成来源列的值（照指令「张数等于件数」把 B 列的件数填进 D 列）。</summary>
+    FillColumnFrom,
+    /// <summary>删掉 <c>*</c> 号及其后面那截——<strong>只删判据认得出的重复尾巴</strong>
+    /// （数字且同行别处有同值）。品名（<c>OLU4014 *CANDY CLOUDS</c>）与规格（<c>*100ml</c>）不动。</summary>
+    StripStarTail,
+}
+
+/// <param name="Kind">哪一种改写。</param>
+/// <param name="TargetColumn">被改的列（0 起）。</param>
+/// <param name="SourceColumn">取值的来源列（仅 <see cref="ValueRuleKind.FillColumnFrom"/> 用）。</param>
+/// <param name="Reason">凭什么改（界面上"凭什么"那一句，不许是空的——静默改数据是最坏的一种）。</param>
+public sealed record ValueRule(ValueRuleKind Kind, int TargetColumn, int SourceColumn = -1, string Reason = "")
+{
+    /// <summary>这一列是不是这条规则的目标列。</summary>
+    public bool Targets(int column) => TargetColumn == column;
 }
