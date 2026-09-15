@@ -632,6 +632,9 @@ public static class SheetSvgWriter
         {
             builder.Metadata("字段清单（JSON 数组）：[" + string.Join(",", fields.Select(f => "\"" + f + "\"")) + "]");
         }
+        // 第 73 棒：有几枚的文字是按那一行的真值写死的（单张定稿）。字段清单仍按基准模板列——
+        // 那是这批的字段契约；但拿这份 SVG 去 CDR 接活的人必须知道有几枚不跟表走。
+        foreach (var note in request.Source.SnapshotNotes) builder.Metadata("单张定稿：" + note);
     }
 
     /// <summary>模板毫米线宽 → SVG 线宽（走 <see cref="RenderRules"/> 的矢量口径，与位图/打印同源）。</summary>

@@ -193,32 +193,54 @@ public static class PageRasterizer
 }
 
 /// <summary>
+/// 某一行的<strong>单张定稿</strong>（第 73 棒）：它用哪份模板，以及它替出纸闸记着几笔没核的值。
+/// <para>值被写成死字之后，版面项自己不再挂 <c>NeedsReview</c>，那一笔账只能由定稿带着——
+/// 否则「单独改一张」就成了给这一张开后门绕过出纸闸。</para>
+/// </summary>
+public sealed record LabelSnapshot(LabelTemplate Template, int UnreviewedValueCount);
+
+/// <summary>
 /// 渲染快照：把"这一批标签长什么样"固定在启动导出的那一刻。
 /// 后台线程只读它，不回头碰 ViewModel（<c>BuildLayoutFor</c> 读的是 UI 线程持有的字段，跨线程直接用会打架）。
+/// <para>第 73 棒起它还管一件事：某一枚标签可能带着自己的定稿，所以"这一枚用哪份模板"只问这里，
+/// 五出口与两道闸门共用同一份答案。</para>
 /// </summary>
 public sealed class PageContentSource
 {
     private readonly LabelTemplate _template;
     private readonly IReadOnlyList<MarkRecord> _records;
     private readonly MarkTextCase _textCase;
+    private readonly Func<MarkRecord, LabelSnapshot?>? _snapshotFor;
 
     /// <param name="textCase">
     /// 这批标签的大小写口径。它跟模板与记录一起在这个时刻<strong>固定下来</strong>：
     /// 后台线程跑到一半用户改了下拉，也不能让同一批 PDF 里前几页大写、后几页小写。
     /// </param>
+    /// <param name="snapshotFor">
+    /// 第 73 棒「单张定稿」：这一条记录有没有自己的版式（返回 null = 用基准模板）。整批仍然只有一份
+    /// <see cref="Template"/> 与一套尺寸，所以拼版格子不受影响——定稿不许改标签宽高，就是为了这一条。
+    /// </param>
+    /// <param name="snapshotNotes">有哪几行是单独定稿的，给导出摘要与 SVG 元数据照实说。</param>
     public PageContentSource(LabelTemplate template, IReadOnlyList<MarkRecord> records, string sourcePath,
-        MarkTextCase textCase = MarkTextCase.AsSource)
+        MarkTextCase textCase = MarkTextCase.AsSource,
+        Func<MarkRecord, LabelSnapshot?>? snapshotFor = null,
+        IReadOnlyList<string>? snapshotNotes = null)
     {
         _template = template;
         _records = records;
         _textCase = textCase;
+        _snapshotFor = snapshotFor;
+        SnapshotNotes = snapshotNotes ?? Array.Empty<string>();
         SourceName = Path.GetFileName(sourcePath ?? string.Empty);
     }
 
     public string SourceName { get; }
 
-    /// <summary>快照里的模板（SVG 出口要说清“这些字从哪几个字段来”，只能问它）。</summary>
+    /// <summary>这批的基准模板（没被单独定稿的那些张都用它；SVG 出口要说清“这些字从哪几个字段来”，只能问它）。</summary>
     public LabelTemplate Template => _template;
+
+    /// <summary>有哪几行是单独定稿的（第 73 棒）。出口摘要与 SVG 元数据照实念这一份。</summary>
+    public IReadOnlyList<string> SnapshotNotes { get; }
 
     public int LabelCount => _records.Count;
 
@@ -260,7 +282,10 @@ public sealed class PageContentSource
         var count = 0;
         for (var i = 1; i <= _records.Count; i++)
         {
-            if (BuildAt(i)?.HasUnconfirmed == true) count++;
+            // 定稿把待核的值烤成了死字，版面项自己不再挂 NeedsReview——那笔账由定稿替闸门记着，
+            // 否则「单独改一张」就等于给这一张开后门绕过出纸闸。
+            if (BuildAt(i)?.HasUnconfirmed == true || _snapshotFor?.Invoke(_records[i - 1]) is { UnreviewedValueCount: > 0 })
+                count++;
         }
         return count;
     }
@@ -273,10 +298,21 @@ public sealed class PageContentSource
     public LabelLayout? BuildAt(int labelIndex, InkPlate plate = InkPlate.None)
     {
         if (labelIndex < 1 || labelIndex > _records.Count) return null;
+        var record = _records[labelIndex - 1];
         var context = new LayoutContext(labelIndex, Math.Max(1, _records.Count), SourceName,
             TextCase: _textCase, Plate: plate);
-        return LayoutEngine.Build(_template, _records[labelIndex - 1], context);
+        return LayoutEngine.Build(TemplateFor(record), record, context);
     }
+
+    /// <summary>
+    /// 这一条记录用哪份模板。<strong>五出口都只从这一处挑</strong>——渲染端再判一次"有没有定稿"，
+    /// 就会长出屏幕上是一支、纸上是一支（§五-149 那一族）。
+    /// </summary>
+    public LabelTemplate TemplateFor(MarkRecord record) => _snapshotFor?.Invoke(record)?.Template ?? _template;
+
+    /// <summary>第 <paramref name="labelIndex"/> 枚（1 起）实际用的那份模板。</summary>
+    public LabelTemplate TemplateAt(int labelIndex)
+        => labelIndex >= 1 && labelIndex <= _records.Count ? TemplateFor(_records[labelIndex - 1]) : _template;
 
     public Func<int, LabelLayout?> AsProvider() => index => BuildAt(index);
 

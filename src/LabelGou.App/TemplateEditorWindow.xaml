@@ -44,20 +44,25 @@
               加元素的工具不在这里——它们在左侧竖栏（CDR 的工具箱在左边）。  -->
         <Border DockPanel.Dock="Top" Background="White" BorderBrush="#DDDDDD" BorderThickness="0,0,0,1" Padding="10,8">
             <WrapPanel>
+                <TextBlock Text="{Binding ScopeNote}" Style="{StaticResource Hint}" FontWeight="Bold" Foreground="#8A5A00"
+                           Visibility="{Binding IsSnapshotMode, Converter={StaticResource BoolVis}}" Margin="0,0,12,0" />
                 <TextBlock Text="模板名：" Style="{StaticResource Caption}" />
-                <TextBox Width="170" Text="{Binding Name, UpdateSourceTrigger=LostFocus}" />
+                <TextBox Width="170" Text="{Binding Name, UpdateSourceTrigger=LostFocus}" IsEnabled="{Binding SizeFieldsEditable}" />
                 <Separator Width="14" Background="Transparent" />
 
                 <TextBlock Text="宽(mm)" Style="{StaticResource Caption}" />
-                <TextBox Width="56" Text="{Binding WidthMm, StringFormat={}{0:0.##}}" ToolTip="标签宽（毫米）" />
+                <TextBox Width="56" Text="{Binding WidthMm, StringFormat={}{0:0.##}}" IsEnabled="{Binding SizeFieldsEditable}"
+                         ToolTip="标签宽（毫米）。单张定稿里改不了：整版的格子按模板的这一个尺寸排，改了就多一页或装不下" />
                 <TextBlock Text="高(mm)" Style="{StaticResource Caption}" Margin="8,0,4,0" />
-                <TextBox Width="56" Text="{Binding HeightMm, StringFormat={}{0:0.##}}" ToolTip="标签高（毫米）" />
+                <TextBox Width="56" Text="{Binding HeightMm, StringFormat={}{0:0.##}}" IsEnabled="{Binding SizeFieldsEditable}"
+                         ToolTip="标签高（毫米）。单张定稿里改不了，同上" />
                 <TextBlock Text="内边距" Style="{StaticResource Caption}" Margin="8,0,4,0" />
                 <TextBox Width="44" Text="{Binding PaddingMm, StringFormat={}{0:0.##}}" ToolTip="内容区与纸边的距离（毫米），黄虚线就是它" />
                 <TextBlock Text="外框线" Style="{StaticResource Caption}" Margin="8,0,4,0" />
                 <TextBox Width="44" Text="{Binding BorderMm, StringFormat={}{0:0.##}}" ToolTip="0 表示不画外框" />
                 <TextBlock Text="备注" Style="{StaticResource Caption}" Margin="8,0,4,0" />
-                <TextBox Width="120" Text="{Binding Note}" ToolTip="这份模板是给谁用的、什么版式——存进模板文件里" />
+                <TextBox Width="120" Text="{Binding Note}" IsEnabled="{Binding SizeFieldsEditable}"
+                         ToolTip="这份模板是给谁用的、什么版式——存进模板文件里（单张定稿不存文件，所以这里改不了）" />
                 <Separator Width="14" Background="Transparent" />
 
                 <TextBlock Text="对齐标签：" Style="{StaticResource Caption}" />
@@ -98,7 +103,8 @@
                 <Separator Width="14" Background="Transparent" />
 
                 <Button Content="保存" FontWeight="Bold" Command="{Binding SaveCommand}" MinWidth="80" />
-                <Button Content="另存为副本" Command="{Binding SaveAsCopyCommand}" />
+                <Button Content="另存为副本" Command="{Binding SaveAsCopyCommand}" IsEnabled="{Binding SaveAsCopyEnabled}"
+                        ToolTip="把现在这份存成新的用户模板。单张定稿里不让存：里面的文字已经写死，进库会印到别的行的货上" />
                 <Button Content="放弃改动" Command="{Binding RevertCommand}" />
             </WrapPanel>
         </Border>

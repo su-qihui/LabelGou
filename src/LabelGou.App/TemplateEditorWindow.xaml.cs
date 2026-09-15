@@ -62,6 +62,13 @@ public sealed partial class TemplateEditorWindow : Window
             ResultTemplate = template;
             SavedAsCopy?.Invoke(template);
         });
+        _editor.SnapshotSaved += template => Dispatcher.Invoke(() =>
+        {
+            // 定稿走的是主窗内存里的行覆盖，不碰模板库；写回去了就可以直接关窗，不必再问一遍
+            ResultTemplate = template;
+            AllowCloseWithoutPrompt = true;
+            SnapshotSaved?.Invoke(template);
+        });
         _editor.ErrorRaised += message => Dispatcher.Invoke(() =>
             MessageBox.Show(this, message, "模板编辑", MessageBoxButton.OK, MessageBoxImage.Warning));
         _editor.AskSkipIssues = issues => Dispatcher.Invoke(() => AskSkipIssuesNow(issues));
@@ -127,6 +134,9 @@ public sealed partial class TemplateEditorWindow : Window
 
     /// <summary>另存出一份新副本（主窗口刷新列表并选中它，但编辑器仍开着改原模板）。</summary>
     public event Action<LabelTemplate>? SavedAsCopy;
+
+    /// <summary>只给这一张定了稿（第 73 棒）：与 <see cref="Saved"/> 分开，因为它一个字都没进模板库。</summary>
+    public event Action<LabelTemplate>? SnapshotSaved;
 
     /// <summary>关闭时若还有未保存改动，问一句——打印店常用的动作就是"改完直接关窗口"。</summary>
     protected override void OnClosing(CancelEventArgs e)

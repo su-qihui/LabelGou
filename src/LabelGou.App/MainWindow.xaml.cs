@@ -408,6 +408,76 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
+    /// 「编辑这一张…」：只改眼前这一行那一张（第 73 棒）。
+    /// <para>与 ③ 步那扇「编辑模板…」是同一个编辑器、同一个写入口，<strong>区别只在保存落到哪</strong>：
+    /// 这里落到主窗内存里那一行的定稿，模板库、③ 步下拉、纸规、张数与页数都不动。
+    /// 用户 2026-09-16 的原话是「我理解的单张编辑是对那一张进行更改编辑而不是全部」——
+    /// 第 70 棒只做到画布照这一行画，保存仍写库里的模板，所以跟着变的是全部。</para>
+    /// </summary>
+    private void OnEditRowSnapshotClick(object sender, RoutedEventArgs e)
+    {
+        if (_viewModel.CurrentRowOrdinal() is not { } ordinal)
+        {
+            MessageBox.Show(this,
+                "还没有可单独编辑的那一张：先导入数据、在 ④ 步跑出编号（一行多箱的货把「行检查」勾上，从缩略里点那一格）。",
+                "单张定稿", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var target = _viewModel.BeginRowSnapshot(ordinal);
+        if (target is null)
+        {
+            MessageBox.Show(this, "这一行现在出不了单张定稿（没选中模板，或这一行没有标签）。",
+                "单张定稿", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        OpenRowSnapshotEditor(target);
+    }
+
+    /// <summary>定稿模式的编辑器：只允许开一扇（与 ③ 步那扇共用同一个守卫，两个编辑器改同一批状态只会互相覆盖）。</summary>
+    private void OpenRowSnapshotEditor(MainViewModel.RowSnapshotTarget target)
+    {
+        if (_editorWindow is not null)
+        {
+            _editorWindow.Activate();
+            return;
+        }
+
+        var vm = new TemplateEditorViewModel(target.Template, _viewModel.Templates)
+        {
+            Snapshot = target,
+            SnapshotWarnings = target.Warnings,
+            // 画布照这一行的真值画（第 65/66 棒那条口径：拿没编号的第一行会让「Ctns：…件」那行无声消失）
+            PreviewRecord = target.Record,
+        };
+        var window = new TemplateEditorWindow(vm) { Owner = this };
+        // 定稿不刷新 ③ 步列表：库里什么都没多，去 ReloadTemplates 会把下拉的选中项重排一遍（第 55 棒那类）。
+        window.SnapshotSaved += saved => _viewModel.CommitRowSnapshot(target, saved);
+        window.Closed += (_, _) => _editorWindow = null;
+        _editorWindow = window;
+        window.Show();
+        Services.AppLog.Info($"打开单张定稿编辑器：{target.Title}（{target.Template.Elements.Count} 个元素，Excel 第 {target.SourceRowIndex} 行）");
+    }
+
+    /// <summary>「恢复这一张」：撤掉这一行的单张定稿。没定过稿要如实说，不能点了按钮报"已恢复"其实什么都没做。</summary>
+    private void OnRestoreRowSnapshotClick(object sender, RoutedEventArgs e)
+    {
+        if (_viewModel.CurrentRowOrdinal() is not { } ordinal)
+        {
+            MessageBox.Show(this, "现在没有对应的数据行（还没导入或没编号），没有可恢复的单张。",
+                "单张定稿", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        if (!_viewModel.RestoreRowSnapshot(ordinal))
+        {
+            MessageBox.Show(this, "这一行没有单独定过稿，现在就是跟模板一致的样子。",
+                "单张定稿", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+    }
+
+    /// <summary>
     /// ② 区「整批固定值…」：表里没这一列、但整批共用一个值（厂商表的客户名 BOLAROM 就属于这种）。
     /// <para>没数据时不开窗：里面会是十九个空行，开了也没意义。</para>
     /// </summary>

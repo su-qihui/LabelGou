@@ -341,7 +341,9 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         var template = SelectedTemplate?.Template;
         if (template is null) return null;
         var records = _records.Count > 0 ? _records : new[] { SampleRecords.StandardSample() };
-        return new PageContentSource(template, records, _sourcePath ?? string.Empty, _textCase);
+        return new PageContentSource(template, records, _sourcePath ?? string.Empty, _textCase,
+            record => SnapshotOf(record) is { } snap ? new LabelSnapshot(snap.Template, snap.UnreviewedValueCount) : null,
+            RowSnapshotNotes);
     }
 
     /// <summary>M4：模板库。编辑器与菜单共用这一个实例，不开第二份。</summary>
@@ -409,6 +411,223 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         Raise(nameof(RecordTotal));
         RebuildLayout();
         RebuildRowThumbs();
+    }
+
+    // ---------- 单张定稿（第 73 棒）----------
+
+    /// <summary>
+    /// 某一行那张纸自己的版式。用户 2026-09-16 的口径：「把那张纸和原本列表代替符切开，
+    /// 显示的就是那张那行的内容，修改后对其他没影响」，又补了一句「不能导致多出一次」。
+    /// <para>所以三条边界一条都不许越：<strong>不进模板库</strong>（③ 步下拉不会多出一份，
+    /// 它只活在这次会话里）、<strong>不改标签宽高</strong>（拼版格子按一个标量尺寸排，
+    /// 改了就会多一页或错位——正是"多出一次"）、<strong>不改张数</strong>（那一行 5 箱仍是 5 张，
+    /// 件号仍由编号引擎逐张算，见 <see cref="LabelFlattener"/>）。</para>
+    /// </summary>
+    private sealed class RowSnapshot
+    {
+        public RowSnapshot(int sourceRowIndex, string itemNo, LabelTemplate template, string baseTemplateId,
+            int unreviewedValueCount, IReadOnlyList<string> blankedTokens)
+        {
+            SourceRowIndex = sourceRowIndex;
+            ItemNo = itemNo;
+            Template = template;
+            BaseTemplateId = baseTemplateId;
+            UnreviewedValueCount = unreviewedValueCount;
+            BlankedTokens = blankedTokens;
+        }
+
+        /// <summary>Excel 里的那一行（1 起）。一览与标题都按「第几行」说话，这里翻译一次。</summary>
+        public int SourceRowIndex { get; }
+
+        /// <summary>做定稿那一刻这一行的货号：行号会因剔行/改切法而位移，货号对不上就当这条定稿不认。</summary>
+        public string ItemNo { get; }
+
+        public LabelTemplate Template { get; set; }
+
+        /// <summary>这份定稿是从哪一份模板烤出来的——换了模板它就不该再挂上来。</summary>
+        public string BaseTemplateId { get; }
+
+        /// <summary>被写死时还挂着「需人工核对」的值有几笔（出纸闸靠它，别被烤平绕过去）。</summary>
+        public int UnreviewedValueCount { get; }
+
+        /// <summary>这一行取不到值、被烤成空白的占位符（第 66 棒：空必须点名）。</summary>
+        public IReadOnlyList<string> BlankedTokens { get; }
+    }
+
+    private readonly Dictionary<int, RowSnapshot> _rowSnapshots = new();
+
+    /// <summary>这一条记录所属那一行的定稿；模板已经换过就不算（定稿是从某一份模板烤出来的）。</summary>
+    private RowSnapshot? SnapshotOf(MarkRecord record)
+        => _rowSnapshots.TryGetValue(record.SourceRowIndex, out var snap)
+           && string.Equals(snap.BaseTemplateId, SelectedTemplate?.Id, StringComparison.Ordinal)
+            ? snap : null;
+
+    /// <summary>
+    /// 这一张该用哪份模板。<strong>预览、整版、打印、PDF、位图、SVG 六道消费方共用这一个答案</strong>；
+    /// 出纸那一路走 <see cref="PageContentSource.TemplateFor"/>，两边问的是同一份字典。
+    /// <para>基准模板由调用方传：那边已经判过"没选模板"，这里再判一次会多出一条永不发生的 null 分支。</para>
+    /// </summary>
+    private LabelTemplate TemplateForRecord(LabelTemplate baseTemplate, MarkRecord record)
+        => SnapshotOf(record)?.Template ?? baseTemplate;
+
+    /// <summary>本次会话里有几行做了单张定稿。</summary>
+    public int RowSnapshotCount => _rowSnapshots.Count;
+
+    /// <summary>⑤ 步那句提示显示不显示（有定稿才占一行）。</summary>
+    public bool HasRowSnapshots => _rowSnapshots.Count > 0;
+
+    /// <summary>印前最后一道闸旁边那句照实说：哪几张是单独定稿的、它意味着什么。</summary>
+    public string RowSnapshotSummary => RowSnapshotNotes.Count == 0
+        ? string.Empty
+        : $"这一批里有 {RowSnapshotNotes.Count} 张是单独定稿的（只改了那一张，模板本身没动）。";
+
+    /// <summary>⑤ 步摘要与导出说明照实念的那几句：哪几行是单独定稿的、意味着什么。</summary>
+    public IReadOnlyList<string> RowSnapshotNotes =>
+        _rowSnapshots.Values.OrderBy(s => s.SourceRowIndex)
+            .Select(s => $"Excel 第 {s.SourceRowIndex} 行{(string.IsNullOrWhiteSpace(s.ItemNo) ? "" : "（" + s.ItemNo + "）")}是单独定稿的：那一行的文字已写死，" +
+                         "改表格里的值不会回到这张上（件号仍由软件逐张算）。")
+            .ToList();
+
+    /// <summary>一览那一格（按第几行）挂不挂「已单独定稿」角标。</summary>
+    public bool RowHasSnapshot(int ordinal)
+        => RowSheetAt(ordinal) is { } row && SnapshotAlive(row.SourceRowIndex);
+
+    private bool SnapshotAlive(int sourceRowIndex)
+        => _rowSnapshots.TryGetValue(sourceRowIndex, out var snap)
+           && string.Equals(snap.BaseTemplateId, SelectedTemplate?.Id, StringComparison.Ordinal);
+
+    /// <summary>
+    /// 「编辑这一张…」递给编辑器的东西。已经定过稿就在<b>那份定稿</b>上接着改（他上一次的改动不许被重新烤平抹掉）。
+    /// </summary>
+    /// <param name="Ordinal">第几行（一览与翻页用的那个序）。</param>
+    /// <param name="Template">可改的那份定稿模板（编辑器改的就是它，保存回写到这里）。</param>
+    /// <param name="Record">画布上当真值用的那条记录（这一行的第一张）。</param>
+    /// <param name="Title">窗口与弹窗里说清「这是哪一张」。</param>
+    /// <param name="SourceRowIndex">Excel 里的行号（定稿的键）。</param>
+    /// <param name="Warnings">编辑器校验列表里必须点名的事：烤成空白的值、还没核对的值、认不出的占位符。</param>
+    internal sealed record RowSnapshotTarget(
+        int Ordinal, LabelTemplate Template, MarkRecord Record, string Title, int SourceRowIndex,
+        IReadOnlyList<string> Warnings);
+
+    internal RowSnapshotTarget? BeginRowSnapshot(int ordinal)
+    {
+        if (RowSheetAt(ordinal) is not { } row) return null;
+        var baseTemplate = SelectedTemplate?.Template;
+        if (baseTemplate is null) return null;
+        if (row.FirstLabelIndex < 1 || row.FirstLabelIndex > _records.Count) return null;
+
+        var record = _records[row.FirstLabelIndex - 1];
+        var title = RowTitle(ordinal, row);
+        var existing = SnapshotOf(record);
+
+        // 那三句点名按「基准模板 + 这一行」现烤一遍量出来；已有定稿则沿用它当初记下的那两笔，
+        // 因为写死之后模板里已经没有令牌可量了（重烤一份基准模板只为拿告警，成本远低于两套口径）。
+        var evidence = LabelFlattener.Flatten(baseTemplate, record);
+        var warnings = SnapshotWarnings(existing is not null ? existing.BlankedTokens : evidence.BlankedTokens,
+            existing?.UnreviewedValueCount ?? evidence.UnreviewedFields.Count, evidence.UnknownTokens);
+
+        var working = existing is not null
+            ? existing.Template.CloneAsUserCopy(existing.Template.Name)
+            : evidence.Template;
+        return new RowSnapshotTarget(ordinal, working, record, title, row.SourceRowIndex, warnings);
+    }
+
+    private static IReadOnlyList<string> SnapshotWarnings(
+        IReadOnlyList<string> blanks, int unreviewedCount, IReadOnlyList<string> unknown)
+    {
+        var lines = new List<string>();
+        if (blanks.Count > 0)
+            lines.Add($"这一行这几项本来就没值，已烤成空白：{string.Join("、", blanks)}——那一行的位置会留着，要它有字得回 ② 步把列连上。");
+        if (unreviewedCount > 0)
+            lines.Add($"这一张上有 {unreviewedCount} 个值还没人工核对：写进定稿不等于核过了，⑤ 步出纸前那道闸照旧拦。");
+        if (unknown.Count > 0)
+            lines.Add($"模板里有认不出的占位符：{string.Join("、", unknown)}，定稿不替它编值，按空处理。");
+        return lines;
+    }
+
+    /// <summary>
+    /// 编辑器保存定稿。<strong>只写这张内存里的副本，一个字节都不进模板库</strong>，
+    /// 所以主窗的模板列表、④ 步的纸规、张数与页数全都不会跟着动。
+    /// </summary>
+    internal void CommitRowSnapshot(RowSnapshotTarget target, LabelTemplate edited)
+    {
+        if (edited is null) throw new ArgumentNullException(nameof(edited));
+        // 宽高是拼版格子的唯一依据（ImpositionEngine 吃一个标量尺寸）。定稿改了它 = 多一页或装不下，
+        // 界面上那两格在定稿模式里是灰的，这里再兜一道：数值被动过就按基准模板的尺寸钉回去。
+        var baseTemplate = SelectedTemplate?.Template
+                           ?? throw new InvalidOperationException("定稿期间模板被清空了，没地方钉尺寸。");
+        edited.WidthMm = baseTemplate.WidthMm;
+        edited.HeightMm = baseTemplate.HeightMm;
+
+        // 那两笔账按「基准模板 + 这一行」现烤一遍量出来：一次存盘算一次，不贵，
+        // 分成"新做的"与"改过的"两条路迟早各算各的（§五-122 那一族）。
+        var evidence = LabelFlattener.Flatten(baseTemplate, target.Record);
+
+        _rowSnapshots[target.SourceRowIndex] = new RowSnapshot(
+            target.SourceRowIndex, target.Record.GetText(MarkFieldKey.ItemNo), edited, baseTemplate.Id,
+            evidence.UnreviewedFields.Count, evidence.BlankedTokens);
+
+        StatusMessage = $"{target.Title}：已只给这一张定稿，其他行与这份模板本身都没动。";
+        RowSnapshotLostNotice = null;         // 上一条「已作废」的告示别再挂着
+        Raise(nameof(RowSnapshotLostNotice));
+        AppLog.Info($"单张定稿：{target.Title}（基准模板 {baseTemplate.Id}，写死元素 {edited.Elements.Count} 个）");
+        RefreshLayoutAndThumbs();
+    }
+
+    /// <summary>某一行恢复成跟模板一致。返回 true 表示真撤掉了什么（没定过稿不该报"已恢复"）。</summary>
+    public bool RestoreRowSnapshot(int ordinal)
+    {
+        if (RowSheetAt(ordinal) is not { } row || !_rowSnapshots.Remove(row.SourceRowIndex)) return false;
+        StatusMessage = $"{RowTitle(ordinal, row)}：已恢复成跟模板一致。";
+        RefreshLayoutAndThumbs();
+        return true;
+    }
+
+    /// <summary>全部恢复成跟模板一致。</summary>
+    public void RestoreAllRowSnapshots()
+    {
+        if (_rowSnapshots.Count == 0) return;
+        var n = _rowSnapshots.Count;
+        _rowSnapshots.Clear();
+        StatusMessage = $"已恢复 {n} 张单独定稿，现在全部照模板排。";
+        RefreshLayoutAndThumbs();
+    }
+
+    /// <summary>
+    /// 最近一次定稿作废的说明（占一条自己的界面行，不只靠状态栏）。
+    /// <para>状态栏那一句会被后面的写家盖掉——换模板时纸规跟着换要说一句、导入完连线结果要说一句
+    /// （§五-129 同一族）。"你单独改的那几张没了"这种消息不能被盖。</para>
+    /// </summary>
+    public string? RowSnapshotLostNotice { get; private set; }
+
+    /// <summary>
+    /// 结构一动，定稿必须<strong>当面作废</strong>：定稿的键是 Excel 行号，而剔一行、改列名行、换表、
+    /// 换模板都会让行号位移或让"从哪份模板烤的"失效。留着它 = 静默把旧字挂到别的行上（赔钱形态）。
+    /// </summary>
+    private void InvalidateRowSnapshots(string reason)
+    {
+        if (_rowSnapshots.Count == 0) return;
+        var rows = string.Join("、", _rowSnapshots.Keys.OrderBy(k => k).Select(k => $"第 {k} 行"));
+        _rowSnapshots.Clear();
+        RowSnapshotLostNotice = $"{reason}，之前单独定稿的 {rows} 已作废（现在全部照模板排）。要再改那一张，重新点「编辑这一张…」。";
+        StatusMessage = RowSnapshotLostNotice;
+        AppLog.Warning($"单张定稿作废（{reason}）：{rows}");
+        // 版面由调用那一路重算（换模板的 setter 与 LoadSource 后面各自都会排一遍），这里只发通知
+        Raise(nameof(RowSnapshotCount));
+        Raise(nameof(HasRowSnapshots));
+        Raise(nameof(RowSnapshotSummary));
+        Raise(nameof(RowSnapshotLostNotice));
+    }
+
+    /// <summary>定稿变了以后要重算的那几样：单标签、整版、缩略一览（模板没换，编号与张数一律不动）。</summary>
+    private void RefreshLayoutAndThumbs()
+    {
+        RebuildLayout();
+        Sheet.RebuildPlan();
+        RebuildRowThumbs();
+        Raise(nameof(RowSnapshotCount));
+        Raise(nameof(HasRowSnapshots));
+        Raise(nameof(RowSnapshotSummary));
     }
 
     IReadOnlyList<MarkRecord> ILabelSource.RawRecords => _rawRecords;
@@ -628,6 +847,9 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
             {
                 TemplateInfoText = DescribeTemplate(value?.Template);
                 BumpDataGeneration();
+                // 定稿是从某一份模板烤出来的：换了模板还把它挂上来，那一行就会印成上一份模板的脸（静默、
+                // 且用户以为已经跟着新模板改了）。所以换模板当面作废，不作废的那条路才是危险路。
+                InvalidateRowSnapshots("换了模板");
                 // 第 68 棒：纸规跟着模板走（用户「只要长宽是 140×100，纸规自动变成 280×200 的 2×2 排布」）。
                 // 排在重算之前——拿旧纸先排一遍再换纸就是白算一趟，而且那一版的枚数会闪一下。
                 // 这里不碰 StepIndex：他明确说「不用跳转到④页面」。
@@ -1133,6 +1355,24 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
 
     private RowSheet? RowSheetAt(int ordinal) => ordinal >= 1 && ordinal <= _rowSheets.Count ? _rowSheets[ordinal - 1] : null;
 
+    /// <summary>
+    /// 眼前预览的这一张属于<strong>第几行</strong>。行检查开着时翻页本来就按行走，直接就是它；
+    /// 关着时 <see cref="CurrentIndex"/> 是第几张标签，按那一行的数据行号反查回来。
+    /// <para>「编辑这一张…」与「恢复这一张」都问这一处，界面不许自己拿下标猜（第 73 棒）。</para>
+    /// </summary>
+    public int? CurrentRowOrdinal()
+    {
+        if (_rowSheets.Count == 0) return null;
+        if (_rowCheck) return Math.Clamp(Math.Max(1, _currentIndex), 1, _rowSheets.Count);
+        if (_currentIndex < 1 || _currentIndex > _records.Count) return null;
+        var rowIndex = _records[_currentIndex - 1].SourceRowIndex;
+        for (var i = 0; i < _rowSheets.Count; i++)
+        {
+            if (_rowSheets[i].SourceRowIndex == rowIndex) return i + 1;
+        }
+        return null;
+    }
+
     /// <summary>行检查下按「第几行」画那张（取该行第一张标签）。</summary>
     private LabelLayout? BuildLayoutForRow(int ordinal)
         => RowSheetAt(ordinal) is { } row ? BuildLayoutFor(row.FirstLabelIndex) : null;
@@ -1145,7 +1385,7 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         for (var ordinal = 1; ordinal <= _rowSheets.Count; ordinal++)
         {
             var row = _rowSheets[ordinal - 1];
-            RowThumbs.Add(new RowThumb(ordinal, RowTitle(ordinal, row), BuildLayoutForRow(ordinal)));
+            RowThumbs.Add(new RowThumb(ordinal, RowTitle(ordinal, row), BuildLayoutForRow(ordinal), RowHasSnapshot(ordinal)));
         }
     }
 
@@ -1164,8 +1404,10 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
     private string RowTitle(int ordinal, RowSheet row)
         => $"第 {ordinal} / {_rowSheets.Count} 行：{(string.IsNullOrWhiteSpace(row.ItemNo) ? "（无货号）" : row.ItemNo)}，本行 {row.SheetCount} 张";
 
-    /// <summary>行检查的标题：第几行 / 共几行 · 货号 · 本行几张纸。</summary>
-    private string? RowCheckInfo(int ordinal) => RowSheetAt(ordinal) is { } row ? RowTitle(ordinal, row) : null;
+    /// <summary>行检查的标题：第几行 / 共几行 · 货号 · 本行几张纸（单独定过稿的那一行要多说一句）。</summary>
+    private string? RowCheckInfo(int ordinal) => RowSheetAt(ordinal) is { } row
+        ? RowTitle(ordinal, row) + (SnapshotAlive(row.SourceRowIndex) ? " · 已单独定稿" : string.Empty)
+        : null;
 
     /// <summary>一行折出来的检查条目：数据行号、该行第一张标签的序号、本行几张纸、货号（标题用）。</summary>
     public sealed class RowSheet
@@ -1190,11 +1432,12 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
     /// <summary>缩略一览里的一格：第几行、标题、那一行第一张的版面。点格跳转用 Ordinal。</summary>
     public sealed class RowThumb
     {
-        public RowThumb(int ordinal, string title, LabelLayout? layout)
+        public RowThumb(int ordinal, string title, LabelLayout? layout, bool hasSnapshot = false)
         {
             Ordinal = ordinal;
             Title = title;
             Layout = layout;
+            HasSnapshot = hasSnapshot;
         }
 
         /// <summary>第几行（1 起，按表格行序）。测试与跳转都以它为准，不靠集合下标猜。</summary>
@@ -1203,6 +1446,9 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         public string Title { get; }
 
         public LabelLayout? Layout { get; }
+
+        /// <summary>这一行是不是单独定过稿（一览格上那颗角标 + 判据读这一个字段）。</summary>
+        public bool HasSnapshot { get; }
     }
 
     /// <summary>当前预览第几条（1 起）；0 表示示意预览。</summary>
@@ -1656,6 +1902,9 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
             var data = TableImporter.Import(path, sheet, _choice);
             _data = data;
             BumpDataGeneration();
+            // 定稿的键是 Excel 行号。换表、换工作表、改列名行、剔行、一键修复都会让行号整体位移，
+            // 留着旧定稿＝把上一行烤死的字挂到下一行上，所以重读一次就当面作废一次。
+            InvalidateRowSnapshots(newTable ? "换了数据源" : "这张表重新切过");
             SourcePath = data.SourceFile;
 
             Sheets.Clear();
@@ -2326,24 +2575,31 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
     /// </summary>
     private LabelLayout? BuildLayoutFor(int index)
     {
-        var template = SelectedTemplate?.Template;
-        if (template is null) return null;
+        var baseTemplate = SelectedTemplate?.Template;
+        if (baseTemplate is null) return null;
 
         MarkRecord record;
         int effectiveIndex;
         int total;
+        bool realRecord;
         if (index >= 1 && index <= _records.Count)
         {
             record = _records[index - 1];
             effectiveIndex = index;
             total = Math.Max(1, _records.Count);
+            realRecord = true;
         }
         else
         {
             record = SampleRecords.StandardSample();
             effectiveIndex = 1;
             total = Math.Max(1, _records.Count);
+            realRecord = false;
         }
+
+        // 定稿只认真数据：退回样例那一路不挂定稿。这一处与 PageContentSource 那边问的是同一份字典——
+        // 屏幕上一支、纸上一支就是第 73 棒要防的那件事。
+        var template = realRecord ? TemplateForRecord(baseTemplate, record) : baseTemplate;
 
         // 预览（单标签与整版）带参考底图，打印/导出走 PageContentSource，那边默认不含
         return LayoutEngine.Build(template, record,

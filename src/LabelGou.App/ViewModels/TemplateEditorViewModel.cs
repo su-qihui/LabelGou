@@ -76,7 +76,46 @@ public sealed class TemplateEditorViewModel : ObservableObject
     /// 弹窗里报给用户的那个文件名（第 57 棒）：存过就是磁盘上的那份，<strong>还没存过</strong>就报
     /// 「保存后会得到的名字」——名字只认 <see cref="TemplateStore.MakeFileName"/> 这一处算法，不在这里再拼一遍。
     /// </summary>
-    internal string DocumentFileName => _savedFileName ?? TemplateStore.MakeFileName(_template);
+    internal string DocumentFileName => IsSnapshotMode
+        // 定稿不落盘，退出弹窗里报一个"不会存在的文件名"就是骗人（第 57 棒那句问话在这要换成说的是哪一张）。
+        ? Snapshot!.Title + "（单张定稿，不写进模板库）"
+        : _savedFileName ?? TemplateStore.MakeFileName(_template);
+
+    // ---------- 第 73 棒 · 单张定稿模式 ----------
+
+    /// <summary>
+    /// 非 null 就是<strong>只改这一张</strong>：保存写回主窗的行定稿，一个字节都不进模板库。
+    /// <para>为什么要有这个模式（用户 2026-09-16）：「我理解的单张编辑是对那一张进行更改编辑而不是全部，
+    /// 目前就是我在单张编辑更改后还是进行全部跟随了」。第 70 棒那一步只做到"画布照这一行的数据画"，
+    /// 保存仍写库里的模板，所以跟着变的是全部——差的不是手势，是一份能挂在这一行上的版式副本。</para>
+    /// </summary>
+    internal MainViewModel.RowSnapshotTarget? Snapshot { get; set; }
+
+    /// <summary>定稿模式下要顶在元素上的一句提醒（烤成空白的占位符）。</summary>
+    internal IReadOnlyList<string>? SnapshotWarnings { get; set; }
+
+    public bool IsSnapshotMode => Snapshot is not null;
+
+    /// <summary>
+    /// 标签宽高与另存副本在定稿模式下不许动：<c>ImpositionEngine.Build</c> 只吃
+    /// 一个标量尺寸，改了这一张的宽高就会让整版的格子与实际画出来的对不上（多一页或装不下），
+    /// 而"另存为副本"会把写死的字带进模板库，别的行拿它去印就全印成这一行的货。
+    /// </summary>
+    public bool SizeFieldsLocked => IsSnapshotMode;
+
+    /// <summary>顶栏那两格与模板名绑 <c>IsEnabled</c> 用（窗口里没有布尔取反转换器，提示条那个只管显示）。</summary>
+    public bool SizeFieldsEditable => !IsSnapshotMode;
+
+    /// <summary>「另存为副本」那颗按钮的可点性：定稿模式里它是灰的，原因写在按钮的 ToolTip 与顶栏提示里。</summary>
+    public bool SaveAsCopyEnabled => !IsSnapshotMode;
+
+    /// <summary>顶栏那句"现在改的是谁"。</summary>
+    public string ScopeNote => IsSnapshotMode
+        ? $"正在改的是 {Snapshot!.Title} 这一张：保存只影响它，不写模板库，标签尺寸不能改。"
+        : "正在改的是这份模板本身：用它的标签会一起变。";
+
+    /// <summary>定稿保存成功（主窗据此写回行定稿并刷新预览）。</summary>
+    internal event Action<LabelTemplate>? SnapshotSaved;
 
     private MarkRecord? _previewRecord;
 
@@ -183,9 +222,11 @@ public sealed class TemplateEditorViewModel : ObservableObject
 
     // ---------- 模板级属性 ----------
 
-    public string Title => IsBuiltInSource
-        ? $"编辑模板（内置模板的副本）：{_template.Name}"
-        : $"编辑模板：{_template.Name}";
+    public string Title => IsSnapshotMode
+        ? $"单张定稿：{Snapshot!.Title}（只改这一张）"
+        : IsBuiltInSource
+            ? $"编辑模板（内置模板的副本）：{_template.Name}"
+            : $"编辑模板：{_template.Name}";
 
     public string Name
     {
@@ -1765,6 +1806,21 @@ public sealed class TemplateEditorViewModel : ObservableObject
     {
         SyncIntoTemplate();
         if (GateSave(out var allowOffLabel)) return;
+
+        if (Snapshot is { } target)
+        {
+            // 定稿只写主窗那份内存里的行覆盖：模板库、③ 步下拉、纸规、张数、页数一个都不动。
+            // 刻意不发 Saved——主窗订阅的是「库里存好了，去刷新 ③ 步列表并选中」，这里库里什么都没多。
+            IsDirty = false;
+            Raise(nameof(IsDirty));
+            RecomputeIssues();
+            SnapshotSaved?.Invoke(_template);
+            StatusText = $"已只给{target.Title}定稿；这份模板本身没动，其他行不受影响。";
+            AppLog.Info($"单张定稿保存：{target.Title}（未写模板库）");
+            CloseRequested?.Invoke();
+            return;
+        }
+
         var stale = _savedFileName is null ? null : Path.Combine(_store.UserDirectory, _savedFileName);
         var (saved, fileName, issues) = _store.Save(_template, allowOffLabel: allowOffLabel);
         if (!saved)
@@ -1798,6 +1854,13 @@ public sealed class TemplateEditorViewModel : ObservableObject
     /// <summary>另存为用户副本（内置模板或想留底时用）。</summary>
     public void SaveAsCopy()
     {
+        if (IsSnapshotMode)
+        {
+            // 顶栏那颗按钮在定稿模式里是灰的；这一道兜住任何绕过界面的调用（脚本、快捷键、以后加的入口）。
+            Report("这一张的定稿不能另存成模板：里面的文字已经写死，别的行拿它去印会全印成这一行的货。要留底请在③ 步「编辑模板…」里改模板。");
+            return;
+        }
+
         SyncIntoTemplate();
         if (GateSave(out var allowOffLabel)) return;
         var copy = TemplateFactory.CopyOf(_template, string.IsNullOrWhiteSpace(Name) ? _template.Name + " 副本" : Name.Trim() + " 副本");
@@ -1820,6 +1883,13 @@ public sealed class TemplateEditorViewModel : ObservableObject
     /// <summary>丢弃未保存的改动，回到上次保存的样子。</summary>
     public void Revert()
     {
+        if (IsSnapshotMode)
+        {
+            Report("这一张的定稿不存文件，没有「上次保存的版本」可回退：窗内改错了用「撤销」(Ctrl+Z)；" +
+                   "要整张回到模板的样子，关掉这扇窗后在缩略一览里点那一格的「恢复成跟模板一致」。");
+            return;
+        }
+
         if (_savedFileName is null)
         {
             Report("这份模板还没保存过，没有可回退的版本。");
@@ -2106,7 +2176,11 @@ public sealed class TemplateEditorViewModel : ObservableObject
         // Core 量不到墨迹，"字排到纸外"那条只能由这里补——补在唯一的写入口上，
         // 否则存盘后拿 Store 的结果一覆盖，那条提示就凭空消失（第 62 棒审计）。
         issues = WithInkOverflow(issues);
-        Issues = issues.Select(i => i.Message).ToList();
+        var lines = issues.Select(i => i.Message).ToList();
+        // 定稿模式：这一行哪些值本来就取不到（被烤成空白）必须点名——第 66 棒那条「空行必须点名」
+        // 在定稿这里更容易被忘掉，因为令牌已经没了，校验器再也没机会替我们说这句话。
+        if (SnapshotWarnings is { Count: > 0 }) lines.AddRange(SnapshotWarnings);
+        Issues = lines;
         HasError = issues.HasError();
         Raise(nameof(Issues));
         Raise(nameof(HasIssues));

@@ -850,6 +850,9 @@
 
                             <TextBlock Text="{Binding Export.SelectionText}" Style="{StaticResource Hint}" TextWrapping="Wrap" Margin="0,6,0,0" />
                             <TextBlock Text="{Binding Export.FitText}" Style="{StaticResource Hint}" TextWrapping="Wrap" Margin="0,2,0,0" />
+                            <TextBlock Text="{Binding RowSnapshotSummary}" Style="{StaticResource Hint}" TextWrapping="Wrap"
+                                       Foreground="#8A5A00" Margin="0,2,0,0"
+                                       Visibility="{Binding HasRowSnapshots, Converter={StaticResource BoolVis}}" />
                             <TextBlock Text="{Binding Export.StatusText}" Foreground="#1B5E20" TextWrapping="Wrap" Margin="0,4,0,0" />
 
                             <TextBlock Text="打印尺寸按毫米 1:1 交给驱动，导出与预览共用同一套画法；如果驱动里开了“适应页面”，打出来就会变小，请先关掉该选项。"
@@ -913,8 +916,10 @@
                                 <Button Content="下一件 ▶" Command="{Binding NextRecordCommand}" />
                                 <Button Content="末件 ⏭" Command="{Binding LastRecordCommand}" />
                                 <Button Content="示意预览" Command="{Binding SamplePreviewCommand}" ToolTip="用内置样例数据看版式效果" />
-                                <Button Content="编辑这一张…" Click="OnEditTemplateClick" MinWidth="86"
-                                        ToolTip="打开模板编辑器，画布照眼前这一张的数据画（行检查开着就是这一行的第一张）——&#10;哪一行字探出边界，照它拖回去。&#10;改的是这份模板，用它的标签一起变；内置模板会先存成自己的副本。" />
+                                <Button Content="编辑这一张…" Click="OnEditRowSnapshotClick" MinWidth="86"
+                                        ToolTip="只改眼前这一张：打开的编辑器里文字已按这一行的真值写死，保存只影响这一行，&#10;模板本身与别的行都不动（内置模板也一样，不产出副本）。&#10;件号 No.x/y 仍由软件逐张算，不会五箱印成同一个号。&#10;要改整份模板请用 ③ 步的「编辑模板…」。" />
+                                <Button Content="恢复这一张" Click="OnRestoreRowSnapshotClick" MinWidth="72"
+                                        ToolTip="把眼前这一行那张退回「跟模板一致」的样子（只撤这一行的单独定稿；本次会话内的改动，换表或换模板会自动作废）" />
                                 <Separator Width="14" Background="Transparent" />
                                 <!-- 行检查（用户 2026-09-14：「直接在单个标签页面添加一个开关（行检查）就把张数缩略了，
                                      还有开关（折叠）可以全部检查和单个检查」）：一行几张纸的货，核对内容时只看第一张 -->
@@ -978,6 +983,9 @@
                                                         <StackPanel VerticalAlignment="Top">
                                                             <TextBlock Text="{Binding Title}" FontSize="11.5" FontWeight="Bold"
                                                                        TextTrimming="CharacterEllipsis" Margin="4,0,4,3" />
+                                                            <TextBlock Text="已单独定稿（只这一张）" FontSize="10.5" Foreground="#8A5A00"
+                                                                       Visibility="{Binding HasSnapshot, Converter={StaticResource BoolVis}}"
+                                                                       Margin="4,0,4,2" />
                                                             <Border Background="White" BorderBrush="#CDD3DA" BorderThickness="1"
                                                                     Padding="4" HorizontalAlignment="Stretch">
                                                                 <!-- Viewbox 按格宽缩放：切不满也溢不出，窗口拉宽拉窄跟着变 -->
@@ -1000,8 +1008,10 @@
                             <StackPanel Grid.Row="2" Margin="0,8,0,0">
                                 <TextBlock Text="{Binding TokenNoteText}" Style="{StaticResource Hint}"
                                            Foreground="#B25A00" TextWrapping="Wrap" />
+                                <TextBlock Text="{Binding RowSnapshotLostNotice}" Style="{StaticResource Hint}"
+                                           Foreground="#B3261E" FontWeight="Bold" TextWrapping="Wrap" />
                                 <TextBlock Style="{StaticResource Hint}" TextWrapping="Wrap"
-                                           Text="说明：此处已是编号后的单张标签（一行多箱时会展开成多张）；预览按毫米真实尺寸绘制，打印/PDF（M3）复用同一份版面数据。&#10;勾「行检查」= 一行只画第一张（标题写本行几张纸）；再勾「全部行」= 一行摆 10 格往下排，点任意一格就跳到那一行并收起一览。&#10;哪一张要改（字探出边界之类）就点「编辑这一张…」——画布照眼前这一张的数据画。这两态只改这里怎么看，出片仍是整份标签。" />
+                                           Text="说明：此处已是编号后的单张标签（一行多箱时会展开成多张）；预览按毫米真实尺寸绘制，打印/PDF（M3）复用同一份版面数据。&#10;勾「行检查」= 一行只画第一张（标题写本行几张纸）；再勾「全部行」= 一行摆 10 格往下排，点任意一格就跳到那一行并收起一览。这两态只改这里怎么看，出片仍是整份标签。&#10;「编辑这一张…」= 只改这一张：打开时那一行的文字已按真值写死，保存只影响这一行，模板本身与别的行都不动（件号 No.x/y 仍由软件逐张算）。改错了点旁边「恢复这一张」退回跟模板一致。" />
                             </StackPanel>
                         </Grid>
                     </TabItem>
