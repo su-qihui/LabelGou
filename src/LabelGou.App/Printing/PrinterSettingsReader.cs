@@ -79,12 +79,19 @@ public static class PrinterSettingsReader
 
     /// <summary>
     /// 弹驱动自己的首选项页（就是 CorelDRAW 里那颗「属性(P)…」打开的同一页）。
-    /// 返回 true 表示用户按了确定；调用方应当随后再 <see cref="Read"/> 一次刷新显示。
+    /// <para>
+    /// 关键在返回之后：`DM_IN_PROMPT | DM_OUT_BUFFER` 只把用户的选择**交回给调用方**，驱动自己不落盘
+    /// （实测过：以前我们把它丢掉，所以重开那页看着像记住了、作业却照旧走默认）。这里做两件事——
+    /// ① 与原值逐字节比差并写日志（搞清「手送台 / 标签纸」住在哪几个字节）；
+    /// ② 写回 `HKCU\Printers\DevModePerUser`，这才是本用户默认值的存放处（实测：改这份 blob 后
+    /// <c>DocumentProperties</c> 立刻读到新值）。
+    /// </para>
     /// </summary>
-    public static bool OpenDriverPreferences(string? printerName, IntPtr owner)
+    /// <returns>用户按了确定时返回差异说明；取消或失败返回 null。</returns>
+    public static string? OpenDriverPreferences(string? printerName, IntPtr owner)
     {
         var name = ResolveName(printerName);
-        if (name is null) return false;
+        if (name is null) return null;
         IntPtr hPrinter = IntPtr.Zero;
         try
         {
@@ -92,29 +99,94 @@ public static class PrinterSettingsReader
             if (!OpenPrinterW(name, out hPrinter, IntPtr.Zero))
             {
                 AppLog.Info($"打开打印机句柄失败（{name}）：{Marshal.GetLastWin32Error()}");
-                return false;
+                return null;
             }
             int size = DocumentPropertiesW(owner, hPrinter, name, IntPtr.Zero, IntPtr.Zero, DM_OUT_BUFFER);
-            if (size <= 0) return false;
-            IntPtr buffer = Marshal.AllocHGlobal(size);
+            if (size <= 0) return null;
+            IntPtr before = Marshal.AllocHGlobal(size);
+            IntPtr after = Marshal.AllocHGlobal(size);
             try
             {
-                if (DocumentPropertiesW(owner, hPrinter, name, buffer, IntPtr.Zero, DM_OUT_BUFFER) <= 0)
-                    return false;
-                // DM_IN_PROMPT：驱动弹它自己那一页；确定返回 >0，取消返回 <=0
-                return DocumentPropertiesW(owner, hPrinter, name, buffer, buffer, DM_IN_PROMPT | DM_OUT_BUFFER) > 0;
+                if (DocumentPropertiesW(owner, hPrinter, name, before, IntPtr.Zero, DM_OUT_BUFFER) <= 0)
+                    return null;
+                CopyMemory(after, before, (uint)size);
+                if (DocumentPropertiesW(owner, hPrinter, name, after, before, DM_IN_PROMPT | DM_OUT_BUFFER) <= 0)
+                    return null;            // 用户按了取消
+
+                var oldBytes = ReadBytes(before, size);
+                var newBytes = ReadBytes(after, size);
+                var diff = DescribeDiff(oldBytes, newBytes);
+                var persisted = WriteUserDevMode(name, newBytes);
+                AppLog.Info($"驱动首选项页返回差异：{diff}；写回本用户默认（DevModePerUser）{(persisted ? "成功" : "失败")}");
+                return diff + (persisted ? string.Empty : "（写回注册表失败，这次改动不会生效）");
             }
-            finally { Marshal.FreeHGlobal(buffer); }
+            finally
+            {
+                Marshal.FreeHGlobal(before);
+                Marshal.FreeHGlobal(after);
+            }
         }
         catch (Exception ex)
         {
             AppLog.Info($"弹驱动首选项失败（{name}）：{Describe(ex)}");
-            return false;
+            return null;
         }
         finally
         {
             if (hPrinter != IntPtr.Zero) ClosePrinter(hPrinter);
         }
+    }
+
+    private static byte[] ReadBytes(IntPtr ptr, int count)
+    {
+        var bytes = new byte[count];
+        Marshal.Copy(ptr, bytes, 0, count);
+        return bytes;
+    }
+
+    /// <summary>公开字段里我们看得懂的那几个（偏移按 DEVMODEW 布局，与 Canon 那份对过）。</summary>
+    private static readonly (string Name, int Offset)[] KnownFields =
+    {
+        ("dmPaperSize", 78), ("dmCopies", 86), ("dmDefaultSource", 88), ("dmDuplex", 94),
+        ("dmMediaType", 196),
+    };
+
+    private static string DescribeDiff(byte[] oldBytes, byte[] newBytes)
+    {
+        var fields = new List<string>();
+        foreach (var (fieldName, offset) in KnownFields)
+        {
+            var a = ToUInt16(oldBytes, offset);
+            var b = ToUInt16(newBytes, offset);
+            if (a != b) fields.Add($"{fieldName} {a}→{b}");
+        }
+        var ranges = new List<string>();
+        int start = -1;
+        for (var i = 0; i < Math.Min(oldBytes.Length, newBytes.Length); i++)
+        {
+            if (oldBytes[i] == newBytes[i])
+            {
+                if (start >= 0) { ranges.Add($"{start}-{i - 1}"); start = -1; }
+            }
+            else if (start < 0) start = i;
+        }
+        if (start >= 0) ranges.Add($"{start}-{Math.Min(oldBytes.Length, newBytes.Length) - 1}");
+        return $"公开字段：{(fields.Count == 0 ? "没变" : string.Join("、", fields))}；"
+             + $"字节差异区间：{(ranges.Count == 0 ? "无" : string.Join("、", ranges))}";
+    }
+
+    private static ushort ToUInt16(byte[] bytes, int offset) =>
+        offset + 1 < bytes.Length ? (ushort)(bytes[offset] | (bytes[offset + 1] << 8)) : (ushort)0;
+
+    /// <summary>写 HKCU\Printers\DevModePerUser\&lt;打印机名&gt;——本用户默认 DEVMODE 的存放处。</summary>
+    private static bool WriteUserDevMode(string printerName, byte[] blob)
+    {
+        if (RegOpenKeyExW(HKEY_CURRENT_USER, UserDefaultsKey, 0, KEY_SET_VALUE, out var hKey) != 0) return false;
+        try
+        {
+            return RegSetValueExW(hKey, printerName, 0, REG_BINARY, blob, blob.Length) == 0;
+        }
+        finally { RegCloseKey(hKey); }
     }
 
     private static string? ResolveName(string? printerName)
@@ -140,6 +212,11 @@ public static class PrinterSettingsReader
     private const int DM_OUT_BUFFER = 0x0002;
     private const int DM_IN_PROMPT = 0x0004;
 
+    private const string UserDefaultsKey = @"Printers\DevModePerUser";
+    private static readonly IntPtr HKEY_CURRENT_USER = new(unchecked((int)0x80000000));
+    private const int KEY_SET_VALUE = 0x0002;
+    private const int REG_BINARY = 3;
+
     [DllImport("winspool.drv", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern bool OpenPrinterW(string pPrinterName, out IntPtr phPrinter, IntPtr pDefault);
 
@@ -149,4 +226,18 @@ public static class PrinterSettingsReader
     [DllImport("winspool.drv", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern int DocumentPropertiesW(
         IntPtr hWnd, IntPtr hPrinter, string pDeviceName, IntPtr pDevModeOutput, IntPtr pDevModeInput, int fMode);
+
+    [DllImport("kernel32.dll")]
+    private static extern void CopyMemory(IntPtr destination, IntPtr source, uint length);
+
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern int RegOpenKeyExW(
+        IntPtr hKey, string subKey, int options, int samDesired, out IntPtr phkResult);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern int RegSetValueExW(
+        IntPtr hKey, string valueName, int reserved, int type, byte[] data, int length);
+
+    [DllImport("advapi32.dll")]
+    private static extern int RegCloseKey(IntPtr hKey);
 }

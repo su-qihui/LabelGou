@@ -121,7 +121,7 @@ public static class PrinterCapabilities
             : s.NameOf(currentKeyword) ?? "读不到";
         var howToChange = "要改点上面「打印首选项…」。";
         var note = $"驱动里这一项叫「{s.DisplayName}」。" + (currentKeyword is null
-            ? "这一项软件读不回当前值：实测在驱动页里改了会生效、重开那页也记得住，但公开的 DEVMODE 字段不动。"
+            ? "这一项软件读不回当前值：驱动把它存在自己的私有设置块里，公开字段不动。"
             : howToChange) + (s.Options.Count <= 1 ? "这台机器这一项只有一个可选值。" : string.Empty);
         return new PrinterSettingRow(label, current, s.OptionsText, note);
     }
