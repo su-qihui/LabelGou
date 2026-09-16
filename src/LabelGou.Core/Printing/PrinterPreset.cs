@@ -42,6 +42,40 @@ public sealed record DevModeFacts(int PaperSizeId, double? WidthMm, double? Leng
 
     public string Describe() => $"{PaperText} · {TrayText}";
 
+    /// <summary>
+    /// 把一份 DEVMODE 的纸张尺寸换成**当前纸规**的宽高（第 79 棒：用户「自定义要跟随纸规而不是固定的」）。
+    /// <para>
+    /// 两个坑：① DEVMODE 的单位是 **0.1mm**（280mm 要写成 2800），照 mm 写会小十倍；
+    /// ② <c>dmFields</c> 里 <c>DM_PAPERSIZE|DM_PAPERLENGTH|DM_PAPERWIDTH</c> 三位要置上，
+    /// 否则驱动可以当我们没改过宽高。除这四处字节外**一个字节都不许动**（判据钉着）。
+    /// </para>
+    /// </summary>
+    public static byte[] WithPaperSize(byte[] devMode, double widthMm, double heightMm)
+    {
+        if (devMode.Length < 220) return devMode;
+        if (widthMm is not (>= 10 and <= 2000) || heightMm is not (>= 10 and <= 2000)) return devMode;
+
+        var bytes = (byte[])devMode.Clone();
+        var widthTenth = (ushort)Math.Round(widthMm * 10);
+        var heightTenth = (ushort)Math.Round(heightMm * 10);
+        WriteU16(bytes, 78, DevModeFacts.PaperUser);                  // dmPaperSize = DMPAPER_USER
+        WriteU16(bytes, 80, heightTenth);                             // dmPaperLength = 纸高
+        WriteU16(bytes, 82, widthTenth);                              // dmPaperWidth  = 纸宽
+        var fields = bytes[72] | (bytes[73] << 8) | (bytes[74] << 16) | (bytes[75] << 24);
+        fields |= 0x2 | 0x4 | 0x8;                                    // PAPERSIZE | PAPERLENGTH | PAPERWIDTH
+        bytes[72] = (byte)(fields & 0xFF);
+        bytes[73] = (byte)((fields >> 8) & 0xFF);
+        bytes[74] = (byte)((fields >> 16) & 0xFF);
+        bytes[75] = (byte)((fields >> 24) & 0xFF);
+        return bytes;
+    }
+
+    private static void WriteU16(byte[] bytes, int offset, ushort value)
+    {
+        bytes[offset] = (byte)(value & 0xFF);
+        bytes[offset + 1] = (byte)(value >> 8);
+    }
+
     /// <summary>从一份 DEVMODE 字节里取公开字段；短得不像一份 DEVMODE 时给"读不到"，不抛。</summary>
     public static DevModeFacts Read(byte[] devMode)
     {

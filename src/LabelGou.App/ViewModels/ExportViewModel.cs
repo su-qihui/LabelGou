@@ -452,10 +452,21 @@ public sealed class ExportViewModel : ObservableObject
                        + $"「{SelectedPrinter?.Name ?? "没选打印机"}」——不同打印机的驱动设置不能互塞，换回原来那台或重存一份。";
             return;
         }
-        var error = PrinterSettingsReader.ApplyDevMode(SelectedPrinter?.Name, preset.DevMode);
+        // 纸张尺寸跟 ④ 步的纸规走（用户 2026-09-16：「自定义要跟随纸规而不是固定的」）；
+        // 纸规还没选得出来就沿用方案里存的那一份，并在状态里说清用的是哪个
+        double? sheetW = null, sheetH = null;
+        if (_owner.Sheet.Plan is { } sheet && sheet.PageWidthMm > 0 && sheet.PageHeightMm > 0)
+        {
+            sheetW = sheet.PageWidthMm;
+            sheetH = sheet.PageHeightMm;
+        }
+        var error = PrinterSettingsReader.ApplyDevMode(SelectedPrinter?.Name, preset.DevMode, sheetW, sheetH);
         if (error is not null) { StatusText = "套用失败：" + error; return; }
         RefreshPrinterSettings();
-        StatusText = $"已套用方案「{preset.Name}」：{preset.Facts.Describe()}。现在打印会走这套设置。";
+        StatusText = sheetW is not null
+            ? $"已套用方案「{preset.Name}」，纸张尺寸按 ④ 步纸规 {sheetW:0.#}×{sheetH:0.#}mm 一起写了"
+              + "（纸盘与介质类型照方案）。现在打印会走这套设置。"
+            : $"已套用方案「{preset.Name}」：{preset.Facts.Describe()}。④ 步还没选出纸规，纸张尺寸沿用了方案里存的那一份。";
     }
 
     private void ChooseFolder()

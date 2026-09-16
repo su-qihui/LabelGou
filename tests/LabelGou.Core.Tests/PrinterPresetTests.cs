@@ -108,4 +108,46 @@ public class PrinterPresetTests : IDisposable
         Assert.Throws<ArgumentException>(() => store.Save("默认", "RICOH 6001 黑白", new byte[100]));
         Assert.Empty(store.List());
     }
+
+    // ---- 第 79 棒：自定义纸张尺寸跟随 ④ 步纸规（单位是 0.1mm）----
+
+    [Fact]
+    public void PaperSizeFollowsSheetSpecInTenthOfMillimetre()
+    {
+        var changed = DevModeFacts.WithPaperSize(RealHead(), 280, 200);
+
+        var facts = DevModeFacts.Read(changed);
+        Assert.Equal(256, facts.PaperSizeId);
+        Assert.Equal(280, facts.WidthMm);
+        Assert.Equal(200, facts.LengthMm);
+        // 小数也要留住：280.5mm → 2805（0.1mm 单位），别被整型截断成 2800
+        Assert.Equal(280.5, DevModeFacts.Read(DevModeFacts.WithPaperSize(RealHead(), 280.5, 200)).WidthMm);
+    }
+
+    [Fact]
+    public void ChangingPaperSizeTouchesNothingButSizeAndItsFieldBits()
+    {
+        var head = RealHead();
+        var changed = DevModeFacts.WithPaperSize(head, 210, 297);
+
+        var touched = new List<int>();
+        for (var i = 0; i < head.Length; i++)
+        {
+            if (head[i] != changed[i]) touched.Add(i);
+        }
+        // dmFields(72-75) + dmPaperSize(78-79) + dmPaperLength(80-81) + dmPaperWidth(82-83)
+        Assert.All(touched, i => Assert.InRange(i, 72, 83));
+        Assert.Equal(head[88], changed[88]);      // 纸盘编号不许顺手改掉
+    }
+
+    [Fact]
+    public void AbsurdOrMissingSizesLeaveTheBlobAlone()
+    {
+        var head = RealHead();
+        // 0 / 负数 / 小于 10mm / 大于 2m：一律原样退回，不写进驱动再说"套用了"
+        foreach (var (w, h) in new[] { (0d, 0d), (-1d, 200d), (5d, 200d), (280d, 3000d) })
+        {
+            Assert.Equal(head, DevModeFacts.WithPaperSize(head, w, h));
+        }
+    }
 }
