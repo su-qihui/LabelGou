@@ -122,8 +122,12 @@ public class PrinterCapabilitiesTests
 
         Assert.Equal("灰度", rows.Single(r => r.Label == "输出颜色").CurrentText);
         Assert.Equal("信封", rows.Single(r => r.Label == "纸张类型").CurrentText);
-        // 纸盘这一格没有可信的当前值来源（实测 ticket 回 Unknown），只报这台机器有什么
-        Assert.Equal("以驱动页显示为准", rows.Single(r => r.Label == "纸张来源").CurrentText);
+        // 纸盘这一格没有可信的当前值来源（实测 ticket 回 Unknown），只报这台机器有什么；
+        // 说明必须讲清「驱动页里改了会生效、软件读不回」——不是"改不了"（用户 2026-09-16 实测纠正过）
+        var bin = rows.Single(r => r.Label == "纸张来源");
+        Assert.Equal("软件读不到，进「打印首选项…」看", bin.CurrentText);
+        Assert.Contains("改了会生效", bin.Note);
+        Assert.Contains("读不回当前值", bin.Note);
         // 行标题是我们固定的，但驱动里的叫法必须一起说清楚：进驱动页时操作员要能对上号
         Assert.Contains("驱动里这一项叫「彩色」", rows.Single(r => r.Label == "输出颜色").Note);
     }

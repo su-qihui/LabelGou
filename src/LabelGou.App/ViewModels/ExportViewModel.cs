@@ -362,8 +362,8 @@ public sealed class ExportViewModel : ObservableObject
         var report = PrinterSettingsReader.Read(SelectedPrinter?.Name);
         PrinterSettingRows.Clear();
         foreach (var row in report.Rows) PrinterSettingRows.Add(row);
-        PrinterSettingsNote = report.Error ?? "这三项由打印机驱动管，这里显示驱动报出来的值。软件改不了它：实测 .NET 给打印机下发打印票"
-            + "（PrintTicket）在这台机器上不生效，只能进驱动那一页改。";
+        PrinterSettingsNote = report.Error ?? "这三项由打印机驱动管：能读回来的读给你看；读不回来的（如纸张来源——驱动把它存在自己的私有设置块里，"
+            + "公开字段不动）就进「打印首选项…」看或改，在那里改了会生效。软件自己下发打印票这条路实测在这台机器上不生效，所以不假装能改。";
         Raise(nameof(PrinterSettingsNote));
     }
 
@@ -372,11 +372,12 @@ public sealed class ExportViewModel : ObservableObject
     {
         var owner = new System.Windows.Interop.WindowInteropHelper(
             System.Windows.Application.Current.MainWindow).Handle;
-        if (PrinterSettingsReader.OpenDriverPreferences(SelectedPrinter?.Name, owner))
-        {
-            RefreshPrinterSettings();
-            StatusText = $"已按「{SelectedPrinter?.Name}」驱动里的新设置刷新了上面三格。";
-        }
+        var confirmed = PrinterSettingsReader.OpenDriverPreferences(SelectedPrinter?.Name, owner);
+        AppLog.Info($"弹驱动首选项页（{SelectedPrinter?.Name ?? "默认打印机"}）：{(confirmed ? "用户按了确定" : "取消或没弹成")}");
+        if (!confirmed) return;
+        RefreshPrinterSettings();
+        StatusText = "驱动页按了确定。纸张来源与介质类型这两项软件读不回来（驱动存在自己的私有设置里），"
+            + "所以这里不会跟着变——但设置已经生效，打印会走你刚选的那个盘。";
     }
 
     private void ChooseFolder()
