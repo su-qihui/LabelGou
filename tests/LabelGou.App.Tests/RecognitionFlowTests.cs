@@ -140,7 +140,7 @@ public class RecognitionFlowTests
     }
 
     private static RecognitionSettings OfflineSettings()
-        => new() { UseLocalOcr = true, UseVisionModel = false };
+        => new() { UseVisionModel = false };
 
     /// <summary>真样本拼一个批次：规则通道 + 模型通道各跑一遍，再交叉校验。</summary>
     private static RecognitionRun MakeRun(string sourceName = "单据.png")
@@ -162,7 +162,6 @@ public class RecognitionFlowTests
         {
             Capability = new RecognitionCapabilityReport
             {
-                Ocr = new WindowsOcrReader.Capability(true, "zh-Hans-CN", null),
                 ModelUsable = true,
                 ModelReason = "模型 qwen3-vl:4b 可用",
                 ModelName = "qwen3-vl:4b",
@@ -171,77 +170,7 @@ public class RecognitionFlowTests
         };
     }
 
-    // ---------- 通道一：真调系统 OCR ----------
-
-    [Fact]
-    public void LocalOcrReallyReadsARenderedMarkLabel()
-    {
-        var capability = OnSta(WindowsOcrReader.Probe);
-        Assert.True(capability.Available,
-            "这台电脑没装中文 OCR 可选功能，这条测试的前提不成立：" + capability.Describe());
-
-        WithTemp(dir =>
-        {
-            var path = Path.Combine(dir, "label.png");
-            var text = OnSta(() =>
-            {
-                RenderLabelPng(path);
-                return WindowsOcrReader.RecognizeFileAsync(path, null).GetAwaiter().GetResult();
-            });
-
-            Assert.True(text.LineCount >= 5, $"真识别只拿到 {text.LineCount} 行：{text.FullText}");
-            Assert.Equal(TextChannel.Ocr, text.Channel);
-            Assert.Contains(text.Lines, l => l.Text.Contains("CHINA", StringComparison.OrdinalIgnoreCase));
-            Assert.Contains(text.Lines, l => l.PixelWidth > 0 && l.PixelHeight > 0);   // 包围盒真填了
-            Assert.NotEmpty(text.Warnings);                                           // 耗时那句一定有
-
-            // 链路价值在这儿：OCR 把小数点读坏了，还得能抽出字段并把它修回来
-            var found = RuleFieldExtractor.Extract(text).Candidates;
-            var gross = found.FirstOrDefault(c => c.Field == MarkFieldKey.GrossWeight);
-            Assert.NotNull(gross);
-            Assert.Equal("25.5 KGS", FieldNormalizer.Normalize(MarkFieldKey.GrossWeight, gross!.RawValue).Value);
-        });
-    }
-
-    /// <summary>画一张中英混排唛头图（与探针同一份文字），交给系统 OCR 认。</summary>
-    private static void RenderLabelPng(string path)
-    {
-        const int width = 760;
-        const int height = 420;
-        var visual = new DrawingVisual();
-        using (var dc = visual.RenderOpen())
-        {
-            dc.DrawRectangle(Brushes.White, null, new Rect(0, 0, width, height));
-            AddText(dc, "SHANGHAI -> LOS ANGELES, USA", 34, 30);
-            AddText(dc, "C/S: MACYS   CONTRACT NO: MMJ-2603", 26, 84);
-            AddText(dc, "PO NO: 2024-0817   ITEM NO: A-778", 26, 126);
-            AddText(dc, "G.W.: 25.5 KGS    N.W.: 22.1 KGS", 26, 168);
-            AddText(dc, "MEAS: 60x40x30 CM   CBM: 0.072", 26, 210);
-            AddText(dc, "MADE IN CHINA", 26, 252);
-            AddText(dc, "No. 3 / 12", 30, 294);
-            AddText(dc, "上海 到 洛杉矶   目的港", 24, 336);
-        }
-
-        var rtb = new RenderTargetBitmap(width, height, 96, 96, PixelFormats.Pbgra32);
-        rtb.Render(visual);
-        var encoder = new PngBitmapEncoder();
-        encoder.Frames.Add(BitmapFrame.Create(rtb));
-        using var stream = File.Create(path);
-        encoder.Save(stream);
-    }
-
-    private static void AddText(DrawingContext dc, string text, double size, double y)
-    {
-        var formatted = new FormattedText(
-            text,
-            System.Globalization.CultureInfo.InvariantCulture,
-            FlowDirection.LeftToRight,
-            new Typeface(new FontFamily("Segoe UI, Microsoft YaHei"), FontStyles.Normal, FontWeights.Bold, FontStretches.Normal),
-            size,
-            Brushes.Black,
-            1.0);
-        dc.DrawText(formatted, new Point(28, y));
-    }
+    // （原"通道一：真调系统 OCR"整块已随 W2 移除：Win7 变体没有 WindowsOcrReader，本地 OCR 测试前提不成立。）
 
     // ---------- 通道二：模型（假端点，真响应形状） ----------
 
@@ -252,7 +181,7 @@ public class RecognitionFlowTests
         WithTemp(dir =>
         {
             var png = WriteTinyPng(dir);
-            var settings = new RecognitionSettings { UseLocalOcr = false, UseVisionModel = true };
+            var settings = new RecognitionSettings { UseVisionModel = true };
 
             var outcome = OllamaVisionClient.AskFieldsAsync(settings, png, default, handler)
                 .GetAwaiter().GetResult();
@@ -282,14 +211,15 @@ public class RecognitionFlowTests
         WithTemp(dir =>
         {
             var png = WriteTinyPng(dir);
-            var settings = new RecognitionSettings { UseLocalOcr = false, UseVisionModel = true };
+            var settings = new RecognitionSettings { UseVisionModel = true };
             var run = RecognitionService.RunAsync(new[] { png }, settings, null, default, handler)
                 .GetAwaiter().GetResult();
 
             Assert.True(run.Capability.ModelUsable, run.Capability.ModelReason);
             var batch = Assert.Single(run.Batches);
             Assert.NotEmpty(batch.Fields);
-            Assert.Contains(batch.ChannelWarnings, w => w.Contains("关闭", StringComparison.Ordinal));
+            // Win7 变体恒无本地 OCR：这一路永久缺失要在运行级告警里明说（DegradedNotes 进 run.Warnings），不许静默。
+            Assert.Contains(run.Warnings, w => w.Contains("本地 OCR", StringComparison.Ordinal));
             Assert.All(batch.Fields, f => Assert.True(f.Confidence < 0.4, $"{f.Field} 只有模型一路、查无原文，置信度不该高"));
             Assert.All(batch.Fields, f => Assert.False(f.Confirmed));     // D13：一个都不许是已确认
             Assert.Equal(0, batch.BulkConfirm());                          // 一路独活 → 没有可批量放行的
@@ -430,18 +360,14 @@ public class RecognitionFlowTests
             var path = Path.Combine(dir, "recognition.json");
             new RecognitionSettings
             {
-                UseLocalOcr = false,
                 Model = "llava:13b",
                 Endpoint = "https://api.example.com",
                 TimeoutSeconds = 45,
-                OcrLanguage = "zh-Hans-CN",
             }.SaveTo(path);
 
             var loaded = RecognitionSettings.LoadFrom(path);
-            Assert.False(loaded.UseLocalOcr);
             Assert.Equal("llava:13b", loaded.Model);
             Assert.Equal(45, loaded.TimeoutSeconds);
-            Assert.Equal("zh-Hans-CN", loaded.OcrLanguage);
             Assert.False(loaded.StaysOnThisMachine);
             Assert.Contains("数据会离开这台电脑", loaded.DescribeChannels(), StringComparison.Ordinal);
 
@@ -449,7 +375,7 @@ public class RecognitionFlowTests
             Assert.Contains("本机", new RecognitionSettings().DescribeChannels(), StringComparison.Ordinal);
 
             File.WriteAllText(path, "{ 这不是 JSON");
-            Assert.True(RecognitionSettings.LoadFrom(path).UseLocalOcr);        // 坏了退回默认，不抛
+            Assert.True(RecognitionSettings.LoadFrom(path).UseVisionModel);        // 坏了退回默认，不抛
         });
     }
 

@@ -104,40 +104,6 @@ public static partial class OllamaVisionClient
         }
     }
 
-    /// <summary>把 OCR 文字行拼成给纯文本模型的证据块（定案 D11：OCR 行当证据池，模型只做整理）。</summary>
-    public static string OcrLinesPrompt(RecognizedText text)
-    {
-        var keys = string.Join(", ", MarkFieldCatalog.Mappable.Select(d => d.Key.ToString()));
-        var sb = new StringBuilder();
-        sb.Append("本地 OCR 从一张外贸纸箱唛头上认出下面这些文字行（可能有错字、断行、顺序错乱）。\n")
-          .Append("请只依据这些行，输出一个 JSON 对象，键只能取自：").Append(keys).Append("。\n")
-          .Append("值必须逐字来自这些行（可以拼接同一字段被拆开的行）；行里没有出现过的信息一律填 null；")
-          .Append("不要猜测、不要补全、不要翻译，不要输出坐标或版式。\n")
-          .Append("OCR 行：\n");
-        foreach (var line in text.Lines)
-        {
-            if (string.IsNullOrWhiteSpace(line.Text)) continue;
-            sb.Append(line.Text.Trim()).Append('\n');
-        }
-        return sb.ToString();
-    }
-
-    /// <summary>
-    /// 纯文本模型（DeepSeek 这类）用的入口：不吃图，只把 OCR 行整理成字段 JSON。
-    /// <para>OCR 一行都没认出来时直接失败返回，不发请求——让模型凭空气编一份字段出来，
-    /// 比识别不出来危险得多（这些值最终要印到纸箱上）。</para>
-    /// </summary>
-    public static Task<ModelOutcome> AskFieldsFromOcrLinesAsync(
-        RecognitionSettings settings,
-        RecognizedText? text,
-        CancellationToken cancel = default,
-        HttpMessageHandler? handler = null)
-    {
-        if (text is null || text.Lines.Count == 0)
-            return Task.FromResult(new ModelOutcome { Error = "本地 OCR 没认出任何文字行，纯文本模型这一路没有依据可用。" });
-        return AskOpenAiAsync(settings, OcrLinesPrompt(text), image: null, cancel, handler);
-    }
-
     /// <summary>云端探活：列模型清单看那个名字在不在。百炼的 <c>/compatible-mode/v1/models</c>
     /// 第 10 棒实测存在（不带密钥返 401 而不是 404），DeepSeek 同样实现；列不出来时给分诊后的人话。</summary>
     private static async Task<(bool Found, string Reason)> ProbeOpenAiAsync(

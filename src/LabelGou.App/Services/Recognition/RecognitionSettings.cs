@@ -6,8 +6,8 @@ namespace LabelGou.App.Services.Recognition;
 
 /// <summary>
 /// 识别通道的用户设置，存 <c>%APPDATA%\LabelGou\recognition.json</c>。
-/// <para>两条默认值不是随手写的：<b>本地 OCR 默认开</b>（零依赖、离线、几十毫秒，没有理由关）；
-/// <b>大模型默认也开但指向本机</b>（127.0.0.1），因为订单数据出网是用户明确关切的红线（§五-11）——
+/// <para><b>Win7 变体没有本地 OCR 通道</b>（Win7 无 UWP OCR 引擎）：识别只有「.docx 正文直读」与「大模型」两路。
+/// <b>大模型默认开但指向本机</b>（127.0.0.1），因为订单数据出网是用户明确关切的红线（§五-11）——
 /// 端点一旦填成公网地址，界面必须把它显示出来并标"数据将离开这台电脑"。</para>
 /// </summary>
 public sealed class RecognitionSettings
@@ -27,14 +27,12 @@ public sealed class RecognitionSettings
         AllowTrailingCommas = true,
     };
 
-    public bool UseLocalOcr { get; set; } = true;
-
     public bool UseVisionModel { get; set; } = true;
 
     /// <summary>Ollama 或任意 OpenAI 兼容服务的基地址。默认只指向本机。</summary>
     public string Endpoint { get; set; } = "http://127.0.0.1:11434";
 
-    /// <summary>本机实测可用的视觉模型名（3.3GB）。没有它时识别会降级为纯 OCR，不报错。</summary>
+    /// <summary>视觉模型名。探不到它时图片识别不可用（本变体无本地 OCR 兜底），仅 .docx 直读仍可用；不报错。</summary>
     public string Model { get; set; } = "qwen3-vl:4b";
 
     /// <summary>单次请求上限（用户填的那格；0=不设限）。真生效的是 <see cref="EffectiveTimeoutSeconds"/>。</summary>
@@ -180,14 +178,10 @@ public sealed class RecognitionSettings
     public string ApiKeyEnvVar { get; set; } = "LABELGOU_LLM_KEY";
 
     /// <summary>
-    /// 这个模型吃不吃图。DeepSeek 自家的 deepseek-chat <b>不支持图片</b>，
-    /// 它只能接本地 OCR 认出的文字行（定案 D11 的“把 OCR 行当证据池”），所以关掉这项时
-    /// 图片通道会明确报错而不是默默回一堆编出来的字段。
+    /// 这个模型吃不吃图。DeepSeek 自家的 deepseek-chat <b>不支持图片</b>；而本 Win7 变体没有本地 OCR
+    /// 提供文字行，所以不吃图的模型在本变体上<b>完全识别不了图片</b>（会明确告警，而不是默默回一堆编出来的字段）。
     /// </summary>
     public bool ModelAcceptsImages { get; set; } = true;
-
-    /// <summary>OCR 语言；留空表示用系统里第一个可用识别包。</summary>
-    public string? OcrLanguage { get; set; }
 
     [JsonIgnore]
     public static string FilePath => Path.Combine(
@@ -288,11 +282,10 @@ public sealed class RecognitionSettings
     public string DescribeChannels()
     {
         var parts = new List<string>();
-        if (UseLocalOcr) parts.Add("本地 OCR（系统内置）");
         if (UseVisionModel)
         {
             var where = StaysOnThisMachine ? "本机" : "外部服务，数据会离开这台电脑";
-            var eyes = ModelAcceptsImages ? "" : "· 不看图，只整理 OCR 文字";
+            var eyes = ModelAcceptsImages ? "" : "· 不吃图，本变体又无本地 OCR，图片识别不了";
             parts.Add($"{(Provider == Providers.OpenAi ? "云端" : "模型")} {Model}（{where}{eyes}）");
         }
 

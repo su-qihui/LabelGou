@@ -160,8 +160,8 @@ public class CloudChannelTests : IDisposable
 
         var deepseek = RecognitionSettings.CloudPresets.First(p => p.Name.Contains("DeepSeek"));
         settings.ApplyPreset(deepseek);
-        Assert.False(settings.ModelAcceptsImages);  // DeepSeek 只能整理 OCR 文字
-        Assert.Contains("不看图", settings.DescribeChannels());
+        Assert.False(settings.ModelAcceptsImages);  // DeepSeek 只能整理文字，不吃图
+        Assert.Contains("不吃图", settings.DescribeChannels());
     }
 
     [Theory]

@@ -49,10 +49,8 @@ public sealed class AiDebugWindow : Window
         Content = "这个模型能看图（拉完列表或改模型名时会按名字自动判：带 vl/vision/omni 的吃图，deepseek-chat 这类不吃；判错了你直接改）",
         Margin = new Thickness(0, 2, 0, 12),
     };
-    private readonly CheckBox _useLocalOcr = new() { Content = "用本机 OCR 先认文字（关掉就只剩模型那一路）", Margin = new Thickness(0, 2, 0, 6) };
-    private readonly CheckBox _useVision = new() { Content = "把图真的发给模型（关掉=只把 OCR 认出的文字发过去）", Margin = new Thickness(0, 2, 0, 6) };
+    private readonly CheckBox _useVision = new() { Content = "把图真的发给模型（本变体没有本地 OCR，关掉图片就没有任何文字可整理）", Margin = new Thickness(0, 2, 0, 6) };
     private readonly CheckBox _clearApiKey = new() { Content = "清掉已存的密钥（连磁盘上那份加密的一起删，本次也不留）", Margin = new Thickness(0, 2, 0, 6) };
-    private readonly TextBox _ocrLanguage = new() { Margin = new Thickness(0, 2, 0, 10) };
     private readonly TextBox _timeout = new() { Margin = new Thickness(0, 2, 0, 10) };
     private readonly ComboBox _thinking = new() { Margin = new Thickness(0, 2, 0, 10) };
     private readonly TextBlock _networkNotice = new() { TextWrapping = TextWrapping.Wrap, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 10) };
@@ -89,10 +87,8 @@ public sealed class AiDebugWindow : Window
         form.Children.Add(_rememberApiKey);
         form.Children.Add(_keyNotice);
         form.Children.Add(_acceptsImages);
-        form.Children.Add(_useLocalOcr);
         form.Children.Add(_useVision);
         form.Children.Add(_clearApiKey);
-        form.Children.Add(Labeled("OCR 语言（留空用系统里第一个可用包，如 zh-Hans-CN / en-US）", _ocrLanguage));
         form.Children.Add(Labeled("单次请求超时（秒，0~3600；填 0＝不设限，只靠手动停止）", _timeout));
         foreach (var level in RecognitionSettings.ThinkingLevels)
             _thinking.Items.Add(RecognitionSettings.ThinkingLabel(level));
@@ -283,13 +279,11 @@ public sealed class AiDebugWindow : Window
         _endpoint.Text = _settings.Endpoint;
         _model.Text = _settings.Model;
         _acceptsImages.IsChecked = _settings.ModelAcceptsImages;
-        _useLocalOcr.IsChecked = _settings.UseLocalOcr;
         _useVision.IsChecked = _settings.UseVisionModel;
         _clearApiKey.IsChecked = false;
         _apiKey.Password = _settings.ApiKey ?? string.Empty;
         _apiKeyPlain.Text = _settings.ApiKey ?? string.Empty;
         _rememberApiKey.IsChecked = _settings.RememberApiKey;
-        _ocrLanguage.Text = _settings.OcrLanguage ?? string.Empty;
         _timeout.Text = _settings.EffectiveTimeoutSeconds.ToString(CultureInfo.InvariantCulture);   // 显示真生效值（第 26 棒）；第 27 棒起 0＝不限也是真值
         var thinkingIndex = Array.IndexOf(RecognitionSettings.ThinkingLevels, _settings.Thinking?.Trim().ToLowerInvariant() ?? string.Empty);
         _thinking.SelectedIndex = thinkingIndex >= 0 ? thinkingIndex : 0;   // 陌生值退回「默认不发」，不替它编一个档位
@@ -397,11 +391,9 @@ public sealed class AiDebugWindow : Window
             _settings.RememberApiKey = _rememberApiKey.IsChecked == true;
         }
         _settings.ModelAcceptsImages = _acceptsImages.IsChecked == true;
-        // 上一版这里硬写 UseVisionModel = true，而且超时/本地 OCR/OCR 语言/密钥清除四个开关连控件都没有：
+        // 上一版这里硬写 UseVisionModel = true，而且超时/密钥清除等开关连控件都没有：
         // 那份「只关掉一半」的欠账就落在这里。
         _settings.UseVisionModel = _useVision.IsChecked == true;
-        _settings.UseLocalOcr = _useLocalOcr.IsChecked == true;
-        _settings.OcrLanguage = string.IsNullOrWhiteSpace(_ocrLanguage.Text) ? null : _ocrLanguage.Text.Trim();
         if (int.TryParse(_timeout.Text.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var seconds)
             && seconds is >= 0 and <= 3600)
         {
@@ -454,7 +446,7 @@ public sealed class AiDebugWindow : Window
         var settings = Collect();
         if (!settings.ModelAcceptsImages)
         {
-            WriteLine("这个模型不吃图，「拿一张图真问一次」用不了；它只在识别单据时接本地 OCR 的文字行。");
+            WriteLine("这个模型不吃图，「拿一张图真问一次」用不了；本变体又没有本地 OCR，它识别不了图片。");
             return;
         }
         WriteLine($"问 {settings.Model}：{Path.GetFileName(dialog.FileName)}（可能要几十秒，别急）…");

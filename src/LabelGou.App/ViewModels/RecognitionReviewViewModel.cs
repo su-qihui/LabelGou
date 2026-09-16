@@ -303,7 +303,8 @@ public sealed class RecognitionReviewViewModel : ObservableObject
         {
             var head = _run.Batches.Count == 0 ? "没有识别出任何文档" : _run.Capability.ChannelsUsed(
                 _run.Batches.Any(b => b.TextChannel == TextChannel.DocxText),
-                _run.Batches.Any(b => b.TextChannel == TextChannel.Ocr));
+                // Win7 变体图片不产 OCR 文本层、记为 Llm（模型直给）；Ocr 保留以兼容主仓语义。
+                _run.Batches.Any(b => b.TextChannel is TextChannel.Ocr or TextChannel.Llm));
             var tail = _run.Warnings.Count == 0 ? string.Empty : " · " + string.Join("；", _run.Warnings);
             return $"实际走的通道：{head}{tail}";
         }

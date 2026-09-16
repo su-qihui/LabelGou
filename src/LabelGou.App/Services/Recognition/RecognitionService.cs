@@ -11,7 +11,11 @@ namespace LabelGou.App.Services.Recognition;
 /// </summary>
 public sealed class RecognitionCapabilityReport
 {
-    public required WindowsOcrReader.Capability Ocr { get; init; }
+    /// <summary>本 Win7 变体不含本地 OCR 通道（Win7 系统没有 UWP OCR 引擎），恒为不可用。</summary>
+    public bool OcrAvailable => false;
+
+    /// <summary>本地 OCR 不可用的原因：本变体是"没有这条通道"，不是探测失败或缺语言包。</summary>
+    public string OcrReason => "本 Win7 版不含本地 OCR 通道（Win7 系统没有该组件）；图片只走大模型，或改用 Word 文档。";
 
     /// <summary>本批是否真的会调用模型（设置开了 + 探得到才算）。</summary>
     public bool ModelUsable { get; init; }
@@ -24,7 +28,6 @@ public sealed class RecognitionCapabilityReport
     {
         var parts = new List<string>();
         if (hasDocx) parts.Add("Word 正文直读");
-        if (hasImage && Ocr.Available) parts.Add("本地 OCR");
         if (hasImage && ModelUsable) parts.Add($"大模型 {ModelName}");
         return parts.Count == 0 ? "没有可用通道" : string.Join(" + ", parts);
     }
@@ -35,8 +38,8 @@ public sealed class RecognitionCapabilityReport
     public List<string> DegradedNotes()
     {
         var notes = new List<string>();
-        if (!Ocr.Available) notes.Add("本地 OCR 不可用：" + (Ocr.Reason ?? "原因未知") + "。图片只能靠大模型，或者改用 Word 文档。");
-        else if (!ModelUsable && ModelReason.Length > 0) notes.Add("大模型通道未启用：" + ModelReason);
+        notes.Add(OcrReason);   // 本变体恒无本地 OCR，这一路永久缺失，明说而不是静默
+        if (!ModelUsable && ModelReason.Length > 0) notes.Add("大模型通道未启用：" + ModelReason);
         return notes;
     }
 }
@@ -94,14 +97,12 @@ public static class RecognitionService
 
     public static bool IsSupported(string path) => IsImage(path) || IsDocument(path);
 
-    /// <summary>跑之前探一次通道。OCR 探测很快，模型探测限时 30 秒内（见 <see cref="OllamaVisionClient.ProbeModelAsync"/>)。</summary>
+    /// <summary>跑之前探一次通道。本变体无本地 OCR 可探，只探模型（限时 30 秒内，见 <see cref="OllamaVisionClient.ProbeModelAsync"/>)。</summary>
     public static async Task<RecognitionCapabilityReport> ProbeAsync(
         RecognitionSettings settings,
         CancellationToken cancel = default,
         HttpMessageHandler? handler = null)
     {
-        var ocr = WindowsOcrReader.Probe();
-
         var modelUsable = false;
         string reason;
         if (!settings.UseVisionModel)
@@ -117,7 +118,6 @@ public static class RecognitionService
 
         return new RecognitionCapabilityReport
         {
-            Ocr = ocr,
             ModelUsable = modelUsable,
             ModelReason = reason,
             ModelName = settings.Model,
@@ -153,8 +153,8 @@ public static class RecognitionService
             return run;
         }
 
-        if (!settings.UseLocalOcr && !settings.UseVisionModel && !supported.Any(IsDocument))
-            run.Warnings.Add("两个通道都被关掉了，图片识别不出任何东西。");
+        if (!settings.UseVisionModel && !supported.Any(IsDocument))
+            run.Warnings.Add("模型通道被关掉了，而本 Win7 版又没有本地 OCR，图片识别不出任何东西。");
 
         var index = 0;
         foreach (var file in supported)
@@ -213,16 +213,11 @@ public static class RecognitionService
         {
             text = DocxTextReader.ReadFile(file);
         }
-        else if (settings.UseLocalOcr)
-        {
-            if (capability.Ocr.Available)
-                text = await WindowsOcrReader.RecognizeFileAsync(file, settings.OcrLanguage, cancel).ConfigureAwait(false);
-            else
-                batch.ChannelWarnings.Add(capability.Ocr.Reason ?? "本地 OCR 不可用，已跳过图片文字识别。");
-        }
         else
         {
-            batch.ChannelWarnings.Add("本地 OCR 通道在设置里是关闭的，图片只走了大模型。");
+            // Win7 无本地 OCR：图片不产文字层，字段只能由吃图的云端模型直接给。
+            // TextChannel.Llm 的语义正是"模型直给字段、不产文本行"，用它如实标记这一份。
+            batch.TextChannel = TextChannel.Llm;
         }
 
         if (text is not null)
@@ -242,13 +237,14 @@ public static class RecognitionService
             {
                 batch.ChannelWarnings.Add($"大模型没探到（{capability.ModelReason}），这一份只有文本层一路，交叉校验实际没生效。");
             }
+            else if (!settings.ModelAcceptsImages)
+            {
+                // 本变体无本地 OCR，纯文本模型没有文字行可整理，图片识别不了——明说而不是喂 null 让它空转。
+                batch.ChannelWarnings.Add("这个模型不吃图，而本 Win7 版没有本地 OCR 提供文字行，图片识别不了；换一家吃图的模型（如百炼 qwen-vl）或改用 Word 文档。");
+            }
             else
             {
-                // 看不图的云端模型（DeepSeek 这类）只接本地 OCR 认出的文字行；
-                // 看得图的（百炼 qwen-vl、本机的 qwen3-vl）才把原图发出去。两路都是同一次交叉校验的第二通道。
-                var outcome = settings.ModelAcceptsImages
-                    ? await OllamaVisionClient.AskFieldsAsync(settings, file, cancel, modelHandler).ConfigureAwait(false)
-                    : await OllamaVisionClient.AskFieldsFromOcrLinesAsync(settings, text, cancel, modelHandler).ConfigureAwait(false);
+                var outcome = await OllamaVisionClient.AskFieldsAsync(settings, file, cancel, modelHandler).ConfigureAwait(false);
                 batch.RawModelPayload = outcome.Json;
                 if (!outcome.Ok)
                 {

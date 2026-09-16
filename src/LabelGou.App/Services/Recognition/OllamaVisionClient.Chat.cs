@@ -8,8 +8,8 @@ namespace LabelGou.App.Services.Recognition;
 
 /// <summary>
 /// <see cref="OllamaVisionClient"/> 的<b>自由对话</b>分支（第 10 棒）。
-/// <para>为什么要单独一条：用户问「没有 AI 对话窗口，没法和 AI 沟通去调整」——现有的两条入口
-/// （<c>AskFieldsAsync</c> 与 <c>AskFieldsFromOcrLinesAsync</c>）都是<strong>抽字段</strong>：
+/// <para>为什么要单独一条：用户问「没有 AI 对话窗口，没法和 AI 沟通去调整」——现有的入口
+/// （<c>AskFieldsAsync</c>）是<strong>抽字段</strong>：
 /// 固定提示词、<c>response_format=json_object</c>、出来还要过 <see cref="LabelGou.Core.Recognition.LlmFieldJsonParser"/>。
 /// 拿它聊天会得到一句「没解析出 JSON」，而模型其实好好答了。所以这里单开一条：
 /// <b>不解析 JSON、不带 response_format、不落库、不碰毫米</b>，只把原话交回界面（§五-10 / §七-11 的红线）。</para>
