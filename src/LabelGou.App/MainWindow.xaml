@@ -749,6 +749,34 @@
                             <TextBlock Text="输出与打印" Style="{StaticResource StepTitle}" />
                         </GroupBox.Header>
                         <StackPanel>
+                            <!--  第 78 棒：用户说「打印和输出二合一显得杂乱」，就按**谁消费这些字段**拆成三块。
+                                  页范围 / 含裁切线 / 唛头文字是打印与导出读同一份属性的，单独放最上面——
+                                  不在两块里各放一份，那正是"改一处忘一处"的成因（§五-122 同族）。  -->
+                            <GroupBox Header="打印与导出都用" Padding="6,3">
+                                <StackPanel>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="页范围：" VerticalAlignment="Center" />
+                                        <TextBox Grid.Column="1" Text="{Binding Export.PageRangeText, UpdateSourceTrigger=PropertyChanged}"
+                                                 ToolTip="例：1-3,5,7-9；空着表示全部。打印与导出都按这一句选页" />
+                                    </Grid>
+                                    <WrapPanel Margin="0,5,0,0">
+                                        <CheckBox Content="含裁切线/套准标记" IsChecked="{Binding Export.IncludeTrimMarks}" VerticalAlignment="Center"
+                                                  ToolTip="打印与导出一起走：勾了才上纸，不勾两边都没有" />
+                                        <TextBlock Text="唛头文字：" VerticalAlignment="Center" Margin="12,0,4,0" />
+                                        <ComboBox ItemsSource="{Binding TextCaseOptions}" SelectedItem="{Binding SelectedTextCase}"
+                                                  DisplayMemberPath="Label" MinWidth="118" VerticalAlignment="Center"
+                                                  ToolTip="三档：按表格里的（默认，原样印）/ 全部大写 / 全部小写。&#10;只改印出来的字：不改你表里的数据，也不改模板存的内容；预览与打印/PDF/图片/SVG 同一口径，不会预览一个样、纸上另一个样。&#10;注意它连你写的固定标签一起转（“Item no：”会变“ITEM NO：”），这是故意的：唛头样张上标签通常也是全大写。" />
+                                        <TextBlock Text="（表里货号是小写、样张要大写时用这里，不要回去改表）" Style="{StaticResource Hint}" Margin="8,0,0,0" VerticalAlignment="Center" />
+                                    </WrapPanel>
+                                </StackPanel>
+                            </GroupBox>
+
+                            <GroupBox Header="打印 —— 送到这台打印机" Margin="0,8,0,0" Padding="6,3">
+                                <StackPanel>
                             <Grid>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="Auto" />
@@ -837,19 +865,29 @@
                             <Grid Margin="0,6,0,0">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="Auto" />
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
                                     <ColumnDefinition Width="52" />
+                                    <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Text="页范围：" VerticalAlignment="Center" />
-                                <TextBox Grid.Column="1" Text="{Binding Export.PageRangeText, UpdateSourceTrigger=PropertyChanged}"
-                                         ToolTip="例：1-3,5,7-9；空着表示全部打" />
-                                <TextBlock Grid.Column="2" Text="份数：" VerticalAlignment="Center" Margin="8,0,2,0" />
-                                <TextBox Grid.Column="3" Text="{Binding Export.Copies, UpdateSourceTrigger=PropertyChanged}"
-                                         ToolTip="逐份重复出纸（先完整打一遍再重复）" />
+                                <TextBlock Text="份数：" VerticalAlignment="Center" />
+                                <TextBox Grid.Column="1" Text="{Binding Export.Copies, UpdateSourceTrigger=PropertyChanged}"
+                                         ToolTip="逐份重复出纸（先完整打一遍再重复）。只影响打印，导出不重复出页" />
                             </Grid>
 
-                            <Grid Margin="0,6,0,0">
+                            <WrapPanel Margin="0,6,0,0">
+                                <CheckBox Content="放不下就缩放" IsChecked="{Binding Export.ScaleToFitPrintableArea}" VerticalAlignment="Center"
+                                          ToolTip="默认不勾：缩小后标签就不是原定尺寸了" />
+                                <CheckBox Content="打印前看驱动窗口" IsChecked="{Binding Export.ConfirmBeforePrint}" Margin="12,0,0,0" VerticalAlignment="Center"
+                                          ToolTip="勾了就能在驱动窗口里选纸盒/单面双面，但不算静默批量" />
+                            </WrapPanel>
+
+                            <Button Content="打印整版" Command="{Binding Export.PrintCommand}" FontWeight="Bold"
+                                    Margin="0,7,0,0" HorizontalAlignment="Left" Padding="14,3" />
+                                </StackPanel>
+                            </GroupBox>
+
+                            <GroupBox Header="导出 —— 落成文件" Margin="0,8,0,0" Padding="6,3">
+                                <StackPanel>
+                            <Grid>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="Auto" />
                                     <ColumnDefinition Width="*" />
@@ -879,21 +917,8 @@
                             </Grid>
 
                             <WrapPanel Margin="0,6,0,0">
-                                <CheckBox Content="含裁切线/套准标记" IsChecked="{Binding Export.IncludeTrimMarks}" VerticalAlignment="Center" />
-                                <CheckBox Content="放不下就缩放" IsChecked="{Binding Export.ScaleToFitPrintableArea}" Margin="12,0,0,0" VerticalAlignment="Center"
-                                          ToolTip="默认不勾：缩小后标签就不是原定尺寸了" />
-                                <CheckBox Content="打印前看驱动窗口" IsChecked="{Binding Export.ConfirmBeforePrint}" Margin="12,0,0,0" VerticalAlignment="Center"
-                                          ToolTip="勾了就能选纸盒/单面双面，但不算静默批量" />
-                                <CheckBox Content="印刷用 CMYK 四版" IsChecked="{Binding Export.CmykPlates}" Margin="12,0,0,0" VerticalAlignment="Center"
+                                <CheckBox Content="印刷用 CMYK 四版" IsChecked="{Binding Export.CmykPlates}" VerticalAlignment="Center"
                                           ToolTip="PDF 与 TIFF 按 C/M/Y/K 四张版出，每版墨量就是元素「墨色」里那四个数（0=无墨、255=满墨）。PNG 装不下四版，勾了也还是 RGB，摘要会如实说。" />
-                            </WrapPanel>
-
-                            <WrapPanel Margin="0,6,0,0">
-                                <TextBlock Text="唛头文字：" VerticalAlignment="Center" />
-                                <ComboBox ItemsSource="{Binding TextCaseOptions}" SelectedItem="{Binding SelectedTextCase}"
-                                          DisplayMemberPath="Label" MinWidth="118" Margin="4,0,0,0" VerticalAlignment="Center"
-                                          ToolTip="三档：按表格里的（默认，原样印）/ 全部大写 / 全部小写。&#10;只改印出来的字：不改你表里的数据，也不改模板存的内容；预览与打印/PDF/图片/SVG 同一口径，不会预览一个样、纸上另一个样。&#10;注意它连你写的固定标签一起转（“Item no：”会变“ITEM NO：”），这是故意的：唛头样张上标签通常也是全大写。" />
-                                <TextBlock Text="（表里货号是小写、样张要大写时用这里，不要回去改表）" Style="{StaticResource Hint}" Margin="8,0,0,0" VerticalAlignment="Center" />
                             </WrapPanel>
 
                             <WrapPanel Margin="0,6,0,0">
@@ -910,14 +935,20 @@
                                           ToolTip="多一层元素参考框与字段名，在 CDR 里可整层删，校版时用" />
                             </WrapPanel>
 
-                            <WrapPanel Margin="0,8,0,0">
-                                <Button Content="打印整版" Command="{Binding Export.PrintCommand}" FontWeight="Bold" />
-                                <Button Content="导出 PDF…" Command="{Binding Export.ExportPdfCommand}" Margin="6,0,0,0" />
+                            <WrapPanel Margin="0,7,0,0">
+                                <Button Content="导出 PDF…" Command="{Binding Export.ExportPdfCommand}" FontWeight="Bold" />
                                 <Button Content="导出 PNG" Command="{Binding Export.ExportPngCommand}" Margin="6,0,0,0" />
                                 <Button Content="导出 TIFF" Command="{Binding Export.ExportTiffCommand}" Margin="6,0,0,0" />
                                 <Button Content="导出 SVG…" Command="{Binding Export.ExportSvgCommand}" Margin="6,0,0,0"
                                         ToolTip="衔接店里的 CorelDRAW 出片流程：1 用户单位 = 1 毫米" />
-                                <Button Content="取消当前任务" Command="{Binding Export.CancelCommand}" Margin="6,0,0,0" />
+                            </WrapPanel>
+                                </StackPanel>
+                            </GroupBox>
+
+                            <WrapPanel Margin="0,8,0,0">
+                                <Button Content="取消当前任务" Command="{Binding Export.CancelCommand}" />
+                                <TextBlock Text="（打印与导出共用：谁在跑都能停）" Style="{StaticResource Hint}"
+                                           VerticalAlignment="Center" Margin="8,0,0,0" />
                             </WrapPanel>
 
                             <TextBlock Text="{Binding Export.SelectionText}" Style="{StaticResource Hint}" TextWrapping="Wrap" Margin="0,6,0,0" />
