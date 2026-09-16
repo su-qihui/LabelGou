@@ -2,6 +2,7 @@
 bin/
 obj/
 artifacts/
+*_wpftmp.csproj
 *.user
 *.suo
 .vs/

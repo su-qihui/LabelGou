@@ -6,7 +6,7 @@ REM     compile-labelgou.bat                (build Debug, incl. tests)
 REM     compile-labelgou.bat run            (build + launch WPF app)
 REM     compile-labelgou.bat test           (build + run unit tests)
 REM     compile-labelgou.bat release        (build Release)
-REM     compile-labelgou.bat publish        (self-contained win-x64 publish to artifacts\publish)
+REM     compile-labelgou.bat publish        (self-contained win7-x64 publish to artifacts\publish)
 REM     compile-labelgou.bat clean
 REM  Note: this machine has no Visual Studio; the .NET 8 SDK is installed
 REM  (admin-free, zip layout) at D:\dev\dotnet-sdk. Fall back to PATH dotnet.
@@ -53,12 +53,15 @@ call "%DOTNET_EXE%" build LabelGou.sln -c Release -v minimal
 goto end
 
 :cmd_publish
-call "%DOTNET_EXE%" publish src\LabelGou.App\LabelGou.App.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=false -o artifacts\publish\labelgou-win-x64
+REM Win7 variant shipping: RID win7-x64 (its .NET 6 runtime pack restores and publishes fine, verified on this machine).
+REM --self-contained true bundles the whole net6 runtime, so the target Win7 box needs no .NET install.
+REM -p:PublishSingleFile=false: single-file WPF publish has known issues on .NET 6; multi-file is the safer ship.
+call "%DOTNET_EXE%" publish src\LabelGou.App\LabelGou.App.csproj -c Release -r win7-x64 --self-contained true -p:PublishSingleFile=false -o artifacts\publish\labelgou-win7-x64
 set "PUB_RC=%ERRORLEVEL%"
 REM Spec D12: the CorelDRAW helper macro and its instructions must ship WITH the app.
 REM xcopy copies bytes as-is, so the .bas stays GBK/CRLF (VBA editor requirement).
 if exist "tools\cdr" (
-  xcopy /y /i /e "tools\cdr" "artifacts\publish\labelgou-win-x64\tools\cdr" >nul
+  xcopy /y /i /e "tools\cdr" "artifacts\publish\labelgou-win7-x64\tools\cdr" >nul
   echo [INFO] copied tools\cdr into the publish folder
 )
 exit /b %PUB_RC%
