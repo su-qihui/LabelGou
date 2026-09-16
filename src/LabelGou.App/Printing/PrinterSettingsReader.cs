@@ -1,6 +1,7 @@
 using System.Printing;
 using System.Runtime.InteropServices;
 using System.Text;
+using Microsoft.Win32;
 using LabelGou.App.Services;
 using LabelGou.Core.Printing;
 
@@ -193,15 +194,35 @@ public static class PrinterSettingsReader
     private static ushort ToUInt16(byte[] bytes, int offset) =>
         offset + 1 < bytes.Length ? (ushort)(bytes[offset] | (bytes[offset + 1] << 8)) : (ushort)0;
 
-    /// <summary>写 HKCU\Printers\DevModePerUser\&lt;打印机名&gt;——本用户默认 DEVMODE 的存放处。</summary>
+    /// <summary>
+    /// 写 HKCU\Printers\DevModePerUser\&lt;打印机名&gt;——本用户默认 DEVMODE 的存放处。
+    /// 写完**立刻回读逐字节核对**：这台机器上实测过，"调用没报错"不等于写进去了。
+    /// </summary>
     private static bool WriteUserDevMode(string printerName, byte[] blob)
     {
-        if (RegOpenKeyExW(HKEY_CURRENT_USER, UserDefaultsKey, 0, KEY_SET_VALUE, out var hKey) != 0) return false;
         try
         {
-            return RegSetValueExW(hKey, printerName, 0, REG_BINARY, blob, blob.Length) == 0;
+            using var key = Registry.CurrentUser.OpenSubKey(UserDefaultsKey, writable: true);
+            if (key is null) return false;
+            key.SetValue(printerName, blob, RegistryValueKind.Binary);
         }
-        finally { RegCloseKey(hKey); }
+        catch (Exception ex)
+        {
+            AppLog.Info($"写回本用户默认 DEVMODE 抛：{ex.GetType().Name} {ex.Message}");
+            return false;
+        }
+
+        try
+        {
+            using var check = Registry.CurrentUser.OpenSubKey(UserDefaultsKey);
+            var back = check?.GetValue(printerName) as byte[];
+            return back is not null && back.AsSpan().SequenceEqual(blob);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Info($"回读本用户默认 DEVMODE 失败：{ex.GetType().Name} {ex.Message}");
+            return false;
+        }
     }
 
     private static string? ResolveName(string? printerName)
@@ -227,10 +248,8 @@ public static class PrinterSettingsReader
     private const int DM_OUT_BUFFER = 0x0002;
     private const int DM_IN_PROMPT = 0x0004;
 
+    /// <summary>本用户默认 DEVMODE 的存放处（实测：改它，DocumentProperties 立刻读到新值）。</summary>
     private const string UserDefaultsKey = @"Printers\DevModePerUser";
-    private static readonly IntPtr HKEY_CURRENT_USER = new(unchecked((int)0x80000000));
-    private const int KEY_SET_VALUE = 0x0002;
-    private const int REG_BINARY = 3;
 
     [DllImport("winspool.drv", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern bool OpenPrinterW(string pPrinterName, out IntPtr phPrinter, IntPtr pDefault);
@@ -241,15 +260,4 @@ public static class PrinterSettingsReader
     [DllImport("winspool.drv", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern int DocumentPropertiesW(
         IntPtr hWnd, IntPtr hPrinter, string pDeviceName, IntPtr pDevModeOutput, IntPtr pDevModeInput, int fMode);
-
-    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    private static extern int RegOpenKeyExW(
-        IntPtr hKey, string subKey, int options, int samDesired, out IntPtr phkResult);
-
-    [DllImport("advapi32.dll", SetLastError = true)]
-    private static extern int RegSetValueExW(
-        IntPtr hKey, string valueName, int reserved, int type, byte[] data, int length);
-
-    [DllImport("advapi32.dll")]
-    private static extern int RegCloseKey(IntPtr hKey);
 }
