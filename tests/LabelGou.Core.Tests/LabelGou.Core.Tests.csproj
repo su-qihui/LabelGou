@@ -3,7 +3,7 @@
   <!-- LabelGou.Core 单元测试：解析/映射/模板校验/排版落位这些纯逻辑
        是 M1 唯一可自动化验证的部分（GUI 无法在此环境跑），故覆盖重点放这里。 -->
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net6.0</TargetFramework>
     <IsPackable>false</IsPackable>
   </PropertyGroup>
 

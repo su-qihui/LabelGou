@@ -154,8 +154,8 @@ public sealed class PrinterPresetStore
     /// <summary>存一份；同名就覆盖（这套方案本来就是"当前驱动设置的快照"，留两份没意义）。</summary>
     public PrinterPreset Save(string name, string printerName, byte[] devMode)
     {
-        ArgumentException.ThrowIfNullOrEmpty(name);
-        ArgumentException.ThrowIfNullOrEmpty(printerName);
+        Net6Compat.ThrowIfNullOrEmpty(name);
+        Net6Compat.ThrowIfNullOrEmpty(printerName);
         if (devMode.Length < 220)
             throw new ArgumentException($"这份驱动设置只有 {devMode.Length} 字节，不像一份 DEVMODE。");
 

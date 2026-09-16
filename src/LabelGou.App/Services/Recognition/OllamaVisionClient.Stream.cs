@@ -191,9 +191,17 @@ public static partial class OllamaVisionClient
             var content = new StringBuilder();
             var reasoning = new StringBuilder();
             var pieces = 0;
+            // net6 的 StreamReader 没有 ReadLineAsync(CancellationToken)（.NET 7 才加）。
+            // 用 WhenAny 把「读一行」与超时/取消令牌赛跑：令牌先到就抛 OperationCanceledException，
+            // 与原来同口径交给下面的 catch（用户停止 vs 超时分别处理），避免流读挂死（主仓第 25 棒治过的卡死）。
+            // 令牌 Delay 建在循环外：否则每读一行都往 CTS 注册一次回调，长流上会堆积。
+            var cancelSignal = Task.Delay(Timeout.InfiniteTimeSpan, timeout.Token);
             while (true)
             {
-                var line = await reader.ReadLineAsync(timeout.Token).ConfigureAwait(false);
+                var readTask = reader.ReadLineAsync();
+                if (await Task.WhenAny(readTask, cancelSignal).ConfigureAwait(false) != readTask)
+                    timeout.Token.ThrowIfCancellationRequested();
+                var line = await readTask.ConfigureAwait(false);
                 if (line is null) break;
                 var piece = ParseStreamLine(line, openAi);
                 if (piece.Error is not null)

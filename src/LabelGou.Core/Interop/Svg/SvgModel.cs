@@ -53,7 +53,7 @@ public readonly record struct SvgLength(double Value, SvgLengthUnit Unit)
         var i = 0;
         if (s[i] is '+' or '-') i++;
         var digitStart = i;
-        while (i < s.Length && (char.IsAsciiDigit(s[i]) || s[i] == '.')) i++;
+        while (i < s.Length && (Net6Compat.IsAsciiDigit(s[i]) || s[i] == '.')) i++;
         if (i == digitStart) return null;
         if (!double.TryParse(s.AsSpan(0, i), NumberStyles.Float, CultureInfo.InvariantCulture, out var v)) return null;
 
@@ -246,7 +246,7 @@ public readonly record struct SvgMatrix(double A, double B, double C, double D, 
             while (i < text.Length)
             {
                 var c = text[i];
-                if (char.IsAsciiDigit(c)) { seenDigit = true; i++; continue; }
+                if (Net6Compat.IsAsciiDigit(c)) { seenDigit = true; i++; continue; }
                 if (c == '.' && !seenDot) { seenDot = true; i++; continue; }
                 break;
             }
@@ -262,7 +262,7 @@ public readonly record struct SvgMatrix(double A, double B, double C, double D, 
                 i++;
                 if (i < text.Length && text[i] is '+' or '-') i++;
                 var expStart = i;
-                while (i < text.Length && char.IsAsciiDigit(text[i])) i++;
+                while (i < text.Length && Net6Compat.IsAsciiDigit(text[i])) i++;
                 if (i == expStart) i = save; // e 后面没数字 → 那个 e 不属于这个数
             }
 
@@ -309,7 +309,7 @@ public static class SvgPathTokenizer
             while (i < s.Length)
             {
                 var d = s[i];
-                if (char.IsAsciiDigit(d)) { seenDigit = true; i++; continue; }
+                if (Net6Compat.IsAsciiDigit(d)) { seenDigit = true; i++; continue; }
                 if (d == '.' && !seenDot) { seenDot = true; i++; continue; }
                 break;
             }
@@ -320,7 +320,7 @@ public static class SvgPathTokenizer
                 i++;
                 if (i < s.Length && s[i] is '+' or '-') i++;
                 var expStart = i;
-                while (i < s.Length && char.IsAsciiDigit(s[i])) i++;
+                while (i < s.Length && Net6Compat.IsAsciiDigit(s[i])) i++;
                 if (i == expStart) i = save;
             }
             if (double.TryParse(s.AsSpan(start, i - start), NumberStyles.Float, CultureInfo.InvariantCulture, out var v))

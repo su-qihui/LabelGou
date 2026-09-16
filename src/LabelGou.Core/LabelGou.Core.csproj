@@ -1,8 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!-- LabelGou 核心逻辑层：不依赖 WPF，可被 App / 测试 / 未来 CLI 复用 -->
+  <!-- Win7 变体：net8.0 → net6.0（.NET 6 是官方最后支持 Win7 SP1 的运行时线） -->
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net6.0</TargetFramework>
     <RootNamespace>LabelGou.Core</RootNamespace>
     <AssemblyName>LabelGou.Core</AssemblyName>
   </PropertyGroup>
@@ -10,7 +11,7 @@
   <ItemGroup>
     <!-- 唯一外部依赖（MIT，微软官方）：注册 GB18030/GBK 等中文代码页，
          用于读取打印店常见的 GBK 编码 CSV。XLSX 读取为自建零依赖实现。 -->
-    <PackageReference Include="System.Text.Encoding.CodePages" Version="9.0.0" />
+    <PackageReference Include="System.Text.Encoding.CodePages" Version="6.0.0" />
   </ItemGroup>
 
 </Project>

@@ -67,7 +67,8 @@ public static class AiChatHistory
 
         var meaningful = rest.Where(t => t.Text.Length > 0).ToList();
         // 只丢最早的，最近的必须全带上 —— 用户在对话窗里刚说的话被吃掉，比多花点 token 危险得多。
-        var window = meaningful.Count > MaxTurns ? meaningful[^MaxTurns..] : meaningful;
+        // net6 的 List<T> 不支持 Range 索引（^MaxTurns..），用 GetRange 取最后 MaxTurns 条，语义等价。
+        var window = meaningful.Count > MaxTurns ? meaningful.GetRange(meaningful.Count - MaxTurns, MaxTurns) : meaningful;
         kept.AddRange(window.Select(Clamp));
         return kept;
     }

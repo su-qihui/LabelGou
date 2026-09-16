@@ -1,11 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!-- M3 的输出链路测试：渲染 → 位图 → PDF/PNG/TIFF → 送打印机。
-       这些都依赖 WPF（net8.0-windows + UseWPF），放在 Core.Tests 里会污染它的纯逻辑身份。
+       这些都依赖 WPF（net6.0-windows + UseWPF），放在 Core.Tests 里会污染它的纯逻辑身份。
        断言口径：凡涉及尺寸的地方一律手算毫米→像素来核对，不用被测代码自己算。 -->
   <PropertyGroup>
-    <!-- 与 LabelGou.App 保持同一个 TFM：M6 起 App 要用 WinRT OCR，测试也要能真调到它。 -->
-    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <!-- 与 LabelGou.App 保持同一个 TFM：App 用 WinRT OCR（本变体 W2 才删），测试也要能真调到它。 -->
+    <TargetFramework>net6.0-windows10.0.19041.0</TargetFramework>
     <UseWPF>true</UseWPF>
     <IsPackable>false</IsPackable>
     <RootNamespace>LabelGou.App.Tests</RootNamespace>

@@ -181,7 +181,7 @@ public static class TextNormalizer
         var map = new Dictionary<char, int>();
         foreach (var ch in ToHalfwidth(text))
         {
-            if (!char.IsAsciiDigit(ch)) continue;
+            if (!Net6Compat.IsAsciiDigit(ch)) continue;
             map[ch] = map.TryGetValue(ch, out var n) ? n + 1 : 1;
         }
 

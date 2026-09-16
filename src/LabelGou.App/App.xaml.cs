@@ -14,6 +14,10 @@ public partial class App : Application
     /// </summary>
     protected override void OnStartup(StartupEventArgs e)
     {
+        // Win7 的 Schannel 默认可能不启用 TLS 1.2，而云端 AI 走 HTTPS 必须 TLS 1.2，
+        // 不显式打开就会握手/证书校验失败；Win7 无 TLS 1.3，只加到 Tls12，Win10 上无副作用。
+        System.Net.ServicePointManager.SecurityProtocol |= System.Net.SecurityProtocolType.Tls12;
+
         System.Threading.Thread.CurrentThread.CurrentUICulture =
             new System.Globalization.CultureInfo("zh-CN");
 

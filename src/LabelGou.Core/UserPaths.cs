@@ -31,7 +31,7 @@ public static class UserPaths
     /// </summary>
     public static void SetRootForTests(string directory)
     {
-        ArgumentException.ThrowIfNullOrEmpty(directory);
+        Net6Compat.ThrowIfNullOrEmpty(directory);
         _rootOverride = directory;
     }
 }

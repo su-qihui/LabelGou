@@ -151,7 +151,7 @@ public static class RuleFieldExtractor
             var def = MarkFieldCatalog.Get(hit.Field);
             if (def.Numeric)
             {
-                if (!value.Any(char.IsAsciiDigit)) continue;   // 数值字段没数字 = 误锚，丢掉
+                if (!value.Any(Net6Compat.IsAsciiDigit)) continue;   // 数值字段没数字 = 误锚，丢掉
 
                 // 件号/总数/数量这种纯整数字段，值里一旦混进字母就是锚错了标签：
                 // 本机真实样本里，"（ 0 NTRACT NO: MM 2603" 的裸 "NO:" 会把合同号吐成件号，
@@ -159,7 +159,7 @@ public static class RuleFieldExtractor
                 if (def.Kind == MarkValueKind.Integer && value.Any(char.IsLetter)) continue;
             }
 
-            var confidence = 0.5 + hit.Rank * 0.12 + (value.Any(char.IsAsciiDigit) ? 0.08 : 0);
+            var confidence = 0.5 + hit.Rank * 0.12 + (value.Any(Net6Compat.IsAsciiDigit) ? 0.08 : 0);
             if (TextNormalizer.Compact(def.ChineseName) == hit.Compact) confidence += 0.05;
 
             var candidate = new FieldCandidate

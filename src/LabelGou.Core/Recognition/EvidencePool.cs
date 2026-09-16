@@ -158,5 +158,5 @@ public sealed class EvidencePool
         return runs;
     }
 
-    private static bool ContainsAnyDigit(string text) => text.Any(char.IsAsciiDigit);
+    private static bool ContainsAnyDigit(string text) => text.Any(Net6Compat.IsAsciiDigit);
 }

@@ -102,7 +102,7 @@ public static class CdrPreviewReader
                 if (fs.Length > 1024L * 1024 * 1024)
                     return Fail($"这个 .cdr 有 {fs.Length / 1024.0 / 1024 / 1024:0.#} GB，不像是一枚唛头的底稿，先不读。");
                 bytes = new byte[(int)fs.Length];
-                var read = fs.ReadAtLeast(bytes, bytes.Length, throwOnEndOfStream: false);
+                var read = Net6Compat.ReadAtLeast(fs, bytes, bytes.Length, throwOnEndOfStream: false);
                 if (read < bytes.Length) Array.Resize(ref bytes, read);
             }
             else

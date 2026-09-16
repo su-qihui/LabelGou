@@ -8,6 +8,9 @@
     <Deterministic>true</Deterministic>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
     <NoWarn>$(NoWarn);CA1416</NoWarn>
+    <!-- Win7 变体：有意用已停服的 .NET 6 换 Win7 SP1 支持（.NET 7/8/9/10 都不支持 Win7）。
+         NETSDK1138 只是"这个 TFM 不再收安全更新"的提示，不是代码质量问题，关掉以保持 0 警告口径。 -->
+    <CheckEolTargetFramework>false</CheckEolTargetFramework>
     <VersionPrefix>0.7.0</VersionPrefix>
     <Product>LabelGou · 唛头标签助手</Product>
     <Company>LabelGou</Company>
