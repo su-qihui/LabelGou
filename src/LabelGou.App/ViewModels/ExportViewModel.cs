@@ -56,6 +56,9 @@ public sealed class ExportViewModel : ObservableObject
         ChooseFolderCommand = new RelayCommand(ChooseFolder);
         CancelCommand = new RelayCommand(Cancel, () => IsBusy);
         OpenPreferencesCommand = new RelayCommand(OpenPreferences, () => SelectedPrinter is not null);
+        SavePresetCommand = new RelayCommand(SavePreset, () => SelectedPrinter is not null);
+        ApplyPresetCommand = new RelayCommand(ApplyPreset, () => SelectedPrinter is not null);
+        ReloadPresets();
     }
 
     /// <summary>窗口加载完后调一次：枚举打印机要问后台服务，放加载阶段做会拖慢首屏。</summary>
@@ -88,6 +91,27 @@ public sealed class ExportViewModel : ObservableObject
     public string PrinterSettingsNote { get; private set; } = string.Empty;
 
     public RelayCommand OpenPreferencesCommand { get; }
+
+    /// <summary>存下来的「打印机默认方案」（一份完整的驱动设置快照）。</summary>
+    public ObservableCollection<PrinterPreset> Presets { get; } = new();
+
+    /// <summary>新方案的名字，默认就叫「默认」——用户要的是那一颗按钮。</summary>
+    public string PresetName
+    {
+        get => _presetName;
+        set => Set(ref _presetName, value);
+    }
+    private string _presetName = "默认";
+
+    public PrinterPreset? SelectedPreset
+    {
+        get => _selectedPreset;
+        set => Set(ref _selectedPreset, value);
+    }
+    private PrinterPreset? _selectedPreset;
+
+    public RelayCommand SavePresetCommand { get; }
+    public RelayCommand ApplyPresetCommand { get; }
 
     public PrinterInfo? SelectedPrinter
     {
@@ -363,7 +387,8 @@ public sealed class ExportViewModel : ObservableObject
         PrinterSettingRows.Clear();
         foreach (var row in report.Rows) PrinterSettingRows.Add(row);
         PrinterSettingsNote = report.Error ?? "这三项由打印机驱动管：能读回来的读给你看；读不回来的（如纸张来源——驱动把它存在自己的私有设置块里，"
-            + "公开字段不动）就进「打印首选项…」看或改。在那里改的是这台打印机在这台电脑上的默认设置，别的软件也共用。";
+            + "公开字段不动）就进「打印首选项…」看或改。在那里改的是这台打印机在这台电脑上的默认设置，别的软件也共用。"
+            + "嫌每次进驱动页麻烦：设好一次点下面「存为方案」，以后点「套用」一键设回来。";
         Raise(nameof(PrinterSettingsNote));
     }
 
@@ -385,6 +410,52 @@ public sealed class ExportViewModel : ObservableObject
         StatusText = "驱动页按了确定，这次改动：" + diff
             + "。已写回这台打印机在本机的默认设置——请打一张看走没走你选的盘；"
             + "没走就把上面这句原样发我（它告诉我们那一项到底存在哪几个字节）。";
+    }
+
+    private readonly PrinterPresetStore _presetStore = new();
+
+    private void ReloadPresets()
+    {
+        var report = _presetStore.ListWithReport();
+        var previous = SelectedPreset?.Name;
+        Presets.Clear();
+        foreach (var preset in report.Presets) Presets.Add(preset);
+        SelectedPreset = Presets.FirstOrDefault(p => p.Name == previous)
+                         ?? Presets.FirstOrDefault(p => p.Name == "默认")
+                         ?? Presets.FirstOrDefault();
+        if (report.Skipped.Count > 0)
+            StatusText = "有方案没读进来：" + string.Join("；", report.Skipped);
+    }
+
+    /// <summary>把这台打印机**现在的驱动设置整份**存成一个方案（介质类型那种私有项只有整份才带得动）。</summary>
+    private void SavePreset()
+    {
+        var name = PresetName?.Trim();
+        if (string.IsNullOrEmpty(name)) { StatusText = "先给方案起个名字（比如「默认」）。"; return; }
+        var blob = PrinterSettingsReader.CaptureCurrentDevMode(SelectedPrinter?.Name, out var error);
+        if (blob is null) { StatusText = error ?? "读不到这台打印机现在的设置。"; return; }
+        var saved = _presetStore.Save(name, SelectedPrinter!.Name, blob);
+        ReloadPresets();
+        SelectedPreset = Presets.FirstOrDefault(p => p.Name == name);
+        StatusText = $"已把「{SelectedPrinter.Name}」现在的设置存成方案「{name}」：{saved.Facts.Describe()}。"
+                   + "以后点「套用」就能一键设回来。";
+    }
+
+    /// <summary>把方案写回本用户默认——就是「点一下，纸盘/介质/尺寸回到我惯用那套」。</summary>
+    private void ApplyPreset()
+    {
+        var preset = SelectedPreset ?? _presetStore.GetByName(PresetName);
+        if (preset is null) { StatusText = "还没有存过方案。先在驱动页里设好一次，再点「存为方案」。"; return; }
+        if (!string.Equals(preset.PrinterName, SelectedPrinter?.Name, StringComparison.OrdinalIgnoreCase))
+        {
+            StatusText = $"方案「{preset.Name}」是给「{preset.PrinterName}」存的，现在选的是"
+                       + $"「{SelectedPrinter?.Name ?? "没选打印机"}」——不同打印机的驱动设置不能互塞，换回原来那台或重存一份。";
+            return;
+        }
+        var error = PrinterSettingsReader.ApplyDevMode(SelectedPrinter?.Name, preset.DevMode);
+        if (error is not null) { StatusText = "套用失败：" + error; return; }
+        RefreshPrinterSettings();
+        StatusText = $"已套用方案「{preset.Name}」：{preset.Facts.Describe()}。现在打印会走这套设置。";
     }
 
     private void ChooseFolder()

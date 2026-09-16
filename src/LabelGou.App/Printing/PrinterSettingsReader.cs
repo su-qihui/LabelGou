@@ -225,6 +225,76 @@ public static class PrinterSettingsReader
         }
     }
 
+    /// <summary>
+    /// 读这台打印机**当前的本用户默认 DEVMODE**（就是驱动页里设好的那一份，整份、含私有块）。
+    /// 存「默认方案」靠它——介质类型住在私有块里，只抄公开字段会丢东西。
+    /// </summary>
+    public static byte[]? CaptureCurrentDevMode(string? printerName, out string? error)
+    {
+        error = null;
+        var name = ResolveName(printerName);
+        if (name is null)
+        {
+            error = "没找到这台打印机，点「刷新」再试。";
+            return null;
+        }
+        if (!OpenPrinterW(name, out var hPrinter, IntPtr.Zero))
+        {
+            error = $"打不开这台打印机的设置（系统返回错误 {Marshal.GetLastWin32Error()}）。";
+            return null;
+        }
+        IntPtr buffer = IntPtr.Zero;
+        try
+        {
+            int size = DocumentPropertiesW(IntPtr.Zero, hPrinter, name, IntPtr.Zero, IntPtr.Zero, DM_OUT_BUFFER);
+            if (size <= 0)
+            {
+                error = $"读不到「{name}」的当前设置（驱动没响应或这台机器离线）。";
+                return null;
+            }
+            buffer = Marshal.AllocHGlobal(size);
+            if (DocumentPropertiesW(IntPtr.Zero, hPrinter, name, buffer, IntPtr.Zero, DM_OUT_BUFFER) <= 0)
+            {
+                error = $"读不到「{name}」的当前设置（驱动没响应或这台机器离线）。";
+                return null;
+            }
+            return ReadBytes(buffer, size);
+        }
+        catch (Exception ex)
+        {
+            error = $"读不到「{name}」的当前设置：{ex.GetType().Name} {ex.Message}";
+            return null;
+        }
+        finally
+        {
+            if (buffer != IntPtr.Zero) Marshal.FreeHGlobal(buffer);
+            ClosePrinter(hPrinter);
+        }
+    }
+
+    /// <summary>
+    /// 把一份 DEVMODE 写回本用户默认。成功返回 null；失败返回一句能看的原因。
+    /// <para>三道核对：长度对得上（驱动版本换了 blob 长度也会变，硬塞不如拒）→ 写 → 回读逐字节比 →
+    /// 再问一次驱动，确认它读到的公开字段变了。少一道都可能"写了个寂寞"（§五-161）。</para>
+    /// </summary>
+    public static string? ApplyDevMode(string? printerName, byte[] devMode)
+    {
+        var name = ResolveName(printerName);
+        if (name is null) return "没找到这台打印机，点「刷新」再试。";
+        var current = CaptureCurrentDevMode(name, out var readError);
+        if (current is null) return readError ?? "读不到这台打印机的当前设置。";
+        if (current.Length != devMode.Length)
+            return $"这份方案与「{name}」现在的驱动不匹配（{devMode.Length} 字节对 {current.Length} 字节）。"
+                 + "多半是驱动装过新版本——请在驱动页里重设一次，再重新存方案。";
+        if (!WriteUserDevMode(name, devMode))
+            return "写不进这台打印机在本机的默认设置（注册表被拒或回读核对不上）。";
+        var after = CaptureCurrentDevMode(name, out _);
+        if (after is null || !after.AsSpan().SequenceEqual(devMode))
+            return "写完回读对不上——这台驱动可能自己另存了一份，请以驱动页里显示的为准。";
+        AppLog.Info($"已套用默认方案到「{name}」：{DevModeFacts.Read(devMode).Describe()}");
+        return null;
+    }
+
     private static string? ResolveName(string? printerName)
     {
         if (!string.IsNullOrWhiteSpace(printerName)) return printerName;

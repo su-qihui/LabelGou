@@ -779,6 +779,7 @@
                                         <RowDefinition Height="Auto" />
                                         <RowDefinition Height="Auto" />
                                         <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
                                     </Grid.RowDefinitions>
                                     <TextBlock Grid.ColumnSpan="3" Text="这台打印机的出纸设置（驱动报什么，这里显示什么）"
                                                FontWeight="Bold" TextWrapping="Wrap" VerticalAlignment="Center" />
@@ -808,6 +809,28 @@
                                     </ItemsControl>
                                     <TextBlock Grid.Row="2" Grid.ColumnSpan="4" Text="{Binding Export.PrinterSettingsNote}"
                                                Style="{StaticResource Hint}" TextWrapping="Wrap" Margin="0,4,0,0" />
+                                    <Grid Grid.Row="3" Grid.ColumnSpan="4" Margin="0,5,0,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="74" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="默认方案" VerticalAlignment="Center" Margin="0,0,6,0" />
+                                        <ComboBox Grid.Column="1" ItemsSource="{Binding Export.Presets}"
+                                                  SelectedItem="{Binding Export.SelectedPreset}" DisplayMemberPath="Name"
+                                                  VerticalAlignment="Center"
+                                                  ToolTip="存下来的方案 = 某台打印机某一整套驱动设置（纸盘 + 介质类型 + 纸张尺寸…）。&#10;存的是整份，因为「标签纸」这类项住在驱动私有块里，只抄三项会丢。" />
+                                        <TextBox Grid.Column="2" Text="{Binding Export.PresetName, UpdateSourceTrigger=PropertyChanged}"
+                                                 VerticalAlignment="Center" Margin="6,0,6,0"
+                                                 ToolTip="新方案的名字。默认就叫「默认」——你要的就是点一下回到惯用那套。" />
+                                        <Button Grid.Column="3" Content="存为方案" Command="{Binding Export.SavePresetCommand}"
+                                                ToolTip="先在右边「打印首选项…」里把纸盘/介质/纸张尺寸设好，再点这里，把整套存下来。" />
+                                        <Button Grid.Column="4" Content="套用" Command="{Binding Export.ApplyPresetCommand}"
+                                                Margin="6,0,0,0" FontWeight="Bold"
+                                                ToolTip="写回这台打印机在本机的默认设置（纸盘、介质类型、纸张尺寸一起回）。&#10;换打印机或驱动升级过会拒绝套用，不会硬塞。" />
+                                    </Grid>
                                 </Grid>
                             </Border>
 
