@@ -280,22 +280,49 @@ public static class PrinterSettingsReader
     public static string? ApplyDevMode(string? printerName, byte[] devMode, double? widthMm = null, double? heightMm = null)
     {
         var name = ResolveName(printerName);
-        if (name is null) return "没找到这台打印机，点「刷新」再试。";
+        if (name is null)
+        {
+            AppLog.Info("套用默认方案失败：没找到这台打印机");
+            return "没找到这台打印机，点「刷新」再试。";
+        }
         // 纸规给了宽高就以纸规为准（单位换算在 Core 里：mm → 0.1mm）；没给就沿用方案里存的那份
         var target = widthMm is > 0 && heightMm is > 0
             ? DevModeFacts.WithPaperSize(devMode, widthMm.Value, heightMm.Value)
             : devMode;
+        var want = DevModeFacts.Read(target);
+        AppLog.Info($"套用默认方案到「{name}」：目标 {want.Describe()}");
+
         var current = CaptureCurrentDevMode(name, out var readError);
-        if (current is null) return readError ?? "读不到这台打印机的当前设置。";
+        if (current is null)
+        {
+            AppLog.Info("套用默认方案失败：读不到当前设置 —— " + readError);
+            return readError ?? "读不到这台打印机的当前设置。";
+        }
         if (current.Length != target.Length)
+        {
+            AppLog.Info($"套用默认方案失败：blob 长度不符 {target.Length} vs {current.Length}");
             return $"这份方案与「{name}」现在的驱动不匹配（{target.Length} 字节对 {current.Length} 字节）。"
                  + "多半是驱动装过新版本——请在驱动页里重设一次，再重新存方案。";
+        }
         if (!WriteUserDevMode(name, target))
+        {
+            AppLog.Info("套用默认方案失败：写注册表被拒或回读对不上");
             return "写不进这台打印机在本机的默认设置（注册表被拒或回读核对不上）。";
+        }
         var after = CaptureCurrentDevMode(name, out _);
-        if (after is null || !after.AsSpan().SequenceEqual(target))
-            return "写完回读对不上——这台驱动可能自己另存了一份，请以驱动页里显示的为准。";
-        AppLog.Info($"已套用默认方案到「{name}」：{DevModeFacts.Read(target).Describe()}");
+        if (after is null)
+        {
+            AppLog.Info("套用默认方案：写完了但问不到驱动，无法确认");
+            return "已写入，但问不到驱动确认——请打开「打印首选项…」看一眼尺寸对不对。";
+        }
+        // 只比公开字段：驱动会按自己的算法重写私有块，逐字节比会把成功误报成失败
+        if (!DevModeFacts.MatchesWrittenSettings(target, after))
+        {
+            AppLog.Info($"套用默认方案：驱动读到的与目标不一致 —— 目标 {want.Describe()}，读到 {DevModeFacts.Read(after).Describe()}");
+            return "写进去了，但驱动读回来的公开字段对不上（目标 " + want.Describe()
+                 + "，驱动读到 " + DevModeFacts.Read(after).Describe() + "）。请把这句发我。";
+        }
+        AppLog.Info($"已套用默认方案到「{name}」：{want.Describe()}（驱动已读到同一份）");
         return null;
     }
 

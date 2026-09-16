@@ -150,4 +150,20 @@ public class PrinterPresetTests : IDisposable
             Assert.Equal(head, DevModeFacts.WithPaperSize(head, w, h));
         }
     }
+
+    [Fact]
+    public void DriverRewritingItsPrivateBlockIsNotTreatedAsFailure()
+    {
+        // 第 79 棒的误报就是这么来的：写完拿整份字节比，驱动重写了私有块 → 永远"对不上"，
+        // 一次成功的套用被报成失败。核对只看公开字段。
+        var written = DevModeFacts.WithPaperSize(RealHead(), 160, 240);
+        var readBack = (byte[])written.Clone();
+        // 夹具只有 DEVMODE 头 220 字节，真私有块在它后面；这里拿"核对之外的其它字节"当替身，
+        // 验的是同一件事：驱动改了别的字节不算失败
+        readBack[166] ^= 0xFF;
+        readBack[190] = (byte)(readBack[190] + 1);
+
+        Assert.True(DevModeFacts.MatchesWrittenSettings(written, readBack));
+        Assert.False(DevModeFacts.MatchesWrittenSettings(written, DevModeFacts.WithPaperSize(RealHead(), 200, 300)));
+    }
 }

@@ -76,6 +76,22 @@ public sealed record DevModeFacts(int PaperSizeId, double? WidthMm, double? Leng
         bytes[offset + 1] = (byte)(value >> 8);
     }
 
+    /// <summary>
+    /// 两份 DEVMODE 在**公开字段**上是否一致（纸型 + 宽高 + 纸盘编号）。
+    /// <para>
+    /// 为什么不逐字节比：驱动会按自己的算法重写私有块（`dmDriverExtra` 那几千字节），
+    /// 逐字节比就永远"对不上"——第 79 棒正是这么把一次成功的套用误报成失败的。
+    /// 私有块里的介质类型这类项目前**读不出来也验不了**，只能靠驱动那一页自己保证。
+    /// </para>
+    /// </summary>
+    public static bool MatchesWrittenSettings(byte[] written, byte[] readBack)
+    {
+        var a = Read(written);
+        var b = Read(readBack);
+        return a.PaperSizeId == b.PaperSizeId && a.WidthMm == b.WidthMm
+            && a.LengthMm == b.LengthMm && a.DefaultSource == b.DefaultSource;
+    }
+
     /// <summary>从一份 DEVMODE 字节里取公开字段；短得不像一份 DEVMODE 时给"读不到"，不抛。</summary>
     public static DevModeFacts Read(byte[] devMode)
     {
