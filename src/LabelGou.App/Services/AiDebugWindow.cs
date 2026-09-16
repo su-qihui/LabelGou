@@ -67,10 +67,12 @@ public sealed class AiDebugWindow : Window
     public AiDebugWindow()
     {
         Title = "模型（AI）设置与调试";
-        Width = 720;
-        Height = 620;
+        Width = 760;
+        Height = 660;
+        MinWidth = 620;
+        MinHeight = 460;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        Padding = new Thickness(14);
+        Padding = new Thickness(18);
 
         var form = new StackPanel();
         form.Children.Add(new TextBlock { Text = "通道", FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 2) });
@@ -123,16 +125,51 @@ public sealed class AiDebugWindow : Window
         buttons.Children.Add(save);
         form.Children.Add(buttons);
 
-        form.Children.Add(new TextBlock { Text = "结果（模型原话，不修饰）", FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 14, 0, 4) });
-        _logScroll = new ScrollViewer { Content = _log, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+        var logTitle = new TextBlock
+        {
+            Text = "结果（模型原话，不修饰）",
+            FontWeight = FontWeights.SemiBold,
+            Margin = new Thickness(0, 0, 0, 3),
+        };
+        DockPanel.SetDock(logTitle, Dock.Top);
+        var logPane = new DockPanel { LastChildFill = true };
+        logPane.Children.Add(logTitle);
+        _logScroll = new ScrollViewer
+        {
+            Content = _log,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            Padding = new Thickness(6, 4, 6, 4),
+            BorderBrush = new SolidColorBrush(Color.FromRgb(0xDD, 0xDD, 0xDD)),
+            BorderThickness = new Thickness(1),
+            MinHeight = 110,
+        };
+        logPane.Children.Add(_logScroll);
 
+        // 表单原先住在一行 Auto 里且没有滚动容器：窗口一矮，最下面那排按钮（含「保存并关闭」）
+        // 就被裁掉——用户报的"贴着边缘、有些东西看不到"就是这个。两边各给一个可滚的格子，中间能拖。
+        var formScroll = new ScrollViewer
+        {
+            Content = form,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            Padding = new Thickness(0, 0, 8, 0),
+        };
         var root = new Grid();
+        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(2, GridUnitType.Star) });
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-        Grid.SetRow(form, 0);
-        Grid.SetRow(_logScroll, 1);
-        root.Children.Add(form);
-        root.Children.Add(_logScroll);
+        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star), MinHeight = 110 });
+        Grid.SetRow(formScroll, 0);
+        var split = new GridSplitter
+        {
+            Height = 6,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Center,
+            ResizeDirection = GridResizeDirection.Rows,
+        };
+        Grid.SetRow(split, 1);
+        Grid.SetRow(logPane, 2);
+        root.Children.Add(formScroll);
+        root.Children.Add(split);
+        root.Children.Add(logPane);
         Content = root;
 
         SelectInitialChannel();
@@ -190,8 +227,9 @@ public sealed class AiDebugWindow : Window
             return;
         }
         _keyNotice.Text = _rememberApiKey.IsChecked == true
-            ? "勾了保存：密钥以 Windows 密文单独存进 llm-key.protected（不写进 recognition.json，免得拷设置时把它一起带走）。"
-              + "换机器、换登录用户就解不开；同一个登录用户下的程序仍然读得到——要更强就别让数据进云端，或改用环境变量。"
+            ? "勾了保存：密钥以 Windows 密文单独存进 llm-key-<厂商>.protected，一家一份（切厂商不会把上一家的带过去）。"
+              + " 不写进 recognition.json，免得拷设置时把它一起带走。换机器、换登录用户就解不开；"
+              + "同一个登录用户下的程序仍然读得到——要更强就别让数据进云端，或改用环境变量。"
             : "没勾保存：密钥只存在这次运行里（本次运行内各个窗口都能用，关掉软件就没了）。要长期用就勾上面那格，或设环境变量 LABELGOU_LLM_KEY（读的时候环境变量优先）。";
         _keyNotice.Foreground = OkBrush;
     }
@@ -266,8 +304,27 @@ public sealed class AiDebugWindow : Window
         _model.Text = values.Model;
         GuessImagesForModel();
         RefreshNotice();
+        ReloadKeyForSlot();
         // 切到一家新服务就顺手把模型列表拉下来：用户要的是“从列表里选”，不该还要他再点一下。
         _ = RefreshModelsAsync();
+    }
+
+    /// <summary>
+    /// 换厂商就把密钥框换成**这一家**的（本次填过的优先，其次磁盘上这一家的）。
+    /// <para>上一版这里什么都不动，于是百炼那一串跟着进了 DeepSeek——界面看着"有密钥"，
+    /// 发出去换回的只有 401（用户 2026-09-16：「一个 apikey 是接一个厂商的」）。</para>
+    /// </summary>
+    private void ReloadKeyForSlot()
+    {
+        var slot = RecognitionSettings.SlotOf(_endpoint.Text);
+        var fromSession = RecognitionSettings.TakeSessionKey(slot);
+        var key = fromSession ?? RecognitionSettings.ReadStoredKeyFor(_endpoint.Text, _rememberApiKey.IsChecked == true);
+        _settings.ApiKey = key;
+        _settings.UsingSessionKey = fromSession is not null;
+        _apiKey.Password = key ?? string.Empty;
+        _apiKeyPlain.Text = key ?? string.Empty;
+        WriteLine($"切到「{slot}」：{(key is null ? "这一家还没有存过的密钥" : "已接上这一家存过的密钥")}。");
+        RefreshKeyNotice();
     }
 
     /// <summary>按当前模型名重判“吃不吃图”，并在日志里说清是猜的还是手改的。</summary>
@@ -326,7 +383,7 @@ public sealed class AiDebugWindow : Window
             // 清了还留着「记住」，下次保存会把同一个密钥又写回磁盘，那格勾就没意义了。
             _settings.ApiKey = null;
             _settings.UsingSessionKey = false;
-            RecognitionSettings.SessionApiKey = null;    // 不清这一格，对话窗还会拿着刚被抹掉的那一串
+            RecognitionSettings.RememberSessionKey(_settings.ApiKeySlot, null);    // 只清这一家的，别家本次填的不动
             _settings.RememberApiKey = false;
             _rememberApiKey.IsChecked = false;
         }
@@ -336,7 +393,7 @@ public sealed class AiDebugWindow : Window
             var typed = TypedKey().Trim();
             _settings.ApiKey = typed.Length == 0 ? null : typed;
             _settings.UsingSessionKey = typed.Length > 0;
-            RecognitionSettings.SessionApiKey = _settings.ApiKey;
+            RecognitionSettings.RememberSessionKey(_settings.ApiKeySlot, _settings.ApiKey);
             _settings.RememberApiKey = _rememberApiKey.IsChecked == true;
         }
         _settings.ModelAcceptsImages = _acceptsImages.IsChecked == true;
@@ -368,7 +425,7 @@ public sealed class AiDebugWindow : Window
         var keyLine = settings.SavedKeyFailure is not null
             ? $"但密钥那件事没成：{settings.SavedKeyFailure}"
             : settings.RememberApiKey && !string.IsNullOrWhiteSpace(settings.ApiKey)
-                ? $"密钥已加密存进 {SecretStore.DefaultFilePath}（只这台机这个登录用户解得开）"
+                ? $"密钥已加密存进 {SecretStore.KeyPathFor(SecretStore.DefaultFilePath, settings.ApiKeySlot)}（只这台机这个登录用户解得开）"
                 : string.IsNullOrWhiteSpace(settings.ApiKey)
                     ? "这次没有密钥（磁盘上那份已按开关处理）"
                     : "密钥没存盘，只活在这次运行";

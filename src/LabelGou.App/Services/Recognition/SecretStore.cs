@@ -38,6 +38,18 @@ public static class SecretStore
     public static string DefaultFilePath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "LabelGou", FileName);
 
+    /// <summary>
+    /// 某一家厂商的密文文件：<c>llm-key-&lt;厂商&gt;.protected</c>，放在 <paramref name="legacyPath"/> 的同一目录。
+    /// <para>第 80 棒按厂商分密钥（用户：「一个 apikey 是接一个厂商的」）。文件名里带上厂商主机名，
+    /// 用户自己进目录也看得出哪份是谁的；槽位里的非法字符换下划线，其余原样保留。</para>
+    /// </summary>
+    public static string KeyPathFor(string legacyPath, string slot)
+    {
+        var dir = Path.GetDirectoryName(legacyPath) ?? string.Empty;
+        var safe = string.Concat(slot.Select(c => Path.GetInvalidFileNameChars().Contains(c) ? '_' : c));
+        return Path.Combine(dir, "llm-key-" + safe + ".protected");
+    }
+
     /// <summary>加密成 base64 一行。失败抛 <see cref="InvalidOperationException"/>，带 Win32 错误码。</summary>
     public static string Protect(string plain)
     {

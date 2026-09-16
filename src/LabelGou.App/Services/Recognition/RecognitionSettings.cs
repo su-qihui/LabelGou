@@ -105,11 +105,13 @@ public sealed class RecognitionSettings
     public string? ApiKey { get; set; }
 
     /// <summary>
-    /// 要不要把密钥存在这台电脑上（<b>DPAPI 密文</b>，单独文件 <c>llm-key.protected</c>，不写进本 JSON）。
-    /// <para>默认 false：老设置文件升上来行为不变。它只在这台机、这个 Windows 登录用户下解得开，
-    /// 拷到另一台机器就是一堆废纸——这是特性不是缺陷，界面上得把这句说出来。</para>
+    /// 要不要把密钥存在这台电脑上（<b>DPAPI 密文</b>，按厂商各一个文件 <c>llm-key-&lt;厂商&gt;.protected</c>，不写进本 JSON）。
+    /// <para>第 80 棒按用户口径改成默认存（「默认把模型apikey存在本地」）——上一版默认不存，
+    /// 结果是每个人换窗口/重开都要重填一遍。</para>
+    /// <para>它只在这台机、这个 Windows 登录用户下解得开，拷到另一台机器就是一堆废纸——这是特性不是缺陷，
+    /// 界面上得把这句说出来。老设置文件里显式写了 <c>false</c> 的人照旧不存（那是他自己选的）。</para>
     /// </summary>
-    public bool RememberApiKey { get; set; }
+    public bool RememberApiKey { get; set; } = true;
 
     /// <summary>本次从磁盘密文里读密钥的结果：<c>Missing</c>=没存过，<c>Unreadable</c>=存过但解不开（界面要红字）。</summary>
     [JsonIgnore]
@@ -120,13 +122,42 @@ public sealed class RecognitionSettings
     public string? SavedKeyFailure { get; internal set; }
 
     /// <summary>
-    /// 本次运行里用户在设置窗填过、但没勾「存在这台电脑」的那一串。
-    /// <para>为什么要有它：设置窗与 AI 面板各自 <c>Load()</c> 出不同的对象，而 <see cref="ApiKey"/> 不落盘——
-    /// 于是用户亲眼看到「设置窗里探活成功，对话窗里说没有密钥」（截图就是这个）。没有这一格，
-    /// 界面上那句「只活在这次运行」就是假话：它其实只活在那一个窗口。</para>
+    /// 本次运行里用户在设置窗填过、但没勾「存在这台电脑」的那一串，**按厂商分开**。
+    /// <para>为什么按厂商分（第 80 棒，用户：「一个 apikey 是接一个厂商的，目前更换模型厂商时 apikey 会跟过去」）：
+    /// 百炼那一串塞进 DeepSeek 只会换来 401，而界面上看着"我有密钥"——比没密钥更难查。</para>
+    /// <para>还要一项：设置窗与 AI 面板各自 <c>Load()</c> 出不同的对象，而 <see cref="ApiKey"/> 不落盘——
+    /// 于是用户亲眼看到「设置窗里探活成功，对话窗里说没有密钥」。没有这一格，界面上那句「只活在这次运行」
+    /// 就是假话：它其实只活在那一个窗口。</para>
     /// <para>只存内存，进程退出就没了；单测走的 <c>LoadFrom</c> 默认不合并它，免得静态字段造成测试串味。</para>
     /// </summary>
-    public static string? SessionApiKey { get; set; }
+    public static readonly Dictionary<string, string?> SessionApiKeys = new();
+
+    /// <summary>记下本次填的密钥（空串＝抹掉这一家的）。</summary>
+    public static void RememberSessionKey(string slot, string? key)
+    {
+        if (string.IsNullOrWhiteSpace(key)) SessionApiKeys.Remove(slot);
+        else SessionApiKeys[slot] = key.Trim();
+    }
+
+    /// <summary>取某一家本次填过、还没存盘的密钥。</summary>
+    public static string? TakeSessionKey(string slot) =>
+        SessionApiKeys.TryGetValue(slot, out var value) ? value : null;
+
+    /// <summary>
+    /// 密钥的「厂商」槽位：同一个 endpoint 主机算一家（本机 Ollama 单独一档，它根本不要密钥）。
+    /// <para>用主机而不是 <see cref="Provider"/> 分档：百炼与 DeepSeek 都走 openai 协议，
+    /// 按协议分就成了两家共用一格——那正是用户报的那个现象。</para>
+    /// </summary>
+    [JsonIgnore]
+    public string ApiKeySlot => SlotOf(Endpoint);
+
+    /// <summary>从端点地址算槽位。地址还没填全（用户正在打字）时归「默认」，不猜厂商。</summary>
+    public static string SlotOf(string? endpoint)
+    {
+        if (!Uri.TryCreate((endpoint ?? string.Empty).Trim(), UriKind.Absolute, out var uri)
+            || string.IsNullOrEmpty(uri.Host)) return "默认";
+        return LocalHosts.Contains(uri.Host, StringComparer.OrdinalIgnoreCase) ? "本机" : uri.Host.ToLowerInvariant();
+    }
 
     /// <summary>这份对象里的密钥是从 <see cref="SessionApiKey"/> 来的（界面要能说清是哪一路）。</summary>
     [JsonIgnore]
@@ -169,6 +200,18 @@ public sealed class RecognitionSettings
         && LocalHosts.Contains(uri.Host, StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
+    /// 换厂商时给界面用：读**这一家**存过的密钥。没勾「存在这台电脑」就不碰磁盘
+    /// （与 <c>ReadStoredKey</c> 同一口径：用户选了不存，读出来等于替他做主）。
+    /// </summary>
+    public static string? ReadStoredKeyFor(string? endpoint, bool remember)
+    {
+        if (!remember) return null;
+        var path = SecretStore.KeyPathFor(SecretStore.DefaultFilePath, SlotOf(endpoint));
+        return SecretStore.TryReadFile(path, out var plain, out _) == SecretStore.Status.Ok
+            && !string.IsNullOrWhiteSpace(plain) ? plain : null;
+    }
+
+    /// <summary>
     /// 取真正生效的密钥：环境变量优先，其次才是存在设置里的那个。
     /// <para>优先环境变量不是洁癖：这台机的 <c>%APPDATA%\LabelGou\recognition.json</c> 是明文，
     /// 而店铺电脑会被人接手、也会被备份脚本扫走；能不放上去就不放。</para>
@@ -189,13 +232,14 @@ public sealed class RecognitionSettings
         $"或设环境变量 {ApiKeyEnvVar}（环境变量优先）。";
 
     /// <summary>
-    /// 几家的现成入口。注意：<strong>这里只锁地址不锁模型</strong>——
-    /// 百炼背后一堆型号（qwen3 系列、qwen-vl 系列、flash/max 各档），写死一个就等于替用户做了错决定。
-    /// 模型名靠拉列表选（<c>OllamaVisionClient.ListModelsAsync</c>），这里的 Model 只是拉到列表前的默认值。</summary>
+    /// 几家的现成入口：地址 + 协议 + 一个默认模型名。默认模型按用户 2026-09-16 点名的写
+    /// （百炼 <c>qwen3.8-flash</c>、DeepSeek <c>deepseek-flash</c>），它只是「列表拉出来之前先填着」——
+    /// 拉完列表照样能挑别的、手填也不拦（动态模型选择那条机制不变）。
+    /// </summary>
     public static readonly CloudPreset[] CloudPresets =
     {
-        new("阿里云百炼（DashScope，模型从列表里选）", "https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen-vl-max", null),
-        new("DeepSeek（模型从列表里选）", "https://api.deepseek.com", "deepseek-chat", null),
+        new("阿里云百炼（DashScope，模型从列表里选）", "https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen3.8-flash", null),
+        new("DeepSeek（模型从列表里选）", "https://api.deepseek.com", "deepseek-flash", null),
     };
 
     /// <summary>
@@ -296,9 +340,10 @@ public sealed class RecognitionSettings
         }
 
         if (keyPath is not null) settings.ReadStoredKey(keyPath);
-        if (mergeSessionKey && !string.IsNullOrWhiteSpace(SessionApiKey))
+        var sessionKey = mergeSessionKey ? TakeSessionKey(settings.ApiKeySlot) : null;
+        if (!string.IsNullOrWhiteSpace(sessionKey))
         {
-            settings.ApiKey = SessionApiKey;
+            settings.ApiKey = sessionKey;
             settings.UsingSessionKey = true;
         }
         return settings;
@@ -307,8 +352,10 @@ public sealed class RecognitionSettings
     /// <summary>
     /// 把磁盘上那份密文读回 <see cref="ApiKey"/>。<b>解不开不静默</b>：记下状态与原因交给界面说，
     /// 而不是当没存过（上一版就是「静默退回默认」让用户以为软件忘了他的密钥）。
+    /// <para>老版本只有一份全局密钥（<c>llm-key.protected</c>）：第一次按厂商分家时把它复制到当前这一家，
+    /// 免得用户白重填一次——但只补当前这一家，不猜别家拿的是不是同一串。</para>
     /// </summary>
-    private void ReadStoredKey(string keyPath)
+    private void ReadStoredKey(string legacyKeyPath)
     {
         if (!RememberApiKey)
         {
@@ -317,22 +364,42 @@ public sealed class RecognitionSettings
             SavedKeyFailure = null;
             return;
         }
-        SavedKeyStatus = SecretStore.TryReadFile(keyPath, out var plain, out var failure);
+
+        var slotPath = SecretStore.KeyPathFor(legacyKeyPath, ApiKeySlot);
+        SavedKeyStatus = SecretStore.TryReadFile(slotPath, out var plain, out var failure);
         SavedKeyFailure = failure;
+
+        if (SavedKeyStatus == SecretStore.Status.Missing && File.Exists(legacyKeyPath))
+        {
+            // 分家迁移：这一家还没有自己的密文，而老的那份在——搬过来再用
+            SavedKeyStatus = SecretStore.TryReadFile(legacyKeyPath, out plain, out failure);
+            SavedKeyFailure = failure;
+            if (SavedKeyStatus == SecretStore.Status.Ok && !string.IsNullOrWhiteSpace(plain))
+            {
+                SecretStore.TryWriteFile(slotPath, plain!, out _);
+                SavedKeyFailure = null;
+                LabelGou.App.Services.AppLog.Info(
+                    $"密钥按厂商分家：把老那份认给了「{ApiKeySlot}」（{Path.GetFileName(slotPath)}）。");
+            }
+        }
+
         if (SavedKeyStatus == SecretStore.Status.Ok && !string.IsNullOrWhiteSpace(plain)) ApiKey = plain;
     }
 
-    /// <summary>把内存里这份密钥按开关同步到磁盘（写 / 删 / 不动）。</summary>
-    private void SyncStoredKey(string keyPath)
+    /// <summary>把内存里这份密钥按开关同步到磁盘（写这一家的 / 清这一家的 + 老那份 / 不动）。</summary>
+    private void SyncStoredKey(string legacyKeyPath)
     {
+        var slotPath = SecretStore.KeyPathFor(legacyKeyPath, ApiKeySlot);
         if (!RememberApiKey)
         {
-            SavedKeyFailure = SecretStore.TryClearFile(keyPath);      // 关了保存 = 磁盘上不留
+            // 关了保存 = 磁盘上不留。老那份也要一起清：不清的话下次读又被它迁移回来，这格勾就成了摆设。
+            SavedKeyFailure = SecretStore.TryClearFile(slotPath);
+            SecretStore.TryClearFile(legacyKeyPath);
             SavedKeyStatus = SecretStore.Status.Missing;
             return;
         }
         if (string.IsNullOrWhiteSpace(ApiKey)) return;                // 没新填的也不拿空值去覆盖存着的那份
-        SavedKeyStatus = SecretStore.TryWriteFile(keyPath, ApiKey!.Trim(), out var failure);
+        SavedKeyStatus = SecretStore.TryWriteFile(slotPath, ApiKey!.Trim(), out var failure);
         SavedKeyFailure = failure;
     }
 

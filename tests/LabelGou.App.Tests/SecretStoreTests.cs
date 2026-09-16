@@ -88,7 +88,8 @@ public class SecretStoreTests
         };
         settings.SaveTo(settingsPath, keyPath);
 
-        Assert.True(File.Exists(keyPath));
+        // 存的是这一家自己的密文文件（一家一份），不再是那个全局的 llm-key.protected
+        Assert.True(File.Exists(SecretStore.KeyPathFor(keyPath, settings.ApiKeySlot)));
         Assert.DoesNotContain(Key, File.ReadAllText(settingsPath), StringComparison.Ordinal);
         Assert.Contains("\"rememberApiKey\":true", File.ReadAllText(settingsPath).Replace(" ", string.Empty), StringComparison.Ordinal);
         Assert.Equal(Key, RecognitionSettings.LoadFrom(settingsPath, keyPath).ApiKey);   // 跨进程回来还在
@@ -101,15 +102,17 @@ public class SecretStoreTests
         var settingsPath = Path.Combine(dir, "recognition.json");
         var keyPath = Path.Combine(dir, "llm-key.protected");
 
-        new RecognitionSettings { ApiKey = Key, RememberApiKey = true }.SaveTo(settingsPath, keyPath);
-        Assert.True(File.Exists(keyPath));
+        var seed = new RecognitionSettings { ApiKey = Key, RememberApiKey = true };
+        seed.SaveTo(settingsPath, keyPath);
+        var slotKeyPath = SecretStore.KeyPathFor(keyPath, seed.ApiKeySlot);
+        Assert.True(File.Exists(slotKeyPath));
 
         var off = RecognitionSettings.LoadFrom(settingsPath, keyPath);
         Assert.Equal(Key, off.ApiKey);                      // 先确认读回来了，否则这条测试是空的
         off.RememberApiKey = false;
         off.SaveTo(settingsPath, keyPath);
 
-        Assert.False(File.Exists(keyPath));
+        Assert.False(File.Exists(slotKeyPath));
         Assert.Equal(SecretStore.Status.Missing, RecognitionSettings.LoadFrom(settingsPath, keyPath).SavedKeyStatus);
     }
 
@@ -130,8 +133,10 @@ public class SecretStoreTests
     }
 
     [Fact]
-    public void 老设置文件没这个开关时行为不变()
+    public void 老设置文件没这个开关时按新默认存本地但不凭空造密钥文件()
     {
+        // 第 80 棒：用户要「默认把模型 apikey 存在本地」，没写这个开关的老文件升上来就是"存"。
+        // 仍然保住的那半：手上没有密钥时不许凭空造一个密钥文件出来。
         var dir = TestEnvironment.NewTempDir("labelgou-settings");
         var settingsPath = Path.Combine(dir, "recognition.json");
         var keyPath = Path.Combine(dir, "llm-key.protected");
@@ -139,11 +144,12 @@ public class SecretStoreTests
 
         var loaded = RecognitionSettings.LoadFrom(settingsPath, keyPath);
 
-        Assert.False(loaded.RememberApiKey);
+        Assert.True(loaded.RememberApiKey);
         Assert.Null(loaded.ApiKey);
         Assert.Equal(SecretStore.Status.Missing, loaded.SavedKeyStatus);
         loaded.SaveTo(settingsPath, keyPath);
-        Assert.False(File.Exists(keyPath));                 // 没勾就不该凭空造一个密钥文件
+        Assert.False(File.Exists(keyPath));                 // 没密钥就不该造文件
+        Assert.False(File.Exists(SecretStore.KeyPathFor(keyPath, loaded.ApiKeySlot)));
     }
 
     [Fact]
@@ -197,10 +203,10 @@ public class SecretStoreTests
         var dir = TestEnvironment.NewTempDir("labelgou-settings");
         var settingsPath = Path.Combine(dir, "recognition.json");
         new RecognitionSettings().SaveTo(settingsPath);            // 磁盘上什么都没存
-        var previous = RecognitionSettings.SessionApiKey;
+        var slot = RecognitionSettings.SlotOf(new RecognitionSettings().Endpoint);
         try
         {
-            RecognitionSettings.SessionApiKey = Key;
+            RecognitionSettings.RememberSessionKey(slot, Key);
 
             var merged = RecognitionSettings.LoadFrom(settingsPath, keyPath: null, mergeSessionKey: true);
             Assert.Equal(Key, merged.ApiKey);
@@ -209,7 +215,7 @@ public class SecretStoreTests
         }
         finally
         {
-            RecognitionSettings.SessionApiKey = previous;
+            RecognitionSettings.RememberSessionKey(slot, null);
         }
     }
 
@@ -220,17 +226,53 @@ public class SecretStoreTests
         var dir = TestEnvironment.NewTempDir("labelgou-settings");
         var settingsPath = Path.Combine(dir, "recognition.json");
         new RecognitionSettings().SaveTo(settingsPath);
-        var previous = RecognitionSettings.SessionApiKey;
+        var slot = RecognitionSettings.SlotOf(new RecognitionSettings().Endpoint);
         try
         {
-            RecognitionSettings.SessionApiKey = Key;
+            RecognitionSettings.RememberSessionKey(slot, Key);
 
             Assert.Null(RecognitionSettings.LoadFrom(settingsPath).ApiKey);
             Assert.Null(RecognitionSettings.LoadFrom(settingsPath, keyPath: null).ApiKey);
         }
         finally
         {
-            RecognitionSettings.SessionApiKey = previous;
+            RecognitionSettings.RememberSessionKey(slot, null);
         }
+    }
+
+    [Fact]
+    public void 一家一份密钥不会跟着换厂商跑过去()
+    {
+        // 用户 2026-09-16：「一个 apikey 是接一个厂商的（目前是在更换模型厂商时 apikey 会跟过去）」。
+        // 百炼那一串塞进 DeepSeek 只会换回 401，而界面上还显示"有密钥"。
+        Assert.Equal("dashscope.aliyuncs.com",
+            RecognitionSettings.SlotOf("https://dashscope.aliyuncs.com/compatible-mode/v1"));
+        Assert.Equal("api.deepseek.com", RecognitionSettings.SlotOf("https://api.deepseek.com"));
+        Assert.Equal("本机", RecognitionSettings.SlotOf("http://127.0.0.1:11434"));
+        Assert.NotEqual(RecognitionSettings.SlotOf("https://api.deepseek.com"),
+            RecognitionSettings.SlotOf("https://dashscope.aliyuncs.com/compatible-mode/v1"));
+
+        var dir = TestEnvironment.NewTempDir("labelgou-slots");
+        Assert.NotEqual(SecretStore.KeyPathFor(Path.Combine(dir, "llm-key.protected"), "api.deepseek.com"),
+                        SecretStore.KeyPathFor(Path.Combine(dir, "llm-key.protected"), "dashscope.aliyuncs.com"));
+        Assert.Contains("dashscope", Path.GetFileName(
+            SecretStore.KeyPathFor(Path.Combine(dir, "llm-key.protected"), "dashscope.aliyuncs.com")));
+    }
+
+    [Fact]
+    public void 老的那一份全局密钥第一次读时迁给当前这家()
+    {
+        var dir = TestEnvironment.NewTempDir("labelgou-migrate");
+        var settingsPath = Path.Combine(dir, "recognition.json");
+        var legacyKeyPath = Path.Combine(dir, "llm-key.protected");
+        new RecognitionSettings { RememberApiKey = true }.SaveTo(settingsPath);
+        SecretStore.TryWriteFile(legacyKeyPath, Key, out var wrote);   // 老版现场：只有这一份全局密文
+        Assert.Null(wrote);
+
+        var back = RecognitionSettings.LoadFrom(settingsPath, legacyKeyPath);
+
+        Assert.Equal(Key, back.ApiKey);
+        Assert.True(File.Exists(SecretStore.KeyPathFor(legacyKeyPath, back.ApiKeySlot)),
+            "迁移后这一家要有自己的密文文件，否则下次还得再迁一遍");
     }
 }
