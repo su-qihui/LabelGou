@@ -32,4 +32,15 @@ public class PrinterSettingsPanelTests
         Assert.DoesNotContain("PrintQueueException", report.Error);   // 类名甩给用户看就是没说清
         Assert.Contains("打印机", report.Error);
     }
+
+    [Fact]
+    public void FailingToOpenTheDriverPageSaysWhyInsteadOfGoingSilent()
+    {
+        // 第 76 棒踩过的坑：P/Invoke 的名字写错（kernel32 没有 CopyMemory），异常被 catch 吞成
+        // 「取消或没弹成」，用户只看到点了那颗按钮没反应。失败与取消必须分得开。
+        var diff = PrinterSettingsReader.OpenDriverPreferences("这台打印机根本不存在-B76", IntPtr.Zero, out var error);
+
+        Assert.Null(diff);
+        Assert.False(string.IsNullOrWhiteSpace(error));
+    }
 }

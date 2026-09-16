@@ -372,8 +372,14 @@ public sealed class ExportViewModel : ObservableObject
     {
         var owner = new System.Windows.Interop.WindowInteropHelper(
             System.Windows.Application.Current.MainWindow).Handle;
-        var diff = PrinterSettingsReader.OpenDriverPreferences(SelectedPrinter?.Name, owner);
-        AppLog.Info($"弹驱动首选项页（{SelectedPrinter?.Name ?? "默认打印机"}）：{(diff is null ? "取消或没弹成" : "用户按了确定")}");
+        var diff = PrinterSettingsReader.OpenDriverPreferences(SelectedPrinter?.Name, owner, out var error);
+        AppLog.Info($"弹驱动首选项页（{SelectedPrinter?.Name ?? "默认打印机"}）："
+            + (error is not null ? "失败：" + error : diff is null ? "用户按了取消" : "用户按了确定"));
+        if (error is not null)
+        {
+            StatusText = error;
+            return;
+        }
         if (diff is null) return;
         RefreshPrinterSettings();
         StatusText = "驱动页按了确定，这次改动：" + diff

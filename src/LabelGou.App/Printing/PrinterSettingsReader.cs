@@ -87,34 +87,48 @@ public static class PrinterSettingsReader
     /// <c>DocumentProperties</c> 立刻读到新值）。
     /// </para>
     /// </summary>
-    /// <returns>用户按了确定时返回差异说明；取消或失败返回 null。</returns>
-    public static string? OpenDriverPreferences(string? printerName, IntPtr owner)
+    /// <returns>用户按了确定时返回差异说明；取消返回 null 且 <paramref name="error"/> 为空；
+    /// 弹不开返回 null 并给出一句能看的原因（「点了没反应」必须能分清取消与失败）。</returns>
+    public static string? OpenDriverPreferences(string? printerName, IntPtr owner, out string? error)
     {
+        error = null;
         var name = ResolveName(printerName);
-        if (name is null) return null;
+        if (name is null)
+        {
+            error = "没找到这台打印机（列表可能过期了），点「刷新」再试。";
+            return null;
+        }
         IntPtr hPrinter = IntPtr.Zero;
         try
         {
             // 实测：带 PRINTER_DEFAULTSW(0x8=PRINTER_ACCESS_USE) 一律回拒绝访问，传 NULL 才打得开
             if (!OpenPrinterW(name, out hPrinter, IntPtr.Zero))
             {
-                AppLog.Info($"打开打印机句柄失败（{name}）：{Marshal.GetLastWin32Error()}");
+                var win32 = Marshal.GetLastWin32Error();
+                AppLog.Info($"打开打印机句柄失败（{name}）：{win32}");
+                error = $"打不开这台打印机的设置（系统返回错误 {win32}）。先确认它在 Windows 里能正常打印。";
                 return null;
             }
             int size = DocumentPropertiesW(owner, hPrinter, name, IntPtr.Zero, IntPtr.Zero, DM_OUT_BUFFER);
-            if (size <= 0) return null;
-            IntPtr before = Marshal.AllocHGlobal(size);
-            IntPtr after = Marshal.AllocHGlobal(size);
+            if (size <= 0)
+            {
+                error = $"读不到「{name}」的当前设置（驱动没响应或这台机器离线）。";
+                return null;
+            }
+            IntPtr buffer = Marshal.AllocHGlobal(size);
             try
             {
-                if (DocumentPropertiesW(owner, hPrinter, name, before, IntPtr.Zero, DM_OUT_BUFFER) <= 0)
+                if (DocumentPropertiesW(owner, hPrinter, name, buffer, IntPtr.Zero, DM_OUT_BUFFER) <= 0)
+                {
+                    error = $"读不到「{name}」的当前设置（驱动没响应或这台机器离线）。";
                     return null;
-                CopyMemory(after, before, (uint)size);
-                if (DocumentPropertiesW(owner, hPrinter, name, after, before, DM_IN_PROMPT | DM_OUT_BUFFER) <= 0)
-                    return null;            // 用户按了取消
+                }
+                var oldBytes = ReadBytes(buffer, size);
+                // 进与出用同一块缓冲：驱动页在它上面就地改（旧代码就这么调，实测弹得开）
+                if (DocumentPropertiesW(owner, hPrinter, name, buffer, buffer, DM_IN_PROMPT | DM_OUT_BUFFER) <= 0)
+                    return null;            // 用户按了取消，静默
 
-                var oldBytes = ReadBytes(before, size);
-                var newBytes = ReadBytes(after, size);
+                var newBytes = ReadBytes(buffer, size);
                 var diff = DescribeDiff(oldBytes, newBytes);
                 var persisted = WriteUserDevMode(name, newBytes);
                 AppLog.Info($"驱动首选项页返回差异：{diff}；写回本用户默认（DevModePerUser）{(persisted ? "成功" : "失败")}");
@@ -122,13 +136,14 @@ public static class PrinterSettingsReader
             }
             finally
             {
-                Marshal.FreeHGlobal(before);
-                Marshal.FreeHGlobal(after);
+                Marshal.FreeHGlobal(buffer);
             }
         }
         catch (Exception ex)
         {
-            AppLog.Info($"弹驱动首选项失败（{name}）：{Describe(ex)}");
+            // 这里别用 Describe：它会把「P/Invoke 名字写错」这类自伤抹成"问不到设置"，线索就没了
+            AppLog.Info($"弹驱动首选项失败（{name}）：{ex.GetType().Name} {ex.Message}");
+            error = $"弹不开这台打印机的设置页：{ex.GetType().Name} {ex.Message}";
             return null;
         }
         finally
@@ -226,9 +241,6 @@ public static class PrinterSettingsReader
     [DllImport("winspool.drv", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern int DocumentPropertiesW(
         IntPtr hWnd, IntPtr hPrinter, string pDeviceName, IntPtr pDevModeOutput, IntPtr pDevModeInput, int fMode);
-
-    [DllImport("kernel32.dll")]
-    private static extern void CopyMemory(IntPtr destination, IntPtr source, uint length);
 
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern int RegOpenKeyExW(
