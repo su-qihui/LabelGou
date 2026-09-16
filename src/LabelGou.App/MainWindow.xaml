@@ -762,6 +762,55 @@
                                 <Button Grid.Column="2" Content="刷新" Command="{Binding Export.RefreshPrintersCommand}" Margin="6,0,0,0" />
                             </Grid>
 
+                            <!--  第 74 棒：这台打印机的出纸设置。三项的标签与候选值一律用驱动自己的话（同一档纸
+                                    Ricoh 叫「手送台」、Canon 叫「后端托盘」，我们翻一遍就对不上号）。
+                                    只读不写是实测结论：.NET 的 PrintQueue.UserPrintTicket 赋值在这台机器上是空操作，
+                                    PrintVisual 又没有别的带 ticket 的入口，所以改值交给驱动那一页。
+                                    列用 Grid 不用横向 StackPanel：后者拿无限宽量孩子，控件会被裁掉而一声不响。  -->
+                            <Border Margin="0,6,0,0" Background="#F7F7F7" BorderBrush="#DDD" BorderThickness="1" Padding="6,4">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="150" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+                                    <TextBlock Grid.ColumnSpan="3" Text="这台打印机的出纸设置（驱动报什么，这里显示什么）"
+                                               FontWeight="Bold" TextWrapping="Wrap" VerticalAlignment="Center" />
+                                    <Button Grid.Column="3" Content="打印首选项…" Command="{Binding Export.OpenPreferencesCommand}"
+                                            HorizontalAlignment="Right"
+                                            ToolTip="打开驱动自己的那一页——CorelDRAW 里「属性(P)…」按钮打开的就是它。纸盘、介质类型、黑白/彩色都在那里改，改完这里会跟着刷新。" />
+                                    <ItemsControl Grid.Row="1" Grid.ColumnSpan="4" Margin="0,3,0,0"
+                                                  ItemsSource="{Binding Export.PrinterSettingRows}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Grid Margin="0,1,0,0">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="Auto" />
+                                                        <ColumnDefinition Width="150" />
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Text="{Binding Label}" MinWidth="76" Margin="0,0,8,0" VerticalAlignment="Center" />
+                                                    <TextBlock Grid.Column="1" Text="{Binding CurrentText}" TextWrapping="Wrap"
+                                                               VerticalAlignment="Center" Margin="0,0,8,0" />
+                                                    <TextBlock Grid.Column="2" Text="{Binding OptionsText}" TextWrapping="Wrap"
+                                                               Style="{StaticResource Hint}" VerticalAlignment="Center"
+                                                               ToolTip="{Binding Note}" />
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                    <TextBlock Grid.Row="2" Grid.ColumnSpan="4" Text="{Binding Export.PrinterSettingsNote}"
+                                               Style="{StaticResource Hint}" TextWrapping="Wrap" Margin="0,4,0,0" />
+                                </Grid>
+                            </Border>
+
                             <Grid Margin="0,6,0,0">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="Auto" />

@@ -8,6 +8,7 @@ using LabelGou.App.Printing;
 using LabelGou.App.Services;
 using LabelGou.Core.Export;
 using LabelGou.Core.Impos;
+using LabelGou.Core.Printing;
 
 namespace LabelGou.App.ViewModels;
 
@@ -54,6 +55,7 @@ public sealed class ExportViewModel : ObservableObject
         ExportSvgCommand = new RelayCommand(RunExportSvg, () => CanStartJob);
         ChooseFolderCommand = new RelayCommand(ChooseFolder);
         CancelCommand = new RelayCommand(Cancel, () => IsBusy);
+        OpenPreferencesCommand = new RelayCommand(OpenPreferences, () => SelectedPrinter is not null);
     }
 
     /// <summary>窗口加载完后调一次：枚举打印机要问后台服务，放加载阶段做会拖慢首屏。</summary>
@@ -79,6 +81,14 @@ public sealed class ExportViewModel : ObservableObject
     public RelayCommand ChooseFolderCommand { get; }
     public RelayCommand CancelCommand { get; }
 
+    /// <summary>「这台打印机的出纸设置」三格（输出颜色 / 纸张来源 / 纸张类型），内容全取自驱动原话。</summary>
+    public ObservableCollection<PrinterSettingRow> PrinterSettingRows { get; } = new();
+
+    /// <summary>三格上方那句说明：读不到时是原因，读到时是「为什么这里只能看不能改」。</summary>
+    public string PrinterSettingsNote { get; private set; } = string.Empty;
+
+    public RelayCommand OpenPreferencesCommand { get; }
+
     public PrinterInfo? SelectedPrinter
     {
         get => _selectedPrinter;
@@ -87,6 +97,7 @@ public sealed class ExportViewModel : ObservableObject
             if (!Set(ref _selectedPrinter, value)) return;
             Raise(nameof(SelectedPrinterHint));
             ProbeFit();
+            RefreshPrinterSettings();
         }
     }
     private PrinterInfo? _selectedPrinter;
@@ -340,6 +351,32 @@ public sealed class ExportViewModel : ObservableObject
         AppLog.Info($"打印机列表刷新：{list.Count} 台，选中「{SelectedPrinter?.Name ?? "无"}」" +
                     (error is null ? string.Empty : $"，原因：{error}"));
         ProbeFit();
+        RefreshPrinterSettings();
+    }
+
+    /// <summary>
+    /// 重读「这台打印机的出纸设置」三格。同步问驱动一次（与 <see cref="ProbeFit"/> 同一口径：只读属性、不送任务）。
+    /// </summary>
+    private void RefreshPrinterSettings()
+    {
+        var report = PrinterSettingsReader.Read(SelectedPrinter?.Name);
+        PrinterSettingRows.Clear();
+        foreach (var row in report.Rows) PrinterSettingRows.Add(row);
+        PrinterSettingsNote = report.Error ?? "这三项由打印机驱动管，这里显示驱动报出来的值。软件改不了它：实测 .NET 给打印机下发打印票"
+            + "（PrintTicket）在这台机器上不生效，只能进驱动那一页改。";
+        Raise(nameof(PrinterSettingsNote));
+    }
+
+    /// <summary>弹驱动自己的首选项页；用户按了确定就重读一次，让三格跟着变。</summary>
+    private void OpenPreferences()
+    {
+        var owner = new System.Windows.Interop.WindowInteropHelper(
+            System.Windows.Application.Current.MainWindow).Handle;
+        if (PrinterSettingsReader.OpenDriverPreferences(SelectedPrinter?.Name, owner))
+        {
+            RefreshPrinterSettings();
+            StatusText = $"已按「{SelectedPrinter?.Name}」驱动里的新设置刷新了上面三格。";
+        }
     }
 
     private void ChooseFolder()
