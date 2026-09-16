@@ -51,6 +51,26 @@ public static class PrintFit
     /// <summary>缩放低于此值就判 Rejected：再小标签上的字就变形了，不如让用户改设置。</summary>
     public const double MinimumAcceptableScale = 0.90;
 
+    /// <summary>
+    /// 整版超出可打印区、又没勾「放不下就缩放」时，要不要先问一句「照样打」。
+    /// <para>
+    /// 这一问是第 75 棒加的：用户实测「版排好了但打不出去」——真因往往是**驱动里的纸张尺寸**还停在
+    /// A4（我们改不动它），而不是版错了。以前这里直接抛异常，人只看到一句"换纸或减小页边"，
+    /// 不知道去哪儿换；现在改成问明白，点「是」就按 1:1 照打（超出部分会被裁），点「否」留时间去改驱动。
+    /// </para>
+    /// </summary>
+    public static string? OverflowConfirmText(
+        this PrintFitAdvice advice, double pageWidthMm, double pageHeightMm, bool scaleAllowed)
+    {
+        if (scaleAllowed || advice.IsSafeToPrintAtOneToOne) return null;
+        return $"整版 {pageWidthMm:0.#}×{pageHeightMm:0.#}mm 比这台打印机现在认的纸大出 "
+            + $"{advice.OverflowWidthMm:0.#}×{advice.OverflowHeightMm:0.#}mm。\n\n"
+            + "点「是」：按 1:1 照样打，标签尺寸不变，超出的一截会被裁掉。\n"
+            + "点「否」：先别打。多数情况不是版排错了，而是驱动里的**纸张尺寸**没改（常停在 A4）——"
+            + $"进 ⑤ 步的「打印首选项…」把纸张尺寸改成 {pageWidthMm:0.#}×{pageHeightMm:0.#}mm（或你那张标签纸）再打。\n\n"
+            + "（勾上「放不下就缩放」是另一条路：会整版缩小，标签尺寸就不准了，一般别勾。）";
+    }
+
     public static PrintFitAdvice Evaluate(
         double pageWidthMm,
         double pageHeightMm,

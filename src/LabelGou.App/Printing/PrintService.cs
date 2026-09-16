@@ -41,6 +41,9 @@ public sealed class PrintRequest
     /// <summary>送打前先弹系统打印对话框（选纸盒/质量靠它）。弹了就不算静默。</summary>
     public bool ConfirmBeforePrint { get; init; }
 
+    /// <summary>整版超出可打印区时，用户已在确认框里点过「照样打」：按 1:1 送出，不缩放、不再拦。</summary>
+    public bool PrintAnywayAtOneToOne { get; init; }
+
     public void CollectIssues(IList<string> issues)
     {
         if (PageIndexes is null || PageIndexes.Count == 0) issues.Add("没有选中任何一页可打印。");
@@ -178,7 +181,10 @@ public static class PrintService
             var sheets = scope.PrintSheets(request, fit, progress, token);
             var summary = string.Format(CultureInfo.InvariantCulture,
                 "已向「{0}」送出 {1} 张（{2} 页 × {3} 份）", scope.PrinterName, sheets, request.PageIndexes.Count, request.Copies);
-            return new PrintOutcome(true, null, sheets, fit, summary + "。" + fit.Describe("整版"));
+            return new PrintOutcome(true, null, sheets, fit,
+                summary + "。" + (request.PrintAnywayAtOneToOne && !fit.IsSafeToPrintAtOneToOne
+                    ? "按你确认照打（未缩放），超出可打印区的一截会被裁掉。" + fit.Describe("整版")
+                    : fit.Describe("整版")));
         }
         catch (OperationCanceledException)
         {
@@ -288,7 +294,8 @@ public static class PrintService
             var scale = request.ScaleToFitPrintableArea && fit.Level is PrintFitLevel.NeedsShrink or PrintFitLevel.Rejected
                 ? fit.SuggestedScale
                 : 1.0;
-            if (scale == 1.0 && fit.Level is PrintFitLevel.NeedsShrink or PrintFitLevel.Rejected)
+            if (scale == 1.0 && fit.Level is PrintFitLevel.NeedsShrink or PrintFitLevel.Rejected
+                && !request.PrintAnywayAtOneToOne)
             {
                 throw new InvalidOperationException(
                     fit.Describe("整版") + " 想强行打出去，请勾选「允许缩放以放下」，或换纸/减小页边后重算。");

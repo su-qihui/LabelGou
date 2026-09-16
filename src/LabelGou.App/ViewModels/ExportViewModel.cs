@@ -503,6 +503,33 @@ public sealed class ExportViewModel : ObservableObject
             return;
         }
 
+        // 整版超出可打印区：先问一句再打（第 75 棒）。真因常常是驱动里的纸张尺寸还停在 A4，
+        // 而软件改不动它——以前这里直接抛异常，人只看到"换纸或减小页边"，以为是我们把版算错了。
+        var printAnyway = false;
+        if (!ScaleToFitPrintableArea)
+        {
+            var probe = new PrintRequest
+            {
+                Plan = plan, Source = source, PageIndexes = new[] { 0 }, PrinterName = SelectedPrinter?.Name,
+            };
+            var fit = PrintService.ProbeFit(probe, out var probeError);
+            var ask = probeError is null
+                ? fit.OverflowConfirmText(plan.PageWidthMm, plan.PageHeightMm, ScaleToFitPrintableArea)
+                : null;
+            if (ask is not null)
+            {
+                if (!(_owner.ConfirmGate?.Invoke(ask) ?? true))
+                {
+                    AppLog.Info($"打印前停下：整版 {plan.PageWidthMm:0.#}×{plan.PageHeightMm:0.#}mm 比可打印区大 "
+                                + $"{fit.OverflowWidthMm:0.#}×{fit.OverflowHeightMm:0.#}mm，用户选了「否」");
+                    StatusText = "没送出。先去改驱动里的纸张尺寸：⑤ 步「打印首选项…」→ 纸张尺寸改成 "
+                                 + $"{plan.PageWidthMm:0.#}×{plan.PageHeightMm:0.#}mm（或你那张标签纸），再打。";
+                    return;
+                }
+                printAnyway = true;
+            }
+        }
+
         var request = new PrintRequest
         {
             Plan = plan,
@@ -513,6 +540,7 @@ public sealed class ExportViewModel : ObservableObject
             IncludeTrimMarks = IncludeTrimMarks,
             ScaleToFitPrintableArea = ScaleToFitPrintableArea,
             ConfirmBeforePrint = ConfirmBeforePrint,
+            PrintAnywayAtOneToOne = printAnyway,
         };
 
         if (SelectedPrinter is { LikelyPromptsForFile: true } && !ConfirmBeforePrint)
