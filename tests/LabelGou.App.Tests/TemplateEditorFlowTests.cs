@@ -112,8 +112,12 @@ public class TemplateEditorFlowTests
         Assert.Empty(vm.ActiveGuides);
     });
 
+    /// <summary>
+    /// 第 81 棒②改口：文本跟着手走，<strong>拖出纸外也停得住</strong>（用户：「墨迹边框被固定在纸张范围内无法超出」）。
+    /// 非文本那一半仍按自己的框贴边停住——见 <see cref="NonTextStillStopsByItsOwnBox"/>。
+    /// </summary>
     [Fact]
-    public void DragPastTheBorderStopsThere() => OnStaThread(() =>
+    public void TextGoesPastTheBorderWithTheHand() => OnStaThread(() =>
     {
         var vm = NewVm(Path.GetTempPath() + Guid.NewGuid().ToString("N")[..6]);
         vm.SnapEnabled = false;
@@ -122,10 +126,9 @@ public class TemplateEditorFlowTests
         vm.DragTo(500, 500);
         vm.EndDrag();
 
-        // 第 46 棒：停住的边界 = 看得见的墨迹边（旧口径停在排版盒边 X=80，可那时字看着离右边还远）
         var ink = vm.DisplayBoxOf(vm.Template.Elements[0])!.Value;
-        Assert.Equal(100, ink.X + ink.Width, 3);
-        Assert.Equal(80, ink.Y + ink.Height, 3);
+        Assert.True(ink.X + ink.Width > 100, $"墨迹右缘只到 {ink.X + ink.Width:F1}——还钉在纸边");
+        Assert.True(ink.Y + ink.Height > 80, $"墨迹下缘只到 {ink.Y + ink.Height:F1}——还钉在纸边");
     });
 
     [Fact]
@@ -445,14 +448,16 @@ public class TemplateEditorFlowTests
         var after = vm.DisplayBoxOf(text)!.Value;
         Assert.True(after.X + after.Width > 139,
             $"墨迹右缘只到 {after.X + after.Width:F1}——还被那条 130mm 隐形行带顶在 X=10 的墙上");
-        Assert.True(after.X + after.Width <= 140.001, "贴边停住仍要生效，墨迹不许被拖出纸外");
+        // 第 81 棒②（用户：「墨迹边框被固定在纸张范围内无法超出」）：这一档放开——拖得出纸外，
+        // 越界由编辑器清单那条按样例墨迹量的 Warning 与出纸前那道真数据闸接手。
+        Assert.True(after.X + after.Width > 140.001, "文本要能跟着手拖出纸外，不再钉在纸边");
         // 这条钉的是**同棒必须一起改的那一半**：校验器还在按行带判越界的话，
         // 字拖到右边 = 行带探出纸 = Error = 存不了盘，等于把一堵墙换成一条死路。
         Assert.False(vm.HasError, "摆位放开后，校验器不能再拿虚拟行带当占物判越界");
     });
 
     [Fact]
-    public void DraggingMovesMonotonicallyAndStopsOnTheEdge() => OnStaThread(() =>
+    public void DraggingMovesMonotonicallyAndGoesPastTheEdge() => OnStaThread(() =>
     {
         var vm = NewVm(Path.GetTempPath() + Guid.NewGuid().ToString("N")[..6], StretchyText());
         vm.SnapEnabled = false;
@@ -471,7 +476,8 @@ public class TemplateEditorFlowTests
         vm.EndDrag();
 
         var settled = vm.DisplayBoxOf(text)!.Value;
-        Assert.Equal(100, settled.X + settled.Width, 2);   // 贴住纸边就停在那，不再来回弹
+        // 第 81 棒②：八帧共 160mm，手走多少走多少——越过纸边也不弹回、也不贴边停住
+        Assert.Equal(ink.X + ink.Width / 2 + 160, settled.X + settled.Width / 2, 1);
     });
 
     /// <summary>墨迹比纸还宽的一行（长值出纸）必须还能自由拖：夹住 = 钉死在原地，就是用户报的"被限制"。</summary>
@@ -509,8 +515,15 @@ public class TemplateEditorFlowTests
         },
     };
 
+    /// <summary>
+    /// 永不折行的长值会照实排出纸（这是第 46 棒要的"看得见超出去"）。
+    /// <para>第 81 棒②把这一格从 Error 降成 <b>Warning</b>：这里量的是<strong>屏幕上那份样例</strong>，
+    /// 拿样例值拦人存盘是冤枉一份好模板；而摆位放开之后还留成 Error，就是"能拖出去、存不进来"的死路。
+    /// 真拦人的是 ④⑤ 步那道按<strong>真数据</strong>量的闸——判据是下面那条
+    /// <see cref="RealDataOverflowIsCountedForThePrintGate"/>。</para>
+    /// </summary>
     [Fact]
-    public void NoWrapLongValueRunsOffThePaperAndBlocksSaving() => OnStaThread(() =>
+    public void NoWrapLongValueRunsOffThePaperAndWarnsWithoutBlockingTheSave() => OnStaThread(() =>
     {
         var dir = Path.GetTempPath() + Guid.NewGuid().ToString("N")[..6];
         var vm = NewVm(dir, OverflowingText());
@@ -519,10 +532,12 @@ public class TemplateEditorFlowTests
         var ink = vm.DisplayBoxOf(text)!.Value;
         Assert.True(ink.Width > text.Width,
             $"永不折行的墨迹宽 {ink.Width:F1} 被夹在盒宽 {text.Width} 内 = 越界被藏起来了");
-        Assert.True(vm.HasError, "字排到纸外必须让编辑器报 Error（Core 量不到墨迹，只能由这一侧把闸）");
+        Assert.True(vm.Issues.Any(m => m.Contains("探出标签", StringComparison.Ordinal)),
+            $"字排到纸外要在清单里看得见：{string.Join(" || ", vm.Issues)}");
+        Assert.False(vm.HasError, "按样例量的越界只提醒，不拦存盘");
 
         vm.Save();
-        Assert.Equal(0, new TemplateStore(dir).ListAll().Count(t => !t.BuiltIn));   // 带病模板不许进库
+        Assert.Equal(1, new TemplateStore(dir).ListAll().Count(t => !t.BuiltIn));   // 存得进来
     });
 
     [Fact]
@@ -531,12 +546,12 @@ public class TemplateEditorFlowTests
         var vm = NewVm(Path.GetTempPath() + Guid.NewGuid().ToString("N")[..6], OverflowingText());
         vm.SelectedRow = vm.Elements[0];
         var text = vm.Template.Elements[0];
-        Assert.True(vm.HasError);
+        Assert.True(vm.Issues.Any(m => m.Contains("探出标签", StringComparison.Ordinal)), "夹具得真的探出纸，否则这条测不到东西");
         var fontBefore = text.FontSizePt;
 
         vm.ShrinkIntoLabelCommand.Execute(null);
 
-        Assert.False(vm.HasError, "缩完不该再有越界 Error");
+        Assert.DoesNotContain(vm.Issues, m => m.Contains("探出标签", StringComparison.Ordinal));   // 缩完不该再有那条提醒
         Assert.True(text.FontSizePt < fontBefore, $"字号没缩：{fontBefore}→{text.FontSizePt}");
         var ink = vm.DisplayBoxOf(text)!.Value;
         Assert.True(ink.X >= 3.9 && ink.X + ink.Width <= 100.1,

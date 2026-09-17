@@ -518,13 +518,27 @@ public static class TemplateValidator
             issues.Add(new TemplateIssue(IssueLevel.Warning,
                 "这份模板里只有参考图（不打印），也没有外框：直接出片会是空白。请在底图上叠上字段，或改用 SVG 导出的保真底图。"));
         }
+        if (!template.Elements.Any(e => e.Visible && !e.ReferenceOnly) && template.BorderMm > 0)
+        {
+            // 第 81 棒⑥：用户把新建模板里那四个元素全删了，纸上一条黑框却还在印——因为那条外框不是元素，
+            // 图层列表里根本没有它，所以他"删不掉"。既然清不掉它的路在工具栏那一格，就得把路指给他。
+            issues.Add(new TemplateIssue(IssueLevel.Warning,
+                $"这份模板里没有会印的内容，只有 {template.BorderMm:0.##} mm 的外框：印出来是一张空纸加一条框。" +
+                "外框不在图层列表里（它不是元素），要清它在工具栏「外框线」那一格填 0。"));
+        }
 
         for (var i = 0; i < template.Elements.Count; i++)
         {
             var e = template.Elements[i];
             var tag = $"第 {i + 1} 个元素";
 
-            if (e.X < -ToleranceMm || e.Y < -ToleranceMm)
+            // 文本的排版盒是"字在哪对齐"的虚拟基准，它自己不出纸（出纸的是墨迹），所以这两条几何判据
+            // 都不该落在它身上（第 81 棒；第 46 棒已经为"永不折行"撤掉下面那条，这次连起点那条一起撤）。
+            // 用户那份 AI 建议版式第一行就是活证据：盒子 443mm 高、y=−171.7 居中排在一行 100mm 的纸上，
+            // 从前判成 Error，界面上就是右下角那句「有错误没解决，保存会被拒绝」。
+            // 接手这份保护的两处都能真量墨迹：编辑器清单里按样例墨迹量的提醒（Warning），
+            // 与 ④⑤ 步出纸前按真数据量的那道闸（要用户点头才放行）。
+            if (e.Kind != ElementKind.Text && (e.X < -ToleranceMm || e.Y < -ToleranceMm))
                 issues.Add(new TemplateIssue(IssueLevel.Error, $"{tag} 起点超出标签左上角（X={e.X:0.#}, Y={e.Y:0.#} mm）。", i));
 
             if (e.Kind != ElementKind.Line)
@@ -533,10 +547,10 @@ public static class TemplateValidator
                     issues.Add(new TemplateIssue(IssueLevel.Error, $"{tag} 宽高必须大于 0。", i));
                 // 第 43 棒：越界一律按 OccupiedBoundsOf 判——它已把文字拉伸与旋转都算进去，
                 // 拉出纸/转出纸都等于会被刀模裁掉，与"越界"同一性质，必须在这拦（"会印错且看不见"那一类）。
-                // 第 46 棒改口：**永不折行的文本不拿排版盒当占物**。那时那条带子只是"字在哪对齐"的虚拟基准，
+                // 第 46 棒改口：**文本的排版盒不当占物**。那时那条带子只是"字在哪对齐"的虚拟基准，
                 // 它自己不出纸（出纸的是墨迹），Core 又量不了字 → 判它探出纸只会把"能拖到右边"变成"存不了盘"。
                 // 这一格改由两处能量墨迹的地方接手：编辑器按样例墨迹拦、④⑤ 步按真数据墨迹进复核闸门。
-                if (!(e.Kind == ElementKind.Text && e.NoWrap))
+                if (e.Kind != ElementKind.Text)
                 {
                     var occ = Editing.EditGeometry.OccupiedBoundsOf(e);
                     if (occ.X < -ToleranceMm || occ.Y < -ToleranceMm

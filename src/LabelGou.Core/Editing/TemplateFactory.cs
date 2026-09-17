@@ -15,8 +15,15 @@ public static class TemplateFactory
     public const double MinGapMm = 0.5;
 
     /// <summary>
-    /// 空白但可用的起步模板：一个外框、一行客户名、一条分隔线、一行产地。
+    /// 空白但可用的起步模板：一行客户名、一条分隔线、一行产地，外加一只<strong>可删的</strong>矩形框。
     /// 四样东西够用户马上明白“这些都能拖”，也不会因为空模板被校验警告。
+    /// <para>第 81 棒⑥：<strong>外框线从 0.5 改成 0</strong>。用户报的是"新建模板时边框被固定了一个黑线边框
+    /// 无法删除，导致打印时也被印出来"——那条 <see cref="LabelTemplate.BorderMm"/> 外框<strong>不是元素</strong>，
+    /// 图层列表里根本没有它，他把四个元素全删了它还在那儿印（他机器上那份
+    /// <c>我的唛头模板.json</c> 就是 <c>elems=0 / borderMm=0.5</c> 的现场）。想要一条框，模板里那只
+    /// 矩形就是可删可拖的版本；真要纸边那条，工具栏「外框线」填个数就有。</para>
+    /// <para><see cref="LabelTemplate.BorderMm"/> 的<strong>类默认值 0.5 故意不动</strong>：那是"想带一条外框"
+    /// 的旧写法在用的值，改它等于动出纸行为（§五：默认值一动就要他点头）。</para>
     /// </summary>
     public static LabelTemplate Blank(string name, double widthMm = 100, double heightMm = 80)
     {
@@ -26,7 +33,7 @@ public static class TemplateFactory
             WidthMm = widthMm,
             HeightMm = heightMm,
             PaddingMm = 4,
-            BorderMm = 0.5,
+            BorderMm = 0,
             BuiltIn = false,
         };
 
@@ -125,18 +132,31 @@ public static class TemplateFactory
     /// </para>
     /// </summary>
     /// <returns>落位结果；<c>null</c> 只表示元素数量已达 <see cref="TemplateValidator.MaxElements"/>。</returns>
-    public static AddElementOutcome? AddElement(LabelTemplate template, TemplateElement element, double xPreferred, double yPreferred)
+    /// <param name="exactlyWhereAsked">true = <strong>用户点哪就落哪</strong>：不找空位、不夹进纸内。
+    /// <para>画布上拖出来的形状与曲线走这条（第 81 棒④，用户：「在画时被固定边框为起点，不是实际鼠标点击起始位置」）：
+    /// 那一点是他下的手，搬走它就是"起点不跟手"。而且 AI 行式模板每一行都是通栏行带，满纸都"重叠"，
+    /// <see cref="FindFreeSpot"/> 必然把他按下的那一点搬到 2mm 网格上的别处。</para>
+    /// <para>工具栏那颗「添加文本/图片」仍走 false：那里的位置是<strong>软件猜的</strong>，猜的位置该躲开别人。</para></param>
+    public static AddElementOutcome? AddElement(LabelTemplate template, TemplateElement element,
+        double xPreferred, double yPreferred, bool exactlyWhereAsked = false)
     {
         if (template is null) throw new ArgumentNullException(nameof(template));
         if (element is null) throw new ArgumentNullException(nameof(element));
         if (template.Elements.Count >= TemplateValidator.MaxElements) return null;
 
-        var spot = FindFreeSpot(template, element, xPreferred, yPreferred)
-                   ?? ClampedSpot(template, element, xPreferred, yPreferred);
-
         var (oldX, oldY) = (element.X, element.Y);
-        element.X = Math.Max(0, Math.Min(spot.X, Math.Max(0, template.WidthMm - EditGeometry.BoxOf(element).Width)));
-        element.Y = Math.Max(0, Math.Min(spot.Y, Math.Max(0, template.HeightMm - EditGeometry.BoxOf(element).Height)));
+        if (exactlyWhereAsked)
+        {
+            element.X = xPreferred;
+            element.Y = yPreferred;
+        }
+        else
+        {
+            var spot = FindFreeSpot(template, element, xPreferred, yPreferred)
+                       ?? ClampedSpot(template, element, xPreferred, yPreferred);
+            element.X = Math.Max(0, Math.Min(spot.X, Math.Max(0, template.WidthMm - EditGeometry.BoxOf(element).Width)));
+            element.Y = Math.Max(0, Math.Min(spot.Y, Math.Max(0, template.HeightMm - EditGeometry.BoxOf(element).Height)));
+        }
         if (element.Kind == ElementKind.Line)
         {
             // 按真实位移挪另一端。从前这里写的是「X2 = 新X + (X2 - 新X)」= 原地不动，

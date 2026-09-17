@@ -475,15 +475,14 @@ public class SvgInterchangeTests
             .Descendants(Svg + "g")
             .Single(g => ((string?)g.Attribute("transform"))?.Contains("rotate(30") == true);
 
-        // 第 52 棒口径：旋转绕【拉伸后的墨迹中心】，不再绕排版盒（隐形行带）中心。
-        // 期望值按同一份 TextFit 现算：锚点必须离开盒心 (36,10)——不然这条对新旧口径都绿，等于没钉。
+        // 第 52 棒定口径、第 81 棒才真的量得准：旋转绕【拉伸后的墨迹中心】，不再绕排版盒（隐形行带）中心。
+        // 参照用编辑器画框那份墨迹（TextInkBox）——从前这里拿 InkLeftDiu + 行盒宽自己再算一遍，
+        // 那正是第 81 棒要消掉的第二套算术（而且它漏掉了折行那条路的居中）。钉的是：SVG 的锚点 == 屏幕上那个框的中心。
         var layout0 = LayoutEngine.Build(template, SampleRecords.StandardSample(), new LayoutContext(1, 1));
         var item0 = layout0.Items.OfType<TextItem>().Single();
-        var fit0 = TextFit.Solve(item0, scale: 1.0, TextFit.CanonicalPixelsPerDip)!;
-        var inkCx0 = (fit0.InkLeftDiu + fit0.Formatted.WidthIncludingTrailingWhitespace / 2) * (25.4 / 96.0);
-        var inkCy0 = (fit0.TextTopDiu + fit0.Formatted.Height / 2) * (25.4 / 96.0);
-        var anchorX = 36 + (inkCx0 - 36) * 2;      // 墨迹先随 TextScaleX=2 绕盒中心拉伸
-        var anchorY = 10 + (inkCy0 - 10) * 1;
+        var ink0 = TextInkBox.Measure(item0)!.Value;
+        var anchorX = ink0.X + ink0.Width / 2;
+        var anchorY = ink0.Y + ink0.Height / 2;
         Assert.True(Math.Abs(anchorX - 36) > 0.5,
             "锚点没离开排版盒中心——要么这份夹具不左对齐，要么第 52 棒的口径被改回去了");
         Assert.Equal(SvgBuilder.GeometryTransform(36, 10, anchorX, anchorY, 30, 2, 1),

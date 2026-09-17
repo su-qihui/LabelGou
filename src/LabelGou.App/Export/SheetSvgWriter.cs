@@ -331,8 +331,8 @@ public static class SheetSvgWriter
         {
             var cx = text.X + text.Width / 2;
             var cy = text.Y + text.Height / 2;
-            var inkCx = (fit.InkLeftDiu + fit.Formatted.WidthIncludingTrailingWhitespace / 2) * UnitToMm;
-            var inkCy = (fit.TextTopDiu + fit.Formatted.Height / 2) * UnitToMm;
+            // 中心只有一份算法（TextFit 量出的字形墨迹中心）：自己拼就会与预览端漂移（§五-62）
+            var (inkCx, inkCy) = ((fit.InkCenterDiu.Cx) * UnitToMm, (fit.InkCenterDiu.Cy) * UnitToMm);
             builder.StartGroup(SvgBuilder.GeometryTransform(
                 cx, cy,
                 cx + (inkCx - cx) * text.TextScaleX, cy + (inkCy - cy) * text.TextScaleY,

@@ -224,16 +224,28 @@ public sealed partial class TemplateEditorWindow : Window
     }
 
     /// <summary>
-    /// Delete 不认焦点（第 63 棒②，用户："有些时候使用 delete 键不触发删除"）：
-    /// 从前这段只写在画布的 KeyDown 里，人在图层列表或属性面板上点完元素再按 Delete 就没反应。
-    /// 焦点在文本框/可编辑下拉里时不抢——那一下是在删字，不是删元素。
+    /// Delete 与 Ctrl+V 不认焦点（第 63 棒②、第 81 棒⑤）：
+    /// 从前 Delete 那段只写在画布的 KeyDown 里，人在图层列表或属性面板上点完元素再按 Delete 就没反应。
+    /// 焦点在文本框/可编辑下拉里时两样都不抢——那一下是在格子里删字、往格子里粘贴，不是动元素。
     /// </summary>
     protected override void OnPreviewKeyDown(KeyEventArgs e)
     {
         base.OnPreviewKeyDown(e);
-        if (e.Key != Key.Delete || e.Handled) return;
+        if (e.Handled) return;
         if (Keyboard.FocusedElement is System.Windows.Controls.Primitives.TextBoxBase
             or ComboBox { IsEditable: true }) return;
+
+        if (e.Key == Key.V && Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
+        {
+            // 按钮上也照粘：粘贴的对象是画布，不是那个按钮（Ctrl+C/Ctrl+V 是肌肉记忆，看焦点脸色就是"时灵时不灵"）
+            if (DataContext is TemplateEditorViewModel vm && vm.PasteCommand.CanExecute(null))
+            {
+                vm.PasteCommand.Execute(null);
+                e.Handled = true;
+            }
+            return;
+        }
+        if (e.Key != Key.Delete) return;
         if (Keyboard.FocusedElement is System.Windows.Controls.Primitives.ButtonBase) return;   // 按钮上按 Delete 不该删元素
         if (Canvas.TryDeleteKey()) e.Handled = true;
     }

@@ -425,28 +425,32 @@ public class EditingTests
 
     private static readonly (double X, double Y, double Width, double Height) InkOfBandBound = (10, 22, 20, 7);
 
+    /// <summary>
+    /// 第 81 棒②改口（用户：「墨迹边框被固定在纸张范围内无法超出」）：文本的摆位<strong>不再被行带顶住</strong>，
+    /// 拖多远走多远，越过纸边也不夹——排版盒只是"字在哪对齐"的虚拟基准，它不出纸。
+    /// 越界那份保护交给两处能量墨迹的地方（编辑器 Warning + 出纸前真数据闸，判据在 App.Tests）。
+    /// 非文本那一半仍夹在纸内：它们的框就是会印出去的东西（<see cref="DraggingPastTheEdgeStopsAtTheBorder"/>）。
+    /// </summary>
     [Fact]
-    public void DragIsWalledByTheBandWhenNoOccupancyIsGiven()
+    public void TextDragsWithTheHandEvenPastThePaperEdge()
     {
         var template = BandBound(out var text);
 
-        // 旧口径（不喂占位盒）：maxX = 140 − 130 = 10 → 整行只有 5mm 活动量，字看着还在左边
         EditGeometry.MoveBy(template, 0, 500, 0);
 
-        Assert.Equal(10, text.X, 6);
-        Assert.Equal(140, text.X + text.Width, 6);       // 顶住的是行带右缘，不是字的右缘
+        Assert.Equal(505, text.X, 6);     // 5 + 500：从前停在 140−130=10 那堵墙上，字看着离右边还远
     }
 
     [Fact]
-    public void InkRightEdgeLandsOnThePaperEdge()
+    public void InkOccupancyIsNoLongerWalledAtThePaperEdgeEither()
     {
         var template = BandBound(out var text);
 
-        EditGeometry.MoveBy(template, 0, 500, 0, InkOfBandBound);
+        EditGeometry.MoveBy(template, 0, 120, 0, InkOfBandBound);
 
-        // 位移按墨迹算：墨迹右缘从 30 推到 140（贴住纸边），排版盒跟着走同样距离 → X = 5 + 110
-        Assert.Equal(115, text.X, 6);
-        Assert.Equal(140, InkOfBandBound.X + (text.X - 5) + InkOfBandBound.Width, 6);
+        // 喂了墨迹占位盒也一样放开：墨迹右缘 30 → 150，越过 140 的纸边不夹回来
+        Assert.Equal(125, text.X, 6);
+        Assert.Equal(150, InkOfBandBound.X + (text.X - 5) + InkOfBandBound.Width, 6);
     }
 
     [Fact]
@@ -495,8 +499,15 @@ public class EditingTests
         Assert.Equal(25, occ.Bottom, 6);
     }
 
+    /// <summary>
+    /// 第 81 棒改口：文本被抻出纸，<strong>Core 不再报 Error</strong>——字面拉伸绕着走的是那条虚拟排版盒，
+    /// 而 Core 量不了字，判它越界只会把"能拖能摆"变成"存不了盘"（用户那份 AI 建议版式当场撞在这）。
+    /// 接手这份保护的两处都能真量墨迹：编辑器清单里按样例墨迹量的 Warning（App.Tests 的
+    /// <c>NoWrapLongValueRunsOffThePaperAndWarnsButSaves</c>），与 ④⑤ 步按真数据量的出纸闸
+    /// （<c>RealDataOverflowIsCountedForThePrintGate</c>）。
+    /// </summary>
     [Fact]
-    public void TextStretchedOffThePaperIsAnError()
+    public void TextStretchedOffThePaperIsLeftToTheInkChecks()
     {
         var template = Page(width: 100);
         var e = TextBox(70, 10, 20, 6, 12);    // 原视觉 right=90，不越界
@@ -504,14 +515,17 @@ public class EditingTests
         e.TextScaleX = 3;                       // 视觉宽 60，中心 80 → right=110 探出
         template.Elements.Add(e);
 
-        Assert.True(TemplateValidator.Validate(template).HasError(), "抻出纸必须报 Error，否则印一张被裁掉的");
+        Assert.False(TemplateValidator.Validate(template).HasError(),
+            "文本的排版盒不许再当越界判据：那是虚拟对齐基准，出纸的是墨迹");
     }
 
     [Fact]
     public void RotatedElementPokingOffTopIsAnError()
     {
         var template = Page(width: 100, height: 80);
-        var e = TextBox(60, 5, 30, 6, 12);      // 中心 (75,8)，不旋转时 right=90、top=5，都在纸内
+        // 第 81 棒：夹具换成矩形——旋转对任何元素都成立，而文本自第 81 棒起不由 Core 判越界（量不了字）。
+        // 这半边安全网一寸不许松：转出纸的元素会被刀模裁掉，属于"会印错"那一类。
+        var e = Box(60, 5, 30, 6);              // 中心 (75,8)，不旋转时 right=90、top=5，都在纸内
         Assert.False(TemplateValidator.Validate(template).HasError());
         e.RotationDeg = 90;                      // 转后占 6 宽 30 高 → top = 8-15 = -7 探出上边
         template.Elements.Add(e);

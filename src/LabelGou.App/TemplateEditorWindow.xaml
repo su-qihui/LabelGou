@@ -100,6 +100,8 @@
                 </ComboBox>
                 <CheckBox Content="显示样例文字" IsChecked="{Binding ShowPreviewText}" VerticalAlignment="Center" Margin="8,0,8,0"
                           ToolTip="关掉就只看框，摆位置更快" />
+                <CheckBox Content="元素框" IsChecked="{Binding ShowElementBoxes}" VerticalAlignment="Center" Margin="0,0,8,0"
+                          ToolTip="那些只在编辑期才有的墨迹框/选中框。关掉之后未选中的元素不再画框（看着就是印出来的样子），&#10;选中的那一只连句柄照画——不然看不见在改谁、也抓不到。" />
                 <Separator Width="14" Background="Transparent" />
 
                 <Button Content="保存" FontWeight="Bold" Command="{Binding SaveCommand}" MinWidth="80" />
@@ -173,6 +175,7 @@
                                 ToolTip="放一只 Code128 占位条码（123456789）用来摆位置——尺寸照 CorelDRAW 条码向导那四格算，不是拉满一条。&#10;模板里已有条码时，这颗直接选中它来调整，不放第二只。" />
                         <Separator Margin="2,6" Background="#DDDDDD" />
                         <Button Content="图片" Command="{Binding AddImageCommand}" Margin="2,2" ToolTip="加 Logo 或条码图，会复制到模板目录" />
+                        <Button Content="粘贴" Command="{Binding PasteCommand}" Margin="2,2" ToolTip="把刚复制的东西放到标签上（Ctrl+V）：剪贴板里是图片就落成模板自带的一张 PNG（跟着模板走），是文字就加一条文本元素。&#10;截图工具、看图器、Word、Excel 里复制的东西都走这一路。" />
                         <Button Content="复制" Command="{Binding DuplicateCommand}" Margin="2,2" ToolTip="复制选中元素（偏移 2mm）" />
                         <Button Content="删除" Command="{Binding RemoveCommand}" Margin="2,2" ToolTip="删除选中元素，可撤销" />
                     </StackPanel>

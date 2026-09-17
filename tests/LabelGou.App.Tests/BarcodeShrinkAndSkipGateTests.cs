@@ -94,7 +94,11 @@ public class BarcodeShrinkAndSkipGateTests
 
     // ---------- ② 存盘闸门：确定／跳过 ----------
 
-    /// <summary>他截图那条：文字起点在纸外（Y = −7.7 mm）。Core 量不到墨迹，越界由编辑器这道闸管。</summary>
+    /// <summary>
+    /// 他截图那条：元素起点在纸外（Y = −7.7 mm）。
+    /// <para>第 81 棒把这一格从文本换成矩形——文本的排版盒不再当越界判据（Core 量不了字），
+    /// 而这里要钉的是<b>存盘那道「确定／跳过」闸</b>本身：有 Error 就得问，问完不跳过就不许存。</para>
+    /// </summary>
     private static TemplateEditorViewModel EdgeCaseVm(string folder)
     {
         var template = new LabelTemplate
@@ -103,7 +107,7 @@ public class BarcodeShrinkAndSkipGateTests
         };
         template.Elements.Add(new TemplateElement
         {
-            Kind = ElementKind.Text, Text = "贴到边上的一行", X = 0, Y = -7.7, Width = 60, Height = 10, FontSizePt = 12,
+            Kind = ElementKind.Rect, X = 0, Y = -7.7, Width = 60, Height = 10,
         });
         return new TemplateEditorViewModel(template, new TemplateStore(folder));
     }

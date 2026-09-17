@@ -325,10 +325,10 @@ public static class LabelRenderer
         if (fit is null) return;
 
         var box = fit.BoxDiu;
-        // 旋转锚点（第 52 棒）＝拉伸后的墨迹中心：短字在宽行带里绕带心转会"飞出去"（用户报的偏移），
-        // CDR 的语义是绕对象自己看得见的那块转。墨迹先随拉伸走（绕盒中心），它的中心就是旋转中心。
-        var inkCx = fit.InkLeftDiu + fit.Formatted.WidthIncludingTrailingWhitespace / 2;
-        var inkCy = fit.TextTopDiu + fit.Formatted.Height / 2;
+        // 旋转锚点（第 52 棒定口径）＝拉伸后的墨迹中心：短字在宽行带里绕带心转会"飞出去"（用户报的偏移），
+        // CDR 的语义是绕对象自己看得见的那块转。中心由 TextFit 一处量（InkCenterDiu＝真字形外接的中心），
+        // 从前这里拿 InkLeftDiu + 行盒宽拼，折行那条路的居中没算进来，转居中的字就会横着甩出去（第 81 棒）。
+        var (inkCx, inkCy) = fit.InkCenterDiu;
         var boxCx = box.X + box.Width / 2;
         var boxCy = box.Y + box.Height / 2;
         var rotateAbout = new Point(

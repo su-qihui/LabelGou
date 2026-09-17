@@ -335,16 +335,17 @@ public class TemplateValidatorTests
     public void 元素越界必须被拒绝_AI生成版式的安全网()
     {
         var template = BuiltInTemplates.Standard100x80();
+        // 第 81 棒：夹具从文本换成矩形。文本那条自第 46/81 棒起不由 Core 判——排版盒只是虚拟对齐基准、
+        // 它自己不出纸，而 Core 量不了字。文本越界由 App 两处接手：编辑器清单里按样例墨迹量的 Warning，
+        // 与 ④⑤ 步按真数据量的出纸闸（判据在 App.Tests 的 TemplateEditorFlowTests / 这条文件的 RealDataOverflow…）。
+        // 这里要钉的是「Core 量得了的元素越界必拦」这半边安全网，它一寸不许松。
         template.Elements.Add(new TemplateElement
         {
-            Kind = ElementKind.Text,
-            Text = "{{ContractNo}}",
+            Kind = ElementKind.Rect,
             X = 60,
             Y = 10,
             Width = 60,        // 60+60 > 100
             Height = 6,
-            FontSizePt = 9,
-            WrapWidthMm = 60,  // 第 46 棒：越界这道安全网只对「按折行宽度排版」的文本成立，前提写显式
         });
 
         var issues = TemplateValidator.Validate(template);
@@ -428,7 +429,8 @@ public class TemplateStoreTests : IDisposable
         var bad = BuiltInTemplates.Standard100x80();
         bad.BuiltIn = false;
         bad.Name = "越界模板";
-        bad.Elements.Add(new TemplateElement { Kind = ElementKind.Text, Text = "x", X = 50, Y = 50, Width = 90, Height = 60, FontSizePt = 9, WrapWidthMm = 90 });
+        // 越界这一格用矩形：文本的排版盒自第 81 棒起不当越界判据（它不出纸，Core 又量不了字）
+        bad.Elements.Add(new TemplateElement { Kind = ElementKind.Rect, X = 50, Y = 50, Width = 90, Height = 60 });
 
         var (saved, _, issues) = store.Save(bad);
 

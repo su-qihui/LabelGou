@@ -135,6 +135,14 @@ public sealed class TemplateEditorControl : FrameworkElement
 
     // ---------- 绘制 ----------
 
+    /// <summary>
+    /// 把这一帧画进给定上下文，只为单测看得到"到底画没画"。
+    /// <para>为什么要它：<c>UIElement.RenderOpen</c> 是 protected，测试拿不到画出来的东西；而第 50 棒那条教训摆着——
+    /// 只写在控件里的规则（那次是矩形工具的分支），VM 层 16 条测试全绿也照不出来。
+    /// 「元素框」这种开关正是同一类规则。</para>
+    /// </summary>
+    internal void RenderForTests(DrawingContext dc) => OnRender(dc);
+
     protected override void OnRender(DrawingContext dc)
     {
         var vm = _vm;
@@ -181,6 +189,7 @@ public sealed class TemplateEditorControl : FrameworkElement
         foreach (var element in template.Elements)
         {
             var selected = ReferenceEquals(vm.SelectedRow?.Element, element);
+            if (!ShowsBoxFor(vm.ShowElementBoxes, selected)) continue;
             DrawElementBox(dc, element, selected, pixelsPerDip);
         }
 
@@ -213,6 +222,13 @@ public sealed class TemplateEditorControl : FrameworkElement
             dc.DrawLine(GridPen, new Point(labelRect.Left, diu), new Point(labelRect.Right, diu));
         }
     }
+
+    /// <summary>
+    /// 这一只元素的编辑期框要不要画（第 81 棒③，规则只在这一处）：<strong>开着都画；关着只画选中的那一只</strong>。
+    /// <para>不许写成"关着就全不画"：那样画布上看不见在改谁、句柄也没了，用户只能凭记忆点——
+    /// 那是把编辑层关掉，不是把辅助框关掉。CorelDRAW 也是这个口径（未选中的对象不显示边界）。</para>
+    /// </summary>
+    internal static bool ShowsBoxFor(bool showElementBoxes, bool selected) => showElementBoxes || selected;
 
     private void DrawElementBox(DrawingContext dc, TemplateElement element, bool selected, double pixelsPerDip)
     {

@@ -349,6 +349,15 @@ public static class EditGeometry
     {
         var element = ElementAt(template, index);
         var occ = occupancy ?? BoxOf(element);
+        // 第 81 棒（用户：「墨迹边框被固定在纸张范围内无法超出」）：**文本不夹**。文本会印出去的是 App 量出来的
+        // 那块墨迹，排版盒只是"字在哪对齐"的虚拟基准（第 46 棒已经为它撤掉校验器那条），拿它当占物夹住摆位
+        // 就是"短字怎么拖都到不了右边"那堵墙。越界改由两处接手：编辑器清单里按样例墨迹量的提醒，
+        // 与 ④⑤ 步按真数据量的出纸闸——都看得见、都说得出毫米数，还有「缩回纸内」一键可退。
+        if (element.Kind == ElementKind.Text)
+        {
+            ApplyShift(element, dxMm, dyMm);
+            return (dxMm, dyMm);
+        }
         // 占物比标签还宽的那根轴没有"贴边"可言：夹住等于把元素钉死在 0，用户一往右拖就弹回来，
         // 看着既是"被限制"又是"卡顿"。那一轴放开，越界由墨迹那道闸与「缩回纸内」负责说。
         var targetX = occ.Width > template.WidthMm ? occ.X + dxMm
@@ -670,11 +679,13 @@ public static class EditGeometry
             snappedY = Math.Round(originY / options.GridStepMm) * options.GridStepMm;
 
         // 吸附完仍要夹紧：贴住中心线却把元素推出边界是不能接受的。
-        // 但占物比标签还宽的那根轴没有边可贴（夹了会把元素钉死在 0），与 MoveBy 同一口径放开。
+        // 但文本不夹（第 81 棒，与 MoveBy 同口径）：它的占物是量出来的墨迹，摆位允许探出纸，
+        // 越界由编辑器那条按样例墨迹量的提醒与出纸前那道真数据闸接手。
+        var free = element.Kind == ElementKind.Text;
         var maxX = template.WidthMm - width;
         var maxY = template.HeightMm - height;
-        var clampedX = maxX < 0 ? snappedX : Math.Clamp(snappedX, 0, maxX);
-        var clampedY = maxY < 0 ? snappedY : Math.Clamp(snappedY, 0, maxY);
+        var clampedX = free || maxX < 0 ? snappedX : Math.Clamp(snappedX, 0, maxX);
+        var clampedY = free || maxY < 0 ? snappedY : Math.Clamp(snappedY, 0, maxY);
         return new SnapResult(clampedX - offX, clampedY - offY, guides)
         {
             OriginalX = xMm,

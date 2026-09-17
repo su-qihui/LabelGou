@@ -20,18 +20,14 @@ public static class TextInkBox
         var fit = TextFit.Solve(item, scale: 1.0, TextFit.CanonicalPixelsPerDip);
         if (fit is null) return null;
 
-        var box = fit.BoxDiu;
-        // 永不折行时不夹到盒宽——超出部分是真会印出去的东西，夹掉就等于把越界藏起来（第 46 棒）。
-        var raw = Math.Max(0.1, fit.Formatted.WidthIncludingTrailingWhitespace);
-        var wDiu = item.NoWrap ? raw : Math.Min(box.Width, raw);
-        var xDiu = fit.InkLeftDiu;                       // 对齐偏移由 TextFit 一处算，这里只照抄
-        var yDiu = fit.TextTopDiu;
-        var hDiu = Math.Max(0.1, fit.Formatted.Height);
-
-        var mx = Mm.FromDiu(xDiu);
-        var my = Mm.FromDiu(yDiu);
-        var mw = Mm.FromDiu(wDiu);
-        var mh = Mm.FromDiu(hDiu);
+        // 墨迹本身只有一份算法（TextFit.InkDiu：真字形外接，含对齐偏移）——这里只叠字面拉伸。
+        // 从前这一格自己拿 FormattedText 的行盒宽拼：行盒比字形高出一截，且折行那条路的对齐偏移
+        // 根本没算进来，于是"框比字大、还往左挪"（第 81 棒，用户圈图那条）。
+        var (ix, iy, iw, ih) = fit.InkDiu;
+        var mx = Mm.FromDiu(ix);
+        var my = Mm.FromDiu(iy);
+        var mw = Math.Max(EditGeometry.MinSideMm, Mm.FromDiu(iw));
+        var mh = Math.Max(EditGeometry.MinSideMm, Mm.FromDiu(ih));
 
         // 字面拉伸是"绕排版盒中心抻"，与 PushGeometry / 旋转锚点严格同一个中心。
         var cx = item.X + item.Width / 2;
@@ -39,8 +35,8 @@ public static class TextInkBox
         return (
             cx + (mx - cx) * item.TextScaleX,
             cy + (my - cy) * item.TextScaleY,
-            Math.Max(EditGeometry.MinSideMm, mw * item.TextScaleX),
-            Math.Max(EditGeometry.MinSideMm, mh * item.TextScaleY));
+            mw * item.TextScaleX,
+            mh * item.TextScaleY);
     }
 
     /// <summary>墨迹转完之后的外接矩形（纸面毫米）。没转就等于墨迹盒本身。

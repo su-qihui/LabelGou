@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Windows;
 using System.Windows.Media;
@@ -32,6 +33,21 @@ public sealed class TextFitResult
     /// 所以偏移在这里自己算——两条出口（<c>LabelRenderer</c> 与 <c>SheetSvgWriter</c>）都读这一个值，不许各推一遍。</para>
     /// </summary>
     public required double InkLeftDiu { get; init; }
+
+    /// <summary>
+    /// 这一排字<strong>看得见的那一块</strong>（绝对 DIU，已含调用方的 scale）：左、上、宽、高。
+    /// <para>为什么不能拿 <see cref="FormattedText.Height"/> 那个行盒当它：行盒含字体内部 leading，
+    /// 第 81 棒拿用户那行 59pt 的字实测——行盒 23.98mm、真字形 15.25mm，编辑器把行盒画成选中框，
+    /// 于是"框比字高一倍"，再乘上他自己填的纵向拉伸 2.133 就是截图里那 27mm 富余。</para>
+    /// <para>为什么对齐偏移也并到这里一次算：折行那条路的居中是 WPF 在盒宽内做的，
+    /// <see cref="InkLeftDiu"/> 因此只等于盒左边；量具照抄它就漏掉了那一格偏移，实测框比字往左挪
+    /// <strong>17.9mm</strong>（用户圈的就是这个）。这里从字形外接算，两条路共用同一份结果，
+    /// 不再手写第二套居中算术。</para>
+    /// </summary>
+    public required (double X, double Y, double Width, double Height) InkDiu { get; init; }
+
+    /// <summary>墨迹中心＝渲染端的旋转锚点（五出口共用；第 52 棒说的"绕看得见那块转"到本棒才真的量得出来）。</summary>
+    public (double Cx, double Cy) InkCenterDiu => (InkDiu.X + InkDiu.Width / 2, InkDiu.Y + InkDiu.Height / 2);
 
     /// <summary>请求字号与实际字号之比（1 = 没缩；小于 1 = 触发过缩字号收敛）。</summary>
     public required double ShrinkRatio { get; init; }
@@ -190,18 +206,27 @@ public static class TextFit
         var formatted = Build(text, typeface, finalInk, finalEmSize, wrapFinal, pixelsPerDip);
         var offsetY = box.Top + centeredOffset * scale;
         var inkLeft = box.Left;
+        var rawInkWidth = Math.Max(0, formatted.WidthIncludingTrailingWhitespace);
         if (text.NoWrap)
         {
             // 对齐偏移自己算（Build 在这条路上强制左对齐）。墨迹比盒宽时偏移为负——
             // 居中的长字会左右各伸出去一截，这正是"超出去看得见"要的，不夹。
-            var inkWidth = Math.Max(0, formatted.WidthIncludingTrailingWhitespace);
             inkLeft = text.Align switch
             {
-                HorizontalAlign.Center => box.Left + (box.Width - inkWidth) / 2,
-                HorizontalAlign.Right => box.Right - inkWidth,
+                HorizontalAlign.Center => box.Left + (box.Width - rawInkWidth) / 2,
+                HorizontalAlign.Right => box.Right - rawInkWidth,
                 _ => box.Left,
             };
         }
+
+        var ink = CanonicalRelativeInk(text, typeface, finalInk, emSize, canonicalBox.Width, canonicalBox.Height,
+                wrapCanonical, need.ShownHeight)
+            is { } rel
+            ? (box.Left + rel.X * scale, box.Top + rel.Y * scale, rel.Width * scale, rel.Height * scale)
+            // 量不到字形（纯空白那类）：退回行盒那一条，与从前逐字相同——不猜
+            : (inkLeft, offsetY,
+                Math.Max(0.1, text.NoWrap ? rawInkWidth : Math.Min(box.Width, rawInkWidth)),
+                Math.Max(0.1, formatted.Height));
 
         return new TextFitResult
         {
@@ -210,6 +235,7 @@ public static class TextFit
             CanonicalEmSizeDiu = emSize,
             TextTopDiu = offsetY,
             InkLeftDiu = inkLeft,
+            InkDiu = ink,
             ShrinkRatio = requested > 0 ? emSize / requested : 1,
             Formatted = formatted,
             LineCount = need.ShownLines,
@@ -276,6 +302,88 @@ public static class TextFit
         if (text.MaxLines > 0) formatted.MaxLineCount = text.MaxLines;
         return formatted;
     }
+
+    /// <summary>
+    /// 字形墨迹<strong>相对排版盒左上角</strong>的位置与尺寸（规范域 DIU）。
+    /// <para>必须记忆：实测 <c>BuildGeometry</c> 单价 0.5~1.2ms，而编辑器每帧要给最多 80 个元素量墨迹
+    /// （拖动中每帧重建版面），不记忆就是 112ms/帧——用户看到的"拖一下卡一下"就是这么来的。
+    /// 这份相对量与元素的 X/Y 无关（摆位只把整块平移），所以拖动一帧都不重算。</para>
+    /// <para><strong>键里不许漏字段</strong>：漏一个就会把上一版的墨迹当这一版的用，
+    /// 那是 §五-62 那一族（两套算术各自长歪）里最难查的一种——错得安静。
+    /// 凡 <see cref="Build"/> 与缩字号收敛吃得到的输入都在这里：内容、字族、字号、粗体、对齐、
+    /// 是否缩字、行数上限、排版盒宽高、折行宽度。笔色与旋转/拉伸不在其中（前者只改颜色，后者由调用方叠）。</para>
+    /// </summary>
+    private static (double X, double Y, double Width, double Height)? CanonicalRelativeInk(
+        TextItem text, Typeface typeface, Brush foreground, double emSize,
+        double boxWidth, double boxHeight, double wrapCanonical, double shownHeight)
+    {
+        // 键里存的是 SafeFontFamily 的**输入**（原始字族名）：映射是确定的，存输入比存投影出来的对象稳。
+        var key = new InkKey(text.Content, text.FontFamily ?? string.Empty, text.FontSizePt, text.Bold,
+            text.Align, text.ShrinkToFit, text.MaxLines, boxWidth, boxHeight, text.WrapWidthMm);
+        if (RelativeInkCache.TryGetValue(key, out var cached)) return cached;
+
+        var computed = ComputeRelativeInk(text, typeface, foreground, emSize, boxWidth, boxHeight, wrapCanonical, shownHeight);
+        if (RelativeInkCache.Count > RelativeInkCacheCap) RelativeInkCache.Clear();   // 纯函数：挤掉只是再付一次钱
+        RelativeInkCache[key] = computed;
+        return computed;
+    }
+
+    private static (double X, double Y, double Width, double Height)? ComputeRelativeInk(
+        TextItem text, Typeface typeface, Brush foreground, double emSize,
+        double boxWidth, double boxHeight, double wrapCanonical, double shownHeight)
+    {
+        var canonical = Build(text, typeface, foreground, emSize, wrapCanonical, CanonicalPixelsPerDip);
+        var centered = Math.Max(0, (boxHeight - shownHeight) / 2);
+        var flatWidth = Math.Max(0.1, canonical.WidthIncludingTrailingWhitespace);
+        // 永不折行那条路的对齐偏移（与 Solve 里给 DrawText 的那一份同一个算式，不另推一遍）
+        var alignOffset = text.NoWrap ? text.Align switch
+        {
+            HorizontalAlign.Center => (boxWidth - flatWidth) / 2,
+            HorizontalAlign.Right => boxWidth - flatWidth,
+            _ => 0d,
+        } : 0d;   // 折行那条路：居中由 WPF 在 MaxTextWidth 内做掉，字形外接里已经含着
+
+        if (InkBoundsOf(canonical) is not { } glyph)
+            return (alignOffset, centered,
+                text.NoWrap ? flatWidth : Math.Min(Math.Max(0.1, boxWidth), flatWidth),
+                Math.Max(0.1, canonical.Height));
+
+        return (alignOffset + glyph.X, centered + glyph.Y,
+            Math.Max(0.1, glyph.Width), Math.Max(0.1, glyph.Height));
+    }
+
+    /// <summary>
+    /// 一份 <see cref="FormattedText"/> 真正会印出去的那一块（相对它自己的绘制原点）。
+    /// <para>空白内容、零面积、NaN/无穷一律算"量不到"（返回 null）——量不到就交回行盒那一条，
+    /// 绝不拿 <c>Rect.Empty</c> 的无穷边界去撑出一个假框。</para>
+    /// </summary>
+    private static Rect? InkBoundsOf(FormattedText formatted)
+    {
+        try
+        {
+            var bounds = formatted.BuildGeometry(new Point(0, 0)).Bounds;
+            if (bounds.IsEmpty || bounds.Width <= 0 || bounds.Height <= 0) return null;
+            if (double.IsNaN(bounds.Width) || double.IsInfinity(bounds.Width)
+                || double.IsNaN(bounds.Height) || double.IsInfinity(bounds.Height)) return null;
+            return bounds;
+        }
+        catch (OverflowException)
+        {
+            return null;
+        }
+    }
+
+    private sealed record InkKey(string Content, string FontFamily, double FontSizePt, bool Bold,
+        HorizontalAlign Align, bool ShrinkToFit, int MaxLines, double BoxWidth, double BoxHeight, double WrapWidthMm);
+
+    /// <summary>
+    /// 墨迹记忆表。<c>ConcurrentDictionary</c> 不是讲究：单测按类并行、编辑器画布在 STA 线程上量，
+    /// 撞一次就是脏读。重复计算无害（纯函数），所以只在超上限时整表清掉，不做逐条淘汰。
+    /// </summary>
+    private static readonly ConcurrentDictionary<InkKey, (double X, double Y, double Width, double Height)?> RelativeInkCache = new();
+
+    /// <summary>记忆表上限：一份模板最多 80 个元素，4096 格足够装下几千个不同值；超了就整表重来。</summary>
+    private const int RelativeInkCacheCap = 4096;
 
     /// <summary>
     /// 量尺寸：<c>ShownHeight</c> 取"按真实框宽折行、并按元素自己的行数上限"那一份的高度（也就是最终真会占掉多高）。

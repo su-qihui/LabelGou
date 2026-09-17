@@ -4,6 +4,7 @@ using System.IO;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using LabelGou.App.Mvvm;
 using LabelGou.App.Rendering;
 using LabelGou.App.Services;
@@ -52,6 +53,7 @@ public sealed class TemplateEditorViewModel : ObservableObject
     private bool _snapToGrid = true;
     private double _gridStepMm = 1;
     private bool _showPreviewText = true;
+    private bool _showElementBoxes = true;
     private IReadOnlyList<GuideLine> _activeGuides = Array.Empty<GuideLine>();
 
     public TemplateEditorViewModel(LabelTemplate working, TemplateStore store, string? savedFileName = null)
@@ -202,6 +204,9 @@ public sealed class TemplateEditorViewModel : ObservableObject
     /// <summary>「条码」工具（第 55 棒）：没有条码就放一只 Code128 占位供摆位，已有就选中来调。</summary>
     public ICommand AddBarcodeCommand { get; private set; } = null!;
     public ICommand AddImageCommand { get; private set; } = null!;
+
+    /// <summary>粘贴剪贴板里的图片或文字（第 81 棒⑤，与 Ctrl+V 同一个命令）。</summary>
+    public ICommand PasteCommand { get; private set; } = null!;
     public ICommand RemoveCommand { get; private set; } = null!;
     public ICommand DuplicateCommand { get; private set; } = null!;
     public ICommand BringToFrontCommand { get; private set; } = null!;
@@ -346,6 +351,19 @@ public sealed class TemplateEditorViewModel : ObservableObject
         set { if (Set(ref _showPreviewText, value)) CanvasChanged?.Invoke(); }
     }
 
+    /// <summary>
+    /// 要不要画那些"编辑期才有"的元素框（第 81 棒③，用户：「墨迹框可以选择关闭显示」）。
+    /// <para>关掉之后<strong>未选中的元素不再画框，选中的那一只连句柄照画</strong>——一句"全不画"看起来更干净，
+    /// 但换来的是看不见在改谁、句柄也抓不到，那等于把编辑层关掉。CorelDRAW 也是这个口径：
+    /// 未选中的对象不显示边界，选中的显示包围框与手柄。</para>
+    /// <para>它与 <see cref="ShowPreviewText"/> 正好相反的一对：那个管"印出来长什么样"，这个管"编辑期的辅助框"。</para>
+    /// </summary>
+    public bool ShowElementBoxes
+    {
+        get => _showElementBoxes;
+        set { if (Set(ref _showElementBoxes, value)) CanvasChanged?.Invoke(); }
+    }
+
     public string StatusText
     {
         get => _statusText;
@@ -395,6 +413,7 @@ public sealed class TemplateEditorViewModel : ObservableObject
         AddBarcodeCommand = new RelayCommand(AddBarcode);
         BuildNodeCommands();
         AddImageCommand = new RelayCommand(AddImage);
+        PasteCommand = new RelayCommand(Paste);
         RemoveCommand = new RelayCommand(RemoveSelected, () => SelectedRow is not null);
         DuplicateCommand = new RelayCommand(DuplicateSelected, () => SelectedRow is not null);
         BringToFrontCommand = new RelayCommand(() => ChangeLayer(999), () => SelectedRow is not null);
@@ -508,6 +527,89 @@ public sealed class TemplateEditorViewModel : ObservableObject
         AddElement(TemplateFactory.NewImage(
             Path.Combine("assets", Path.GetFileName(dialog.FileName)),
             _template.PaddingMm, _template.PaddingMm, 20, 12), "图片");
+    }
+
+    /// <summary>
+    /// 粘贴（第 81 棒⑤，用户：「添加粘贴——可以粘贴其他软件复制的图片文字等」）。
+    /// <para>分派只看剪贴板里<strong>真有什么</strong>：有位图先当图片（截图工具、看图器、Word 里复制的图都走这一路），
+    /// 否则有文字就落一条文本元素（内容原样，换行留着——从 Excel 单元格复制来的常是多行）。</para>
+    /// <para>两样都没有要把话说出口，不许静默：这软件从前根本没有粘贴，"点了没反应"和"没这个功能"在用户那边是同一件事。</para>
+    /// </summary>
+    private void Paste()
+    {
+        if (Clipboard.ContainsImage())
+        {
+            PasteImage();
+            return;
+        }
+        if (Clipboard.ContainsText())
+        {
+            var text = Clipboard.GetText().TrimEnd('\r', '\n');   // 末尾那个换行是复制时带上的，不是内容
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                SayNothingToPaste();
+                return;
+            }
+            AddElement(TemplateFactory.NewText(text, _template.PaddingMm, _template.PaddingMm, 30, 6), "粘贴的文字");
+            return;
+        }
+        SayNothingToPaste();
+    }
+
+    private void SayNothingToPaste() =>
+        StatusText = "剪贴板里没有可粘贴的图片或文字。在别的软件里先复制一次（截图、看图器里复制图片、" +
+                     "或选中文字 Ctrl+C），再回这里按 Ctrl+V。";
+
+    /// <summary>
+    /// 把剪贴板里那张图落成模板自带的 PNG，再加一只图片元素。
+    /// <para>为什么必须落盘而不是"记在内存里"：图片元素存的是<strong>相对路径</strong>
+    /// （<c>assets\xxx.png</c>，见 <see cref="AddImage"/>），模板拷到店里另一台电脑才带得走；
+    /// 不落盘的话这份模板换机器就只剩一个空框。</para>
+    /// <para>尺寸按图片自己的 DPI 换成毫米＝它的"原样大"，<strong>不凭空放大</strong>（放大只会糊）；
+    /// 只有比内容区还大才等比缩到装得下——一张屏幕截图按原样大是 200 多毫米，任何唛头纸都装不下。</para>
+    /// </summary>
+    private void PasteImage()
+    {
+        BitmapSource? source;
+        try
+        {
+            source = Clipboard.GetImage();
+        }
+        catch (Exception ex)
+        {
+            Report($"剪贴板里那张图没能取出来：{ex.Message}");
+            return;
+        }
+        if (source is null or { PixelWidth: 0 } or { PixelHeight: 0 })
+        {
+            SayNothingToPaste();
+            return;
+        }
+
+        var name = $"pasted-{DateTime.Now:yyyyMMdd-HHmmss}-{Guid.NewGuid().ToString("N")[..4]}.png";
+        var assetsDirectory = Path.Combine(_store.UserDirectory, "assets");
+        var relative = Path.Combine("assets", name);
+        try
+        {
+            Directory.CreateDirectory(assetsDirectory);
+            var encoder = new PngBitmapEncoder();
+            encoder.Frames.Add(BitmapFrame.Create(source));
+            using var stream = File.Create(Path.Combine(assetsDirectory, name));
+            encoder.Save(stream);
+        }
+        catch (Exception ex)
+        {
+            Report($"粘贴的图片没能存进模板目录：{ex.Message}");
+            return;
+        }
+
+        var widthMm = source.PixelWidth * 25.4 / Math.Max(1, source.DpiX);
+        var heightMm = source.PixelHeight * 25.4 / Math.Max(1, source.DpiY);
+        var availW = Math.Max(1, _template.WidthMm - 2 * _template.PaddingMm);
+        var availH = Math.Max(1, _template.HeightMm - 2 * _template.PaddingMm);
+        var fit = Math.Min(1, Math.Min(availW / widthMm, availH / heightMm));
+        AddElement(TemplateFactory.NewImage(relative, _template.PaddingMm, _template.PaddingMm,
+            Math.Round(widthMm * fit, 2), Math.Round(heightMm * fit, 2)), "粘贴的图片");
     }
 
     private void RemoveSelected()
@@ -919,7 +1021,9 @@ public sealed class TemplateEditorViewModel : ObservableObject
         {
             var element = TemplateFactory.NewLine(xMm, yMm, xMm, yMm, DefaultLineThicknessMm);
             Capture();                       // 必须在加入之前录：快照里带着这个新元素的话，Esc/撤销会把它原样放回来
-            var outcome = TemplateFactory.AddElement(_template, element, xMm, yMm);
+            // 第 81 棒④：画布上这一下是用户下的手，不找空位、不夹进纸内——AI 行式模板满纸通栏行带，
+            // 从前每一次按下都被 FindFreeSpot 搬到 2mm 网格上的别处，看起来就是"起点不是点的那一下"。
+            var outcome = TemplateFactory.AddElement(_template, element, xMm, yMm, exactlyWhereAsked: true);
             if (outcome is null)
             {
                 StatusText = "元素数量已到上限，画不下去了。";
@@ -933,7 +1037,7 @@ public sealed class TemplateEditorViewModel : ObservableObject
             var placed = _template.Elements[outcome.Index];
             _pathElement = placed;           // 下标会漂（撤销换对象、删元素变短），写回前拿这个引用对一下
             SelectedRow = Elements.FirstOrDefault(r => ReferenceEquals(r.Element, placed));
-            // 落点以元素为准：AddElement 找不到原位时会把它挪到最近的空位，拿点击坐标当第一个节点就会与元素对不上。
+            // 仍以元素为准（它是唯一事实）：第 81 棒起这一条不再搬位置，两者必然相等。
             _path.Add(new CurveNode(placed.X, placed.Y, 0, 0, 0, 0));
         }
         else
@@ -1119,7 +1223,8 @@ public sealed class TemplateEditorViewModel : ObservableObject
             _ => ElementKind.Rect,
         };
         var element = TemplateFactory.NewShape(kind, xMm, yMm, EditGeometry.MinSideMm, EditGeometry.MinSideMm);
-        var outcome = TemplateFactory.AddElement(_template, element, xMm, yMm);
+        // 第 81 棒④：按下那一点就是这只形状的起点，不许被"找空位"搬走（与 BeginPath 同一条路）。
+        var outcome = TemplateFactory.AddElement(_template, element, xMm, yMm, exactlyWhereAsked: true);
         if (outcome is null)
         {
             StatusText = "元素数量已到上限，画不下去了。";
@@ -2113,9 +2218,11 @@ public sealed class TemplateEditorViewModel : ObservableObject
     }
 
     /// <summary>
-    /// 永不折行的文本，越界只能按<strong>看得见的墨迹</strong>判（Core 量不了字，这里用屏幕上那份样例版面量）。
-    /// <para>第 46 棒：折行边界从行带手里交出去之后，"内容别出纸"这份保护由这里接手；出纸前还有一道
-    /// 按真数据量的闸门（<c>PageContentSource</c>），两处共用 <see cref="Rendering.TextInkBox"/> 同一份量法。</para>
+    /// 文本的墨迹探出纸边，按<strong>屏幕上这份样例</strong>量出来提醒（第 46 棒接手行带那份保护，第 81 棒放开摆位后扩到全部文本）。
+    /// <para><strong>为什么是 Warning 不是 Error</strong>：这里量的是样例值，不是这批货的真值——
+    /// 拿样例拦存盘等于冤枉一份好模板（真值更长时 ④⑤ 步那道按真数据量的闸会再拦一次，那才是该拦的地方）。
+    /// 而本棒把文本摆位从纸边放开之后，再留成 Error 就是"能拖出去、存不进来"的死路（§五 记过这条）。</para>
+    /// <para>三处共用 <see cref="Rendering.TextInkBox"/> 同一份量法：编辑器画框、这里提醒、出纸前闸门。</para>
     /// </summary>
     private IReadOnlyList<TemplateIssue> WithInkOverflow(IReadOnlyList<TemplateIssue> issues)
     {
@@ -2123,12 +2230,12 @@ public sealed class TemplateEditorViewModel : ObservableObject
         for (var i = 0; i < _template.Elements.Count; i++)
         {
             var element = _template.Elements[i];
-            if (element.Kind != ElementKind.Text || !element.NoWrap || !element.Visible) continue;
+            if (element.Kind != ElementKind.Text || !element.Visible) continue;
             var over = InkOverflowMm(element);
             if (over <= TemplateValidator.ToleranceMm) continue;
-            list.Add(new TemplateIssue(IssueLevel.Error,
-                $"第 {i + 1} 个元素的字排出来探出标签约 {over:0.#} mm。这一行是「永不折行」，不会被行带默默收回去——" +
-                "请挪回纸内、改小字号，或点工具栏「缩回纸内」。", i));
+            list.Add(new TemplateIssue(IssueLevel.Warning,
+                $"第 {i + 1} 个元素的字排出来探出标签约 {over:0.#} mm（屏幕上这份样例量的）。" +
+                "印到纸上那一截会被刀模裁掉——请挪回纸内、改小字号，或点工具栏「缩回纸内」。", i));
         }
         list.AddRange(ArtworkDegradations());
         return list;
