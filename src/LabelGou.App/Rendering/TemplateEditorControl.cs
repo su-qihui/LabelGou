@@ -30,6 +30,15 @@ public sealed class TemplateEditorControl : FrameworkElement
     private static readonly Brush HandleBrush = Frozen(new SolidColorBrush(Colors.White));
     private static readonly Brush DimBrush = Frozen(new SolidColorBrush(Color.FromArgb(70, 200, 60, 60)));
 
+    /// <summary>
+    /// 纸中心那两条常驻虚线（第 82 棒②）。<c>internal</c> 是给单测按引用比对用的——
+    /// 判据要问的是"这一帧画没画这两条"，比对颜色常数改个色号就红，比错了方向。
+    /// </summary>
+    internal static readonly Pen CenterPen = Frozen(new Pen(new SolidColorBrush(Color.FromArgb(190, 120, 130, 190)), 0.8)
+    {
+        DashStyle = new DashStyle(new double[] { 4, 3 }, 0),
+    });
+
     private TemplateEditorViewModel? _vm;
     private double _zoom = 1;
     private bool _zoomExplicit;
@@ -175,6 +184,16 @@ public sealed class TemplateEditorControl : FrameworkElement
                 dc.Pop();
                 dc.Pop();
             }
+        }
+
+        // 纸中心两条常驻虚线（第 82 棒②，照 CorelDRAW）：一直画到画布边缘，才看得出它是"整张纸的中线"
+        // 而不是某只元素的中线。画在内容之上、元素框之下：压着字看不见，被字盖住也看不见。
+        if (vm.ShowCenterLines)
+        {
+            var centerXd = ToDiuX(template.WidthMm / 2);
+            var centerYd = ToDiuY(template.HeightMm / 2);
+            dc.DrawLine(CenterPen, new Point(centerXd, 0), new Point(centerXd, size.Height));
+            dc.DrawLine(CenterPen, new Point(0, centerYd), new Point(size.Width, centerYd));
         }
 
         if (template.PaddingMm > 0)

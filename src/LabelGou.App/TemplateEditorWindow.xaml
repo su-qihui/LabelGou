@@ -102,6 +102,8 @@
                           ToolTip="关掉就只看框，摆位置更快" />
                 <CheckBox Content="元素框" IsChecked="{Binding ShowElementBoxes}" VerticalAlignment="Center" Margin="0,0,8,0"
                           ToolTip="那些只在编辑期才有的墨迹框/选中框。关掉之后未选中的元素不再画框（看着就是印出来的样子），&#10;选中的那一只连句柄照画——不然看不见在改谁、也抓不到。" />
+                <CheckBox Content="中心线" IsChecked="{Binding ShowCenterLines}" VerticalAlignment="Center" Margin="0,0,8,0"
+                          ToolTip="过这张纸正中的横竖两条虚线（CorelDRAW 那两条），一直在那儿，方便看元素摆正了没有。&#10;与「吸附」不同：那颗是拖到中线附近吸过去、当时闪一条粉线。这两条只在编辑期看得见，不打印。" />
                 <Separator Width="14" Background="Transparent" />
 
                 <Button Content="保存" FontWeight="Bold" Command="{Binding SaveCommand}" MinWidth="80" />

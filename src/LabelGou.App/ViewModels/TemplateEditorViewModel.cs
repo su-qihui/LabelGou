@@ -54,6 +54,7 @@ public sealed class TemplateEditorViewModel : ObservableObject
     private double _gridStepMm = 1;
     private bool _showPreviewText = true;
     private bool _showElementBoxes = true;
+    private bool _showCenterLines = true;
     private IReadOnlyList<GuideLine> _activeGuides = Array.Empty<GuideLine>();
 
     public TemplateEditorViewModel(LabelTemplate working, TemplateStore store, string? savedFileName = null)
@@ -364,6 +365,18 @@ public sealed class TemplateEditorViewModel : ObservableObject
         set { if (Set(ref _showElementBoxes, value)) CanvasChanged?.Invoke(); }
     }
 
+    /// <summary>
+    /// 画布上过<strong>纸的中心</strong>画横竖两条常驻虚线（第 82 棒②，用户拿 CorelDRAW 的截图说「添加显示横/竖中心虚线」）。
+    /// <para>它与「吸附」不是一回事：那颗管的是"拖到中线附近吸过去、当时闪一条粉色辅助线"（<see cref="ActiveGuides"/>），
+    /// 松手就没；这两条是<strong>一直在</strong>的定位参照——想知道"这只元素在整张纸上正不正"不必先拖一下。</para>
+    /// <para>只活在编辑期：画法（<c>LabelRenderer</c>）一个字不动，五出口拿不到它。</para>
+    /// </summary>
+    public bool ShowCenterLines
+    {
+        get => _showCenterLines;
+        set { if (Set(ref _showCenterLines, value)) CanvasChanged?.Invoke(); }
+    }
+
     public string StatusText
     {
         get => _statusText;
@@ -510,13 +523,23 @@ public sealed class TemplateEditorViewModel : ObservableObject
             Filter = "图片文件|*.png;*.jpg;*.jpeg;*.bmp;*.gif|所有文件|*.*",
         };
         if (dialog.ShowDialog() != true) return;
+        AddImageFile(dialog.FileName);
+    }
 
+    /// <summary>
+    /// 把一张图片文件加进模板（「图片」那颗按钮与单测共用的这一步）。
+    /// <para>第 82 棒①：尺寸不再写死 20×12——那是用户报「导入图片比例显示不正常」的真因：
+    /// 渲染端把位图填满框（CDR 的语义），框是扁的图就是扁的。现在按文件自己的像素与 DPI 走
+    /// <see cref="ImageSizing"/>，与「粘贴」同一条算式（同一件事不许有两份代码）。</para>
+    /// </summary>
+    internal void AddImageFile(string pickedPath)
+    {
         var targetDirectory = Path.Combine(_store.UserDirectory, "assets");
         Directory.CreateDirectory(targetDirectory);
-        var target = Path.Combine(targetDirectory, Path.GetFileName(dialog.FileName));
+        var target = Path.Combine(targetDirectory, Path.GetFileName(pickedPath));
         try
         {
-            File.Copy(dialog.FileName, target, overwrite: true);
+            File.Copy(pickedPath, target, overwrite: true);
         }
         catch (Exception ex)
         {
@@ -524,10 +547,27 @@ public sealed class TemplateEditorViewModel : ObservableObject
             return;
         }
 
+        var (widthMm, heightMm) = NaturalSizeIntoContentArea(pickedPath);
         AddElement(TemplateFactory.NewImage(
-            Path.Combine("assets", Path.GetFileName(dialog.FileName)),
-            _template.PaddingMm, _template.PaddingMm, 20, 12), "图片");
+            Path.Combine("assets", Path.GetFileName(pickedPath)),
+            _template.PaddingMm, _template.PaddingMm, widthMm, heightMm), "图片");
     }
+
+    /// <summary>这张图在现在这份标签上该占多大（原样大，装不下才等比缩到内容区）。</summary>
+    private (double Width, double Height) NaturalSizeIntoContentArea(string path)
+    {
+        var (px, py, dpiX, dpiY) = ImageFile.ReadDimensions(path);
+        return ImageSizing.PlacementFor(px, py, dpiX, dpiY, ContentWidthMm, ContentHeightMm);
+    }
+
+    /// <summary>内容区（纸面减掉内边距）的宽高——图片、粘贴进来的图都按它兜底。</summary>
+    private (double Width, double Height) ContentArea()
+        => (Math.Max(1, _template.WidthMm - 2 * _template.PaddingMm),
+            Math.Max(1, _template.HeightMm - 2 * _template.PaddingMm));
+
+    private double ContentWidthMm => ContentArea().Width;
+
+    private double ContentHeightMm => ContentArea().Height;
 
     /// <summary>
     /// 粘贴（第 81 棒⑤，用户：「添加粘贴——可以粘贴其他软件复制的图片文字等」）。
@@ -603,13 +643,11 @@ public sealed class TemplateEditorViewModel : ObservableObject
             return;
         }
 
-        var widthMm = source.PixelWidth * 25.4 / Math.Max(1, source.DpiX);
-        var heightMm = source.PixelHeight * 25.4 / Math.Max(1, source.DpiY);
-        var availW = Math.Max(1, _template.WidthMm - 2 * _template.PaddingMm);
-        var availH = Math.Max(1, _template.HeightMm - 2 * _template.PaddingMm);
-        var fit = Math.Min(1, Math.Min(availW / widthMm, availH / heightMm));
+        // 尺寸口径与「图片」那颗按钮同一条算式（Core 的 ImageSizing）：原样大、装不下才等比缩
+        var (widthMm, heightMm) = ImageSizing.PlacementFor(source.PixelWidth, source.PixelHeight,
+            source.DpiX, source.DpiY, ContentWidthMm, ContentHeightMm);
         AddElement(TemplateFactory.NewImage(relative, _template.PaddingMm, _template.PaddingMm,
-            Math.Round(widthMm * fit, 2), Math.Round(heightMm * fit, 2)), "粘贴的图片");
+            Math.Round(widthMm, 2), Math.Round(heightMm, 2)), "粘贴的图片");
     }
 
     private void RemoveSelected()

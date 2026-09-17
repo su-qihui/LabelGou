@@ -1141,6 +1141,9 @@
                                 <CheckBox Content="自动适应" x:Name="SheetAutoFitBox" IsChecked="True"
                                           VerticalAlignment="Center" Margin="0,0,10,0" />
                                 <CheckBox Content="显示要素边框" IsChecked="{Binding ShowGuides}" VerticalAlignment="Center" />
+                                <CheckBox Content="标签分界" IsChecked="{Binding ShowLabelDividers}" VerticalAlignment="Center"
+                                          Margin="10,0,0,0"
+                                          ToolTip="每枚标签画一圈虚线，看清枚与枚的边界（第 82 棒）。只在这块预览上存在——打印、PDF、图片、SVG 都拿不到它，与「含裁切线」互不影响。" />
                             </WrapPanel>
 
                             <Border Grid.Row="1" x:Name="SheetHost" Background="#E7EAEE"
@@ -1154,6 +1157,7 @@
                                                                     PageIndex="{Binding Sheet.PageIndex}"
                                                                     Zoom="{Binding Sheet.SheetZoom}"
                                                                     ShowGuides="{Binding ShowGuides}"
+                                                                    ShowLabelDividers="{Binding ShowLabelDividers}"
                                                                     HorizontalAlignment="Center"
                                                                     VerticalAlignment="Center" />
                                     </ContentControl>

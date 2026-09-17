@@ -32,6 +32,16 @@ public static class SheetRenderer
     private static readonly Color PaperEdgeColor = Color.FromRgb(150, 150, 150);
     private static readonly Color MarginColor = Color.FromRgb(200, 200, 200);
 
+    /// <summary>
+    /// 整版预览里每枚标签的分界虚线（第 82 棒③，用户：「在整版拼版添加虚线的单标签分界线，仅预览使用不会被打印」）。
+    /// <para><c>internal</c> 是给单测按引用比对用的：判据问的是"这一帧画没画、画在哪个用途上"，
+    /// 比对颜色常数改个色号就红，比错了方向。</para>
+    /// </summary>
+    internal static readonly Pen LabelDividerPen = Frozen(new Pen(new SolidColorBrush(Color.FromArgb(210, 90, 140, 200)), 0.7)
+    {
+        DashStyle = new DashStyle(new double[] { 4, 3 }, 0),
+    });
+
     /// <summary>页用途 → 线宽口径项（只有屏幕需要保底，其余一律真实毫米）。</summary>
     public static RenderTarget TargetFor(PageRenderPurpose purpose) => purpose switch
     {
@@ -50,7 +60,8 @@ public static class SheetRenderer
         PageRenderPurpose purpose,
         double pixelsPerDip,
         bool includeTrimMarks = true,
-        Core.Colors.InkPlate plate = Core.Colors.InkPlate.None)
+        Core.Colors.InkPlate plate = Core.Colors.InkPlate.None,
+        bool showLabelDividers = false)
     {
         var page = Math.Max(1, pageIndex);
         var paperW = Mm.ToDiu(plan.PageWidthMm) * scale;
@@ -79,6 +90,18 @@ public static class SheetRenderer
                 Math.Max(0, Mm.ToDiu(plan.Spec.UsableWidthMm) * scale),
                 Math.Max(0, Mm.ToDiu(plan.Spec.UsableHeightMm) * scale));
             dc.DrawRectangle(null, Frozen(new Pen(new SolidColorBrush(MarginColor), 0.6) { DashStyle = DashStyles.Dash }), marginRect);
+
+            // 单标签分界线（第 82 棒③）：每枚标签一个虚线矩形，只在屏幕上存在——"不会被打印"这句
+            // 靠用途闸门兑现（Image / Printer 两个用途拿不到这条），不靠调用方自觉。
+            // 为什么不借纸规那格 LabelOutlineMm（刀模示意线）：它默认 0、要用户先去填数，
+            // 而且整段 marks 还套在「含裁切线」里——组不出"只要分界、不要角线"这一档。
+            if (showLabelDividers)
+            {
+                foreach (var placement in plan.PlacementsOnPage(page))
+                    dc.DrawRectangle(null, LabelDividerPen, new Rect(
+                        Mm.ToDiu(placement.X) * scale, Mm.ToDiu(placement.Y) * scale,
+                        Math.Max(0, Mm.ToDiu(placement.Width) * scale), Math.Max(0, Mm.ToDiu(placement.Height) * scale)));
+            }
         }
 
         // 辅助线先画，让标签内容压在上面（印刷上角线本来就只露在标签外）

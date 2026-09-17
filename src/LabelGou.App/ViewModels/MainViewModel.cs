@@ -1474,6 +1474,19 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         set => Set(ref _showGuides, value);
     }
 
+    private bool _showLabelDividers = true;
+
+    /// <summary>
+    /// 整版拼版预览里每枚标签的<strong>分界虚线</strong>（第 82 棒③，用户：「仅预览使用不会被打印」）。
+    /// <para>它与「显示要素边框」是两件事：那颗框的是单枚标签<em>里面</em>的元素，这颗画的是<em>枚与枚</em>的边界。
+    /// 只活在这一块画布上——位图/PDF/TIFF/打印/SVG 五条出口走 <c>Image</c> / <c>Printer</c> 用途，拿不到这条线。</para>
+    /// </summary>
+    public bool ShowLabelDividers
+    {
+        get => _showLabelDividers;
+        set => Set(ref _showLabelDividers, value);
+    }
+
     /// <summary>
         /// 是否存在"未人工核对"的字段。M3 的打印前闸门读这个标志；
         /// M1 只有 Excel 数据，恒为 false，但接口现在就定下来。

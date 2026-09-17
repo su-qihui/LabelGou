@@ -35,6 +35,11 @@ public sealed class SheetPreviewControl : FrameworkElement
         nameof(ShowGuides), typeof(bool), typeof(SheetPreviewControl),
         new FrameworkPropertyMetadata(false, FrameworkPropertyMetadataOptions.AffectsRender));
 
+    /// <summary>每枚标签的分界虚线（第 82 棒③）。只在这块画布上存在，五出口拿不到。</summary>
+    public static readonly DependencyProperty ShowLabelDividersProperty = DependencyProperty.Register(
+        nameof(ShowLabelDividers), typeof(bool), typeof(SheetPreviewControl),
+        new FrameworkPropertyMetadata(true, FrameworkPropertyMetadataOptions.AffectsRender));
+
     /// <summary>当前页码（1 起）。</summary>
     public int PageIndex
     {
@@ -61,6 +66,13 @@ public sealed class SheetPreviewControl : FrameworkElement
     {
         get => (bool)GetValue(ShowGuidesProperty);
         set => SetValue(ShowGuidesProperty, value);
+    }
+
+    /// <summary>要不要画单标签分界虚线（第 82 棒③，仅预览）。</summary>
+    public bool ShowLabelDividers
+    {
+        get => (bool)GetValue(ShowLabelDividersProperty);
+        set => SetValue(ShowLabelDividersProperty, value);
     }
 
     /// <summary>标签序号（1 起）→ 版面。返回 null 表示这一枚暂时不画（空位）。</summary>
@@ -91,7 +103,8 @@ public sealed class SheetPreviewControl : FrameworkElement
 
         var scale = size.Width / Math.Max(0.001, Mm.ToDiu(plan.PageWidthMm));
         SheetRenderer.DrawPage(dc, plan, PageIndex, scale, LayoutProvider, ShowGuides,
-            PageRenderPurpose.Screen, VisualTreeHelper.GetDpi(this).PixelsPerDip);
+            PageRenderPurpose.Screen, VisualTreeHelper.GetDpi(this).PixelsPerDip,
+            showLabelDividers: ShowLabelDividers);
     }
 
     /// <summary>纸张内容变了（换页/换纸规/重算）时由外部调用，强制重画。</summary>
