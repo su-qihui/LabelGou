@@ -650,6 +650,44 @@ public sealed class TemplateEditorViewModel : ObservableObject
             Math.Round(widthMm, 2), Math.Round(heightMm, 2)), "粘贴的图片");
     }
 
+    /// <summary>
+    /// 双击画布：这一点上该就地编辑的那条文字（点到的不是文字、或没命中 → null）。
+    /// <para>命中走 <see cref="EditGeometry.TopmostAt"/> 那两遍（第 83 棒①）：<strong>谁的字看得见就选谁</strong>，
+    /// 不再让上面那条通栏行带把别人的字抢走。</para>
+    /// </summary>
+    public TemplateElement? TextAtForEdit(double xMm, double yMm)
+    {
+        var index = EditGeometry.TopmostAt(_template, xMm, yMm, inkBoxes: DisplayBoxOf);
+        if (index < 0) return null;
+        var element = _template.Elements[index];
+        return element.Kind == ElementKind.Text && element.Visible ? element : null;
+    }
+
+    /// <summary>
+    /// 就地编辑框里放什么：<strong>模板原文</strong>（含 <c>{{col:货号}}</c> 这类占位符），不是屏幕上那份样例值。
+    /// <para>画布平时显示的是样例数据排出来的结果（"QTY:48PCS"），双击后要改的是这一格的<strong>模板</strong>
+    /// （"QTY:{{col:QTY}}PCS"）。编辑框里给样例值，用户就会把字段整个写死成数字——那是第 73 棒定稿之后
+    /// 最不该再犯的一次（进库会印到别的行的货上）。</para>
+    /// </summary>
+    public string InlineEditDraftFor(TemplateElement element) => element.Text ?? string.Empty;
+
+    /// <summary>
+    /// 提交就地编辑：先选中这一行，再走属性面板「内容」那同一格写入口（<c>Prepare/Done</c>：一步撤销、置脏、重建样例）。
+    /// <para>不开第二条写路径——内容这个字段以前就有两个写家（面板与插入字段），第三个只会让它们再漂移。</para>
+    /// </summary>
+    public bool CommitInlineEdit(TemplateElement element, string text)
+    {
+        var row = Elements.FirstOrDefault(r => ReferenceEquals(r.Element, element));
+        if (row is null) return false;
+        SelectedRow = row;
+        if (Editing is null || string.Equals(text, Editing.Text, StringComparison.Ordinal)) return false;
+
+        Editing.Text = text;
+        StatusText = "已改这一行的内容（画布上显示的是样例数据排出来的结果；占位符写回模板里了）。" +
+                     "Ctrl+Z 可退。";
+        return true;
+    }
+
     private void RemoveSelected()
     {
         var row = SelectedRow;

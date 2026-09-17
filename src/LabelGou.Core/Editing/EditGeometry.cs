@@ -262,17 +262,41 @@ public static class EditGeometry
     }
 
     /// <summary>命中最上层元素的下标（列表末尾=画在最上面）；没命中返回 -1。
-    /// <para>第 44 棒定口径：<strong>点选按宽容盒（文本=含拉伸的 VisualBoxOf，即整条行带）</strong>——
-    /// 只认墨迹会让"点文字旁边的空白选不中这一行"；精确的墨迹盒只用于画框与句柄（HandleAt 的 displayBox）。</para></summary>
+    /// <para><strong>两遍，顺序就是优先级</strong>（第 83 棒①）：第一遍只认<strong>看得见的那一块</strong>
+    /// （文本 = 墨迹盒，转过的按转完的外接；非文本 = 它自己的框），第二遍才放开到宽容盒。</para>
+    /// <para>为什么要有第二遍：第 44 棒定"点选按宽容盒（文本=整条行带）"是为了"点文字旁边的空白也选得中这一行"；
+    /// 第 63 棒又把墨迹盒<em>并</em>进同一遍命中范围，为的是"永不折行的右半段抓不住"。两条叠在一起就漏出
+    /// 用户今天圈的洞：一条 130×123mm 的通栏行带压在别人家的字上面，<strong>点谁的字都选中它</strong>
+    /// （"点击也是只能被第二行控制"）。宽容是便利，不是抢别人的理由。</para>
+    /// <para>墨迹盒由 App 量（Core 不许碰 WPF）；没递进来或量不到（隐藏、变量全空）的文本第一遍直接跳过，
+    /// 交给第二遍——它照样点得中，只是没有"看得见那块"可优先。</para></summary>
     public static int TopmostAt(LabelTemplate template, double xMm, double yMm, double toleranceMm = HitToleranceMm,
         Func<TemplateElement, (double X, double Y, double Width, double Height)?>? inkBoxes = null)
     {
         for (var i = template.Elements.Count - 1; i >= 0; i--)
         {
             var element = template.Elements[i];
+            if (element.Visible && VisiblePartHit(element, xMm, yMm, toleranceMm, inkBoxes?.Invoke(element))) return i;
+        }
+        for (var i = template.Elements.Count - 1; i >= 0; i--)
+        {
+            var element = template.Elements[i];
             if (element.Visible && HitTest(element, xMm, yMm, toleranceMm, inkBoxes?.Invoke(element))) return i;
         }
         return -1;
+    }
+
+    /// <summary>这一点落在元素"看得见的那一块"里吗（<see cref="TopmostAt"/> 的第一遍）。</summary>
+    private static bool VisiblePartHit(TemplateElement element, double xMm, double yMm, double toleranceMm,
+        (double X, double Y, double Width, double Height)? ink)
+    {
+        if (element.Kind != ElementKind.Text) return HitTest(element, xMm, yMm, toleranceMm);   // 非文本：框就是它自己
+        if (ink is not { } box) return false;                                                    // 量不到 → 交给第二遍
+
+        // 与画出来的那个框同一个外接：绕墨迹自己的中心转（渲染端同一个锚点，第 52 棒）
+        var occ = RotatedBoundsOf(box, element.RotationDeg, box.X + box.Width / 2, box.Y + box.Height / 2);
+        return xMm >= occ.X - toleranceMm && xMm <= occ.Right + toleranceMm
+            && yMm >= occ.Y - toleranceMm && yMm <= occ.Bottom + toleranceMm;
     }
 
     /// <summary>

@@ -192,8 +192,11 @@
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
                     <render:TemplateEditorControl x:Name="Canvas" />
+                    <!--  就地编辑那一行的内容（第 83 棒②）：双击文字时由代码往这里放一只 TextBox。
+                          整层不吃命中，只有编辑框自己吃——不然画布上的拖动与点选会被挡住。  -->
+                    <Canvas x:Name="InlineEditLayer" Grid.Row="0" IsHitTestVisible="False" Panel.ZIndex="10" />
                     <TextBlock Grid.Row="1" Style="{StaticResource Hint}" Margin="8,4,8,6"
-                               Text="拖动摆位置；抓住边角小方块改大小；方向键微调（细调 Shift+方向键 = 0.1mm，粗调 Ctrl+方向键 = 2mm）；滚轮缩放，Ctrl+滚轮左右平移，Alt+滚轮上下平移，双击空白复位视角。" />
+                               Text="拖动摆位置；抓住边角小方块改大小；方向键微调（细调 Shift+方向键 = 0.1mm，粗调 Ctrl+方向键 = 2mm）；滚轮缩放，Ctrl+滚轮左右平移，Alt+滚轮上下平移，双击空白复位视角；&#10;双击一行文字就地改它的内容（框里显示的是模板原文，含 {{col:字段}} 占位符；画布上显示的是样例数据排出来的结果）。回车或点别处提交，Esc 取消。" />
                 </Grid>
             </Border>
 

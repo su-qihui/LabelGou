@@ -7,6 +7,7 @@ using LabelGou.App.Rendering;
 using LabelGou.App.ViewModels;
 using LabelGou.Core.Colors;
 using LabelGou.Core.Templates;
+using LabelGou.Core.Units;
 
 namespace LabelGou.App;
 
@@ -20,6 +21,87 @@ namespace LabelGou.App;
 public sealed partial class TemplateEditorWindow : Window
 {
     private readonly TemplateEditorViewModel _editor;
+
+    // ---------- 就地编辑那一行的内容（第 83 棒②，用户：「编辑状态双击文本时可以对文本编辑」）----------
+    private TextBox? _inlineEdit;
+    private TemplateElement? _inlineTarget;
+    private bool _inlineClosing;
+
+    /// <summary>
+    /// 双击落在一条文字上 → 在它的位置放一只编辑框，里面是<strong>模板原文</strong>（含 <c>{{col:货号}}</c>）。
+    /// <para>为什么不是画布上那份：画布显示的是样例数据排出来的结果（"QTY:48PCS"），要改的却是这一格的模板
+    /// （"QTY:{{col:QTY}}PCS"）。编辑框里给样例值，用户就会把字段整个写死成数字——那份模板进库后会印到
+    /// 别的行的货上（第 73 棒定稿那条红线，这里不能自己再犯一次）。</para>
+    /// </summary>
+    private void OpenInlineEditor(TemplateElement element, Rect box)
+    {
+        CloseInlineEditor(commit: true);      // 上一格先落定，别留两只框
+
+        _inlineTarget = element;
+        var editor = new TextBox
+        {
+            Text = _editor.InlineEditDraftFor(element),
+            IsHitTestVisible = true,
+            BorderBrush = new SolidColorBrush(Color.FromRgb(0, 120, 215)),
+            BorderThickness = new Thickness(1),
+            Background = new SolidColorBrush(Color.FromArgb(245, 255, 255, 255)),
+            Padding = new Thickness(2, 0, 2, 0),
+            FontFamily = RenderRules.SafeFontFamily(element.FontFamily),
+            FontWeight = element.Bold ? FontWeights.Bold : FontWeights.Normal,
+            FontSize = Math.Max(10, Mm.ToDiu(Mm.PointToMm(element.FontSizePt)) * Canvas.CurrentZoom),
+            MinWidth = 140,
+            Width = Math.Max(140, box.Width),
+        };
+        // 这只窗口的字段 x:Name="Canvas" 把 System.Windows.Controls.Canvas 这个类名遮住了，
+        // 附加属性只能写全限定名（照直觉写 Canvas.SetLeft 会编成"往画布控件上找 SetLeft"）。
+        System.Windows.Controls.Canvas.SetLeft(editor, box.X);
+        System.Windows.Controls.Canvas.SetTop(editor, box.Y);
+        editor.PreviewKeyDown += OnInlineEditKeyDown;
+        editor.LostFocus += (_, _) => CloseInlineEditor(commit: true);
+
+        InlineEditLayer.Children.Add(editor);
+        _inlineEdit = editor;
+        editor.Focus();
+        editor.SelectAll();
+    }
+
+    private void OnInlineEditKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter || e.Key == Key.Return)
+        {
+            CloseInlineEditor(commit: true);
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Escape)
+        {
+            CloseInlineEditor(commit: false);     // 取消就是没改过：不置脏、不吃撤销名额
+            e.Handled = true;
+        }
+    }
+
+    /// <summary>
+    /// 收框。提交走 <see cref="TemplateEditorViewModel.CommitInlineEdit"/>（属性面板那同一个写入口）。
+    /// <para><c>internal</c>：单测直接叫它跑"提交/取消"两条路——按键处理器只是按 Enter/Esc 选 true/false，
+    /// 测同一个方法才算数。</para>
+    /// </summary>
+    internal void CloseInlineEditor(bool commit)
+    {
+        if (_inlineEdit is null || _inlineClosing) return;
+        _inlineClosing = true;
+        try
+        {
+            var editor = _inlineEdit;
+            var target = _inlineTarget;
+            _inlineEdit = null;
+            _inlineTarget = null;
+            InlineEditLayer.Children.Remove(editor);
+            if (commit && target is not null) _editor.CommitInlineEdit(target, editor.Text);
+        }
+        finally
+        {
+            _inlineClosing = false;
+        }
+    }
 
     /// <summary>
     /// 未保存时关窗口问一句的判定（可替换：单测换掉它就不弹窗，三条关闭路径各自被钉）。
@@ -49,6 +131,8 @@ public sealed partial class TemplateEditorWindow : Window
         AskSaveBeforeClose = ShowSavePrompt;
         InitializeComponent();
         DataContext = _editor;
+        Canvas.InlineEditRequested += OpenInlineEditor;
+        _editor.CanvasChanged += () => CloseInlineEditor(commit: true);
 
         _editor.Saved += template => Dispatcher.Invoke(() =>
         {
@@ -261,6 +345,9 @@ public sealed partial class TemplateEditorWindow : Window
 
     /// <summary>图层列表（第 63 棒②：单测要模拟"焦点在图层列表上"，验 Delete 不再看焦点脸色）。</summary>
     internal ListBox LayerListForTests => LayerList;
+
+    /// <summary>就地编辑那一层（第 83 棒②：单测看开没开框、框里写的是哪一个）。</summary>
+    internal Canvas InlineEditLayerForTests => InlineEditLayer;
 
     // ---------- 墨色调色盘（第 47 棒补刀）----------
     // View 只把像素换算成 0~1 的比例，颜色怎么落、面板跳不跳档全在 EditableElement 里。

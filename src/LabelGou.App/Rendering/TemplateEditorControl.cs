@@ -67,6 +67,35 @@ public sealed class TemplateEditorControl : FrameworkElement
     private bool _dragging;
     private bool _dragIsResize;      // 这一笔抓的是句柄（缩放）还是元素本体（移动）——只服务光标
 
+    /// <summary>
+    /// 双击落在一条文字上：请窗口在 <paramref name="box"/>（画布设备坐标）上开一个就地编辑框（第 83 棒②）。
+    /// <para>控件只管像素，"改哪一格、怎么落"交给窗口与 VM——所以这里只发请求，不搬内容。</para>
+    /// </summary>
+    internal event Action<TemplateElement, Rect>? InlineEditRequested;
+
+    /// <summary>
+    /// 这一点要不要进就地编辑（双击分派的那一步，单测直接叫这一句，不必合成鼠标事件）。
+    /// <para>命中判据是 <see cref="TemplateEditorViewModel.TextAtForEdit"/>——<strong>谁的字看得见就编辑谁</strong>，
+    /// 上面那条通栏行带不许抢（第 83 棒①）。</para>
+    /// </summary>
+    internal bool RequestInlineEditAt(double xMm, double yMm)
+    {
+        var vm = _vm;
+        if (vm is null) return false;
+        var target = vm.TextAtForEdit(xMm, yMm);
+        if (target is null) return false;
+        InlineEditRequested?.Invoke(target, ScreenBoxOf(target));
+        return true;
+    }
+
+    /// <summary>元素在画布上的设备矩形（就地编辑框的落点；转过的元素按未转的盒摆，编辑框不需要跟着转）。</summary>
+    private Rect ScreenBoxOf(TemplateElement element)
+    {
+        var box = _vm?.DisplayBoxOf(element) ?? EditGeometry.VisualBoxOf(element);
+        return new Rect(ToDiuX(box.X), ToDiuY(box.Y),
+            Math.Max(1, Mm.ToDiu(box.Width) * _zoom), Math.Max(1, Mm.ToDiu(box.Height) * _zoom));
+    }
+
     public TemplateEditorControl()
     {
         Focusable = true;
@@ -507,9 +536,14 @@ public sealed class TemplateEditorControl : FrameworkElement
                 return;
         }
 
-        // 双击 = 复位视角（缩放 + 平移都回到"自动居中"）；放在按下里而不是 OnMouseDown，否则会先起一次多余的拖动
+        // 双击分派（第 83 棒②）：落在一条文字上 = 就地改这一行的内容；落在空白处 = 复位视角（第 67 棒那条不变）。
         if (e.ClickCount == 2)
         {
+            if (RequestInlineEditAt(ToMmX(point.X), ToMmY(point.Y)))
+            {
+                e.Handled = true;
+                return;
+            }
             _zoomExplicit = false;
             _pan = (0, 0);
             InvalidateMeasure();
