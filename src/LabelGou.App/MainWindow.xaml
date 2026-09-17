@@ -857,7 +857,7 @@
                                                 ToolTip="先在右边「打印首选项…」里把纸盘/介质/纸张尺寸设好，再点这里，把整套存下来。" />
                                         <Button Grid.Column="4" Content="套用" Command="{Binding Export.ApplyPresetCommand}"
                                                 Margin="6,0,0,0" FontWeight="Bold"
-                                                ToolTip="写回这台打印机在本机的默认设置（纸盘、介质类型、纸张尺寸一起回）。&#10;换打印机或驱动升级过会拒绝套用，不会硬塞。&#10;退出 LabelGou 时会自动还回你进来之前的样子（别的软件不会一直跟着变）。" />
+                                                ToolTip="写回这台打印机在本机的默认设置（纸盘、介质类型、纸张尺寸一起回）。&#10;换打印机或驱动升级过会拒绝套用，不会硬塞。&#10;勾着「打印后恢复打印机默认」时：每次打印完和退出软件会把它还成驱动自己的默认（别的软件不会一直跟着变）。" />
                                     </Grid>
                                 </Grid>
                             </Border>
@@ -878,6 +878,8 @@
                                           ToolTip="默认不勾：缩小后标签就不是原定尺寸了" />
                                 <CheckBox Content="打印前看驱动窗口" IsChecked="{Binding Export.ConfirmBeforePrint}" Margin="12,0,0,0" VerticalAlignment="Center"
                                           ToolTip="勾了就能在驱动窗口里选纸盒/单面双面，但不算静默批量" />
+                                <CheckBox Content="打印后恢复打印机默认" IsChecked="{Binding Export.RestorePrinterDefaults}" Margin="12,0,0,0" VerticalAlignment="Center"
+                                          ToolTip="这里和「打印首选项…」改的是这台打印机在本机的默认设置，别的软件调用打印机也吃它。&#10;勾上（默认）：每次打印完 + 退出软件时，把它还成驱动自己的默认（就是驱动页那颗「恢复默认设置」）；进程被强杀或断电，下次开软件先补还并告诉你。&#10;不勾：改动留着不动——你要长期用这套（手送台/标签纸）就别勾。" />
                             </WrapPanel>
 
                             <Button Content="打印整版" Command="{Binding Export.PrintCommand}" FontWeight="Bold"
