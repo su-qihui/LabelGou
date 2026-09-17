@@ -388,7 +388,9 @@ public sealed class ExportViewModel : ObservableObject
         foreach (var row in report.Rows) PrinterSettingRows.Add(row);
         PrinterSettingsNote = report.Error ?? "这三项由打印机驱动管：能读回来的读给你看；读不回来的（如纸张来源——驱动把它存在自己的私有设置块里，"
             + "公开字段不动）就进「打印首选项…」看或改。在那里改的是这台打印机在这台电脑上的默认设置，别的软件也共用。"
-            + "嫌每次进驱动页麻烦：设好一次点下面「存为方案」，以后点「套用」一键设回来。";
+            + "嫌每次进驱动页麻烦：设好一次点下面「存为方案」，以后点「套用」一键设回来。"
+            + "\n退出 LabelGou 时会把这些默认还回你进来之前的样子（改的是这台打印机在本机的用户默认，不想让别的软件跟着变就走这条路）；"
+            + "进程被强杀或断电，下次开软件会先补还一次并告诉你。";
         Raise(nameof(PrinterSettingsNote));
     }
 

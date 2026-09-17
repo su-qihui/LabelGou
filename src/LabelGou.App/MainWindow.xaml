@@ -857,7 +857,7 @@
                                                 ToolTip="先在右边「打印首选项…」里把纸盘/介质/纸张尺寸设好，再点这里，把整套存下来。" />
                                         <Button Grid.Column="4" Content="套用" Command="{Binding Export.ApplyPresetCommand}"
                                                 Margin="6,0,0,0" FontWeight="Bold"
-                                                ToolTip="写回这台打印机在本机的默认设置（纸盘、介质类型、纸张尺寸一起回）。&#10;换打印机或驱动升级过会拒绝套用，不会硬塞。" />
+                                                ToolTip="写回这台打印机在本机的默认设置（纸盘、介质类型、纸张尺寸一起回）。&#10;换打印机或驱动升级过会拒绝套用，不会硬塞。&#10;退出 LabelGou 时会自动还回你进来之前的样子（别的软件不会一直跟着变）。" />
                                     </Grid>
                                 </Grid>
                             </Border>

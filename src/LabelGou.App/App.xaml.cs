@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Threading;
+using LabelGou.App.Printing;
 using LabelGou.App.Services;
 
 namespace LabelGou.App;
@@ -22,11 +23,22 @@ public partial class App : Application
         TaskScheduler.UnobservedTaskException += OnUnobservedTaskException;
 
         AppLog.Info($"LabelGou 启动，版本 {GetType().Assembly.GetName().Version}，日志目录 {AppLog.DirectoryPath}");
+
+        // 第 84 棒：上次要是被强杀/断电，OnExit 根本没跑，这台打印机的默认还留在被改过的状态——先补还，再告诉他
+        var leftover = PrinterDefaultsGuard.RecoverLeftoversAtStartup();
+        if (leftover is not null)
+        {
+            Dispatcher.BeginInvoke(new Action(() => MessageBox.Show(this.MainWindow, leftover, "LabelGou",
+                MessageBoxButton.OK, MessageBoxImage.Information)), DispatcherPriority.ApplicationIdle);
+        }
         base.OnStartup(e);
     }
 
     protected override void OnExit(ExitEventArgs e)
     {
+        // ⑤ 步那三格与「打印首选项…」改的是这台打印机在本机的用户默认（别的软件也吃它），用完得还回去
+        var failed = PrinterDefaultsGuard.RestoreAllOnExit();
+        if (failed is not null) AppLog.Info(failed);
         AppLog.Info($"退出，代码 {e.ApplicationExitCode}");
         base.OnExit(e);
     }

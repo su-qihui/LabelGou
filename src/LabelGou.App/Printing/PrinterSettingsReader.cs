@@ -200,6 +200,8 @@ public static class PrinterSettingsReader
     /// </summary>
     private static bool WriteUserDevMode(string printerName, byte[] blob)
     {
+        // 第 84 棒：动这份值之前先记下"原本是什么"，退出时恢复（恢复那条路自己不再记账，见 IsRestoring）
+        PrinterDefaultsGuard.RememberBeforeChange(printerName);
         try
         {
             using var key = Registry.CurrentUser.OpenSubKey(UserDefaultsKey, writable: true);
@@ -212,11 +214,58 @@ public static class PrinterSettingsReader
             return false;
         }
 
+        return MatchesWhatWeWrote(printerName, blob);
+    }
+
+    /// <summary>读这台打印机现在的本用户默认（注册表里那份值）；没有这条值返回 null。</summary>
+    internal static byte[]? ReadUserDevMode(string printerName)
+    {
+        try
+        {
+            using var key = Registry.CurrentUser.OpenSubKey(UserDefaultsKey);
+            return key?.GetValue(printerName) as byte[];
+        }
+        catch (Exception ex)
+        {
+            AppLog.Info($"读本用户默认 DEVMODE 失败：{ex.GetType().Name} {ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// 恢复原样：有原值就写回去，<strong>原本没有这条值就把值删掉</strong>（不是写一份假的进去）。
+    /// <para>为什么两种都要：一台从没设过首选项的打印机，注册表里根本没有它那条值；我们写完之后
+    /// "恢复"若只是留着那份 blob，就等于把系统的默认行为永久改掉了——正是用户要治的那件事。</para>
+    /// </summary>
+    internal static bool RestoreUserDevMode(string printerName, byte[]? original)
+    {
+        try
+        {
+            using var key = Registry.CurrentUser.OpenSubKey(UserDefaultsKey, writable: true);
+            if (key is null) return false;
+            if (original is null)
+            {
+                if (key.GetValue(printerName) is not null) key.DeleteValue(printerName, throwOnMissingValue: false);
+                return key.GetValue(printerName) is null;
+            }
+            key.SetValue(printerName, original, RegistryValueKind.Binary);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Info($"恢复本用户默认 DEVMODE 抛：{ex.GetType().Name} {ex.Message}");
+            return false;
+        }
+        return MatchesWhatWeWrote(printerName, original);
+    }
+
+    /// <summary>写完/删完立刻回读核对：这台机器上实测过"调用没报错"不等于写进去了（§五-161）。</summary>
+    private static bool MatchesWhatWeWrote(string printerName, byte[]? expected)
+    {
         try
         {
             using var check = Registry.CurrentUser.OpenSubKey(UserDefaultsKey);
             var back = check?.GetValue(printerName) as byte[];
-            return back is not null && back.AsSpan().SequenceEqual(blob);
+            return expected is null ? back is null : back is not null && back.AsSpan().SequenceEqual(expected);
         }
         catch (Exception ex)
         {
