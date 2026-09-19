@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Windows;
 using LabelGou.App.Services.Agent;
 using LabelGou.App.Services.Recognition;
 using LabelGou.Core.Agent;
@@ -22,7 +23,6 @@ public sealed partial class AiChatPanel
 {
     private IAgentRuntime _external = new NullAgentRuntime();
     private readonly StringBuilder _externalThinking = new();
-    private GuiMcpServer? _inbound;
 
     /// <summary>
     /// 面板一上屏就自己在后台探一次（第 86 棒）。
@@ -33,7 +33,16 @@ public sealed partial class AiChatPanel
     protected override void OnInitialized(EventArgs e)
     {
         base.OnInitialized(e);
+        AgentServeHost.Attach(this);   // 谁是当前这份工具面，登记在这（进程里可能有第二份面板，见 AgentServeHost）
+        Loaded += OnLoadedOnce;
+        Unloaded += (_, _) => AgentServeHost.Detach(this);
         _ = AdoptExternalAgentAsync();
+    }
+
+    private void OnLoadedOnce(object sender, RoutedEventArgs e)
+    {
+        // 浮动窗那份面板也会走这一条：后上屏的算"当前这份"，前面那份退场时自己交还。
+        AgentServeHost.Attach(this);
     }
 
     private async Task AdoptExternalAgentAsync()
@@ -43,7 +52,12 @@ public sealed partial class AiChatPanel
             var (settings, readFailure) = AgentSettings.Load();
             if (readFailure is not null) Services.AppLog.Warning(readFailure);
             Services.AppLog.Info(await AdoptExternalRuntimeAsync(settings));
-            if (settings.ServeExternalClients) StartInboundServer(settings);
+            if (settings.ServeExternalClients && !AgentServeHost.IsServing)
+            {
+                var line = AgentServeHost.Start(settings);
+                Append(line);
+                Services.AppLog.Info(line);
+            }
         }
         catch (Exception ex)
         {
@@ -53,26 +67,19 @@ public sealed partial class AiChatPanel
     }
 
     /// <summary>
-    /// 开一扇本地门，让老板在 Codex / Qoder 那边连回<strong>这个开着的窗口</strong>。
-    /// <para>工具全部经 <c>Dispatcher</c> 编组回 UI 线程执行（VM 与集合是线程亲和的，§五-91）；
-    /// 令牌只活这一程，关掉软件就作废，<strong>不写盘</strong>。</para>
+    /// 外部客户端连进来时看见的那几颗工具。<strong>只在这一处</strong>决定写权限给不给，
+    /// 且给出去的还是面板既有那两条口（<c>ApplyProposal</c> 落快照、<c>GetLayoutContext</c> 读当前表）。
     /// </summary>
-    private void StartInboundServer(AgentSettings settings)
+    internal LabelGouToolCatalog BuildToolCatalog(AgentSettings settings)
     {
-        // 写的口子中不中开，只在这一处决定；开着也只是转调既有那一条 ApplyProposal（快照照压、代数照对）。
         Func<string, (bool Ok, string Message)>? apply = null;
         if (settings.AllowWriteToolsForExternalClient)
-            apply = json => Land(json);
-
-        var catalog = new LabelGouToolCatalog(() => SnapshotNow, Check, apply, settings.AllowWriteToolsForExternalClient);
-        _inbound = new GuiMcpServer(catalog, AgentHostKind.WithUi,
-            run => Dispatcher.CheckAccess() ? run() : Dispatcher.Invoke(run), AppInfo.Version);
-
-        var line = $"外部接入已开：{_inbound.ConnectCommand}　令牌 {_inbound.Token}（关掉软件就作废）。" +
-                   (settings.AllowWriteToolsForExternalClient ? "已允许它落提案（每步都能一键撤回）。" : "它只能读与判，落不落地仍由你点。");
-        Append(line);
-        Services.AppLog.Info(line);
+            apply = Land;
+        return new LabelGouToolCatalog(() => SnapshotNow, Check, apply, settings.AllowWriteToolsForExternalClient);
     }
+
+    /// <summary>工具调用要回到 UI 线程执行：VM 与集合都是线程亲和的（§五-91）。</summary>
+    internal T RunOnUi<T>(Func<T> read) => Dispatcher.CheckAccess() ? read() : Dispatcher.Invoke(read);
 
     /// <summary>外部递来的提案要落地：先按<strong>读表那一段</strong>解析（rows 与纸规照丢），再走唯一那条落地口。</summary>
     private (bool Ok, string Message) Land(string json)
