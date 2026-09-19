@@ -46,7 +46,7 @@ public sealed class RecognitionSettings
     /// 同日用户实测 1 图+290 行的提案被 180 秒拦死，原话「把这个时间上限关了」——
     /// 硬顶作废，改可关；下限 10 秒保留（比这短只剩「秒失败」假象）。死连接挂死的根因已由
     /// 连接池 30 秒换新堵掉，不设限等到的只会是真在算的云端。</para></summary>
-    public int EffectiveTimeoutSeconds => TimeoutSeconds <= 0 ? 0 : Math.Max(10, TimeoutSeconds);
+    public int EffectiveTimeoutSeconds => Core.Agent.TimeoutPolicy.Effective(TimeoutSeconds);
 
     /// <summary>思考档：不设 = 跟着云端默认发（一个字都不发）。</summary>
     public const string ThinkingAuto = "";

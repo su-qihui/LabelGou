@@ -83,4 +83,19 @@ public static class ImageForModel
         ".tif" or ".tiff" => "image/tiff",
         _ => "image/png",
     };
+
+    /// <summary>
+    /// MIME → 扩展名。与 <see cref="MimeTypeOf"/> 住在同一个类里，是因为这一来一回是<strong>同一份物理量</strong>：
+    /// 分成两处写，迟早出现"存成 .png 的文件里是 JPEG 字节"——外部 runtime 按真扩展名认图，那时它看到的是坏文件
+    /// （§五-62/122 那一族：一份算式两处各写一遍）。
+    /// </summary>
+    public static string ExtensionFor(string mimeType) => mimeType.ToLowerInvariant() switch
+    {
+        "image/jpeg" or "image/jpg" or "image/pjpeg" => ".jpg",
+        "image/gif" => ".gif",
+        "image/bmp" => ".bmp",
+        "image/webp" => ".webp",
+        "image/tiff" => ".tif",
+        _ => ".png",
+    };
 }

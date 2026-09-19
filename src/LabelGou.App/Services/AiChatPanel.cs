@@ -68,7 +68,7 @@ public sealed record AiLayoutContext(
 /// 全空版拒落地），落地后靠<strong>可退闸</strong>兑底（逐步撤回）；打印仍走既有的 ⑤ 那一条命令与复核闸门，
 /// 这里不开第二条出纸路（§五-22）。</para>
 /// </summary>
-public sealed class AiChatPanel : UserControl
+public sealed partial class AiChatPanel : UserControl
 {
     private static readonly Brush WarnBrush = Frozen(new SolidColorBrush(Color.FromRgb(0xB3, 0x26, 0x1E)));
     private static readonly Brush OkBrush = Frozen(new SolidColorBrush(Color.FromRgb(0x1D, 0x4E, 0xD8)));
@@ -509,7 +509,9 @@ public sealed class AiChatPanel : UserControl
         var limit = s.EffectiveTimeoutSeconds == 0 ? "不限" : $"{s.EffectiveTimeoutSeconds}s";
         var thinking = s.Thinking == RecognitionSettings.ThinkingAuto ? string.Empty : $"　{s.Thinking}";
         _channelLine.Text = $"通道：{s.Provider}　端点：{ShortEndpoint(s.Endpoint)}　模型：{s.Model}（{limit}{thinking}）　" +
-                            $"{(s.Provider == RecognitionSettings.Providers.OpenAi ? "订单数据会离开这台电脑" : "本机，不出网")}　{key}";
+                            $"{(s.Provider == RecognitionSettings.Providers.OpenAi ? "订单数据会离开这台电脑" : "本机，不出网")}　{key}"
+                            // 外部 Agent 接上时在这一行署名是谁答的、退过一回为什么退（看得见才算退得回，§七-10 闸三）。
+                            + ExternalChannelSuffix;
         // 完整端点进 ToolTip：上屏那截只是主域名（理由见 ShortEndpoint），一个字都不丢。
         _channelLine.ToolTip = string.IsNullOrWhiteSpace(s.Endpoint) ? null : "完整端点：" + s.Endpoint;
         _channelLine.Foreground = s.Provider == RecognitionSettings.Providers.OpenAi ? WarnBrush : OkBrush;
@@ -882,6 +884,28 @@ public sealed class AiChatPanel : UserControl
     }
 
     /// <summary>
+    /// 「读这张表」那一步可以换一个人来答（第 86 棒）：外部 agent runtime 在场时由它答，否则仍是 <see cref="SendStreamingAsync"/>。
+    /// <para>为什么留成可注入而不直接改调用：<c>SendStreamingAsync</c> 是三条路共用的咽喉（聊天 / 出一版排版 / 读表提案），
+    /// 本棒只换读表那一步——把咽喉整个换掉会连带改掉另外两条，而"外部 agent 读排版"这件事我们还没验过。
+    /// 这也让"没装外部 agent 时行为逐字不变"有地方可测。</para>
+    /// </summary>
+    internal Func<List<AiChatTurn>, List<(string Base64, string MimeType)>?, CancellationToken, Task<ChatOutcome>>? ProposalTransport { get; set; }
+
+    /// <summary>读表那一枪走哪条传送：有人顶就上，没人顶就原路（思考框那套记账两边共用同一条）。</summary>
+    private async Task<ChatOutcome> SendForProposalAsync(
+        List<AiChatTurn> payload, List<(string Base64, string MimeType)>? images, CancellationToken token)
+    {
+        if (ProposalTransport is null) return await SendStreamingAsync(payload, images, token);
+        BeginThinking();
+        var outcome = await ProposalTransport(payload, images, token);
+        EndThinking(outcome);
+        return outcome;
+    }
+
+    /// <summary>通道那一行的实际文字（判据读的是"真上屏的那一句"，不是我以为要显示的那一句，§五-152 同族）。</summary>
+    internal string ChannelLineForTests => _channelLine.Text;
+
+    /// <summary>
     /// 面板发出去的请求**统一走这里**（第 31 棒）：流式 + 思考过程实时上屏。
     /// <para>为什么收口成一处：三条路（自由聊天 / 出一版排版 / 读表提案）都要"边想边看"，
     /// 各写一遍就等于三份流式纪律（停止、超时、收尾打点），迟早漏一份。</para>
@@ -1006,7 +1030,7 @@ public sealed class AiChatPanel : UserControl
         // 第 40 棒：这一步**只要理解与问题**（BuildRead），排版字段一概不要——
         // 用户的红线是「指出表格存在的问题……这层先不要对预览纸张进行调整」。
         var prompt = AiSheetProposalPrompt.BuildRead(
-            ctx.Portrait ?? "（没拿到整张表画像，只有已连字段）",
+            FenceForTransport(ctx.Portrait ?? "（没拿到整张表画像，只有已连字段）"),
             ctx.RawRowCount, ctx.CurrentHeaderRow, images.Count, _decisions);
         var payload = new List<AiChatTurn>
         {
@@ -1022,7 +1046,7 @@ public sealed class AiChatPanel : UserControl
         SetBusy(true, "AI 在读这张表（行多的表会慢一点）");
         try
         {
-            var outcome = await SendStreamingAsync(
+            var outcome = await SendForProposalAsync(
                 payload, images.Count == 0 ? null : images.Select(x => (x.Base64, x.MimeType)).ToList(), _running.Token);
             if (!outcome.Ok)
             {
