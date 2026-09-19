@@ -268,6 +268,7 @@
                             <Border BorderBrush="#D8DDE3" BorderThickness="1" Height="{Binding PreviewTableHeight}" Background="White">
                                 <DataGrid ItemsSource="{Binding PreviewTable}"
                                           AutoGenerateColumns="True"
+                                          AutoGeneratingColumn="PreviewGrid_AutoGeneratingColumn"
                                           IsReadOnly="True"
                                           CanUserAddRows="False"
                                           CanUserDeleteRows="False"

@@ -323,9 +323,28 @@ public sealed class TemplateElement
     /// </summary>
     public double WrapWidthMm { get; set; }
 
-    /// <summary>这一行是不是"永不折行"。五处消费方共用这一个判据，别各写一遍 <c>&lt;= 0</c>。</summary>
+    /// <summary>
+    /// 允不允许折行。<strong>null / true = 允许 = 逐字旧行为</strong>（只有关掉才写 <c>"allowWrap": false</c>，
+    /// 与 <see cref="Stroked"/> 同一个写法），所以<strong>现有模板文件一个都不用更新</strong>。
+    /// <para>第 85 棒把「在哪儿断行」从 <see cref="WrapWidthMm"/> 里拆出来：那个宽度本来就是
+    /// <strong>缩字的目标</strong>，第 64 棒给行式骨架填它是为了让 TextFit 有东西可缩，顺手把断行也交给了它，
+    /// 于是长货号折成两行、压在下一格行带上（用户在 ④ 步「全部行」里圈出的重影就是这个）。</para>
+    /// <para>关掉折行（= false）之后：装不下先<strong>缩字号</strong>（走单行那条 30% 额度），缩到下限仍装不下就
+    /// <strong>单行照实伸出</strong>——不再默默折回，也不再打省略号；越界由第 61 棒的裁切与两道墨迹闸接手。</para>
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool? AllowWrap { get; set; }
+
+    /// <summary>
+    /// 这一行到底折不折行：<strong>显式给了折行宽度、且没被 <see cref="AllowWrap"/> 关掉</strong>才折。
+    /// 五处消费方共用这一个判据，别各写一遍 <c>&lt;= 0</c>。
+    /// </summary>
     [JsonIgnore]
-    public bool NoWrap => Kind != ElementKind.Text || WrapWidthMm <= 0;
+    public bool Wraps => Kind == ElementKind.Text && WrapWidthMm > 0 && (AllowWrap ?? true);
+
+    /// <summary>这一行是不是"不折行"（<see cref="Wraps"/> 的反面）。</summary>
+    [JsonIgnore]
+    public bool NoWrap => !Wraps;
 
     public bool Visible { get; set; } = true;
 
@@ -381,7 +400,10 @@ public sealed class LabelTemplate
     /// 打印机分辨率 / 缩放比例 / 条形码高度倍数 / 宽度减少值）。<strong>缺字段 = null = 按框宽算位宽 = 逐字旧行为</strong>，
     /// 现有模板文件还是一个都不用更新；带上它，条的胖瘦就由 X 尺寸定（框再怎么拖也拉不肥条）——
     /// 这是用户 2026-09-14 指名"把 CDR 那套参数搬过来、别自己发明比例"的落点。JSON 里它是一个小对象。</remarks>
-    public const int CurrentSchemaVersion = 12;
+    /// <remarks>v13 = 第 85 棒把「在哪儿断行」从 <see cref="WrapWidthMm"/> 里拆出来，新增 <see cref="AllowWrap"/>。
+    /// <strong>缺字段 = null = 允许折行 = 逐字旧行为</strong>（关到 false 才上盘），所以现有模板文件还是一个都不用更新、
+    /// 行为也一个字不变（用户 2026-09-19：「已有方案不更改」）；只有新出的行式骨架与 AI 版式会写上 false。</remarks>
+    public const int CurrentSchemaVersion = 13;
 
     /// <summary>稳定标识，如 <c>builtin.standard-100x80</c>。用户模板用 <c>user.xxx</c>。</summary>
     public string Id { get; set; } = "user." + Guid.NewGuid().ToString("N")[..8];

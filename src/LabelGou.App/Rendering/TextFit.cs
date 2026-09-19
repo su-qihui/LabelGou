@@ -157,7 +157,8 @@ public static class TextFit
         var requested = RequestedEmSizeDiu(text.FontSizePt);
 
         // 单行元素不许折行，所以宽度不够只能缩字号；多行元素宽度不够是折行，不该动字号。
-        var mustStayOnOneLine = text.MaxLines == 1;
+        // 第 85 棒补一条：被关掉折行的那一行【事实上就是单行】——它永远只排一行，所以走同一条 30% 额度。
+        var mustStayOnOneLine = text.MaxLines == 1 || !text.Wraps;
         var ratioFloor = mustStayOnOneLine ? MinSingleLineEmSizeRatio : MinEmSizeRatio;
         var minEmSize = Math.Max(requested * ratioFloor, RequestedEmSizeDiu(MinReadablePt));
 
@@ -170,13 +171,22 @@ public static class TextFit
         var wrapCanonical = text.NoWrap ? UnboundedWidthDiu : canonicalBox.Width;
         var wrapFinal = text.NoWrap ? UnboundedWidthDiu : box.Width;
 
+        // 第 85 棒：**把"缩到多宽"从"在哪儿断行"里拆出来**。从前 WrapWidthMm 只被拿去当折行开关
+        // （真断行的是盒宽），所以一关掉折行它就彻底失业、长值连缩字的机会都没有，只能原字号伸出去被裁。
+        // 现在：折行的路逐字照旧；不折行但给了宽度 → 拿这个宽度当"多宽算装不下"的尺子，先缩字；
+        // 缩到下限仍装不下 → 单行照实伸出（下面 ContentLost 那条不认它，所以不打省略号、不标红），
+        // 越界由第 61 棒的裁切与两道墨迹闸接手。
+        var shrinkWidthDiu = text.Wraps ? wrapCanonical
+            : text.WrapWidthMm > 0 ? Mm.ToDiu(text.WrapWidthMm)
+            : UnboundedWidthDiu;
+
         // —— 规范域（scale=1）里收敛字号，得到与缩放无关的唯一决定 ——
         var emSize = requested;
         var need = Measure(text, typeface, foreground, emSize, wrapCanonical, lineHeightRatio);
 
         // 缩字号的目标：装得下（高度按会显示的那几行算，单行还得多一道宽度）。
         bool DoesNotFit(TextNeed n) => n.ShownHeight > canonicalBox.Height + HeightSlackDiu
-            || (mustStayOnOneLine && n.FlatWidth > wrapCanonical + WidthSlackDiu);
+            || (mustStayOnOneLine && n.FlatWidth > shrinkWidthDiu + WidthSlackDiu);
 
         // 内容真的被吃掉了：行被上限砍掉，或单行宽度不够被省略号替换。
         // 这里不能把"文字比框高"也算进来：那是几何越界（校验器报），不是截断，
@@ -311,7 +321,7 @@ public static class TextFit
     /// <para><strong>键里不许漏字段</strong>：漏一个就会把上一版的墨迹当这一版的用，
     /// 那是 §五-62 那一族（两套算术各自长歪）里最难查的一种——错得安静。
     /// 凡 <see cref="Build"/> 与缩字号收敛吃得到的输入都在这里：内容、字族、字号、粗体、对齐、
-    /// 是否缩字、行数上限、排版盒宽高、折行宽度。笔色与旋转/拉伸不在其中（前者只改颜色，后者由调用方叠）。</para>
+    /// 是否缩字、行数上限、排版盒宽高、折行宽度、允不允许折行（第 85 棒）。笔色与旋转/拉伸不在其中（前者只改颜色，后者由调用方叠）。</para>
     /// </summary>
     private static (double X, double Y, double Width, double Height)? CanonicalRelativeInk(
         TextItem text, Typeface typeface, Brush foreground, double emSize,
@@ -319,7 +329,7 @@ public static class TextFit
     {
         // 键里存的是 SafeFontFamily 的**输入**（原始字族名）：映射是确定的，存输入比存投影出来的对象稳。
         var key = new InkKey(text.Content, text.FontFamily ?? string.Empty, text.FontSizePt, text.Bold,
-            text.Align, text.ShrinkToFit, text.MaxLines, boxWidth, boxHeight, text.WrapWidthMm);
+            text.Align, text.ShrinkToFit, text.MaxLines, boxWidth, boxHeight, text.WrapWidthMm, text.AllowWrap);
         if (RelativeInkCache.TryGetValue(key, out var cached)) return cached;
 
         var computed = ComputeRelativeInk(text, typeface, foreground, emSize, boxWidth, boxHeight, wrapCanonical, shownHeight);
@@ -374,7 +384,8 @@ public static class TextFit
     }
 
     private sealed record InkKey(string Content, string FontFamily, double FontSizePt, bool Bold,
-        HorizontalAlign Align, bool ShrinkToFit, int MaxLines, double BoxWidth, double BoxHeight, double WrapWidthMm);
+        HorizontalAlign Align, bool ShrinkToFit, int MaxLines, double BoxWidth, double BoxHeight, double WrapWidthMm,
+        bool AllowWrap);
 
     /// <summary>
     /// 墨迹记忆表。<c>ConcurrentDictionary</c> 不是讲究：单测按类并行、编辑器画布在 STA 线程上量，
@@ -406,8 +417,11 @@ public static class TextFit
             naturalLines = LineCountOf(uncapped.Height, lineHeight);
         }
 
-        if (text.MaxLines != 1)
+        if (text.MaxLines != 1 && text.Wraps)
             return new TextNeed(shown.Height, shownLines, naturalLines, 0);
+        if (!text.Wraps)
+            // 不折行那一行：上面那份本来就是按无限宽量的，直接拿它的宽当自然宽度，不再建第二份。
+            return new TextNeed(shown.Height, shownLines, naturalLines, shown.WidthIncludingTrailingWhitespace);
 
         var flat = Build(text, typeface, foreground, emSize, UnboundedWidthDiu, CanonicalPixelsPerDip);
         flat.MaxLineCount = int.MaxValue;

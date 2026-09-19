@@ -322,27 +322,37 @@ public sealed class TemplateEditorControl : FrameworkElement
                 if (CurveGeometry.IsCurved(element) || drawing)
                 {
                     DrawCurveNodes(dc, element);
+                    // 第 85 棒：节点之外还要给整只框的八向句柄。「转为曲线」后的多边形从前到这儿就再也没有
+                    // 缩放的抓手了（一条线只有两个端点，宽高那格也跟着消失）——用户报的"删角后拉不动"。
+                    // 谁先被抓由 BeginDrag 定：先节点后台柄，所以顶点压住的位置仍归节点管，两个手势不打架。
+                    if (!drawing) DrawBoxHandles(dc, rect);
                     return;
                 }
                 DrawHandle(dc, new Point(ToDiuX(element.X), ToDiuY(element.Y)));
                 DrawHandle(dc, new Point(ToDiuX(element.X2), ToDiuY(element.Y2)));
                 return;
             }
-            var midX = rect.X + rect.Width / 2;
-            var midY = rect.Y + rect.Height / 2;
-            DrawHandle(dc, rect.TopLeft);
-            DrawHandle(dc, new Point(midX, rect.Top));
-            DrawHandle(dc, rect.TopRight);
-            DrawHandle(dc, new Point(rect.Right, midY));
-            DrawHandle(dc, rect.BottomRight);
-            DrawHandle(dc, new Point(midX, rect.Bottom));
-            DrawHandle(dc, rect.BottomLeft);
-            DrawHandle(dc, new Point(rect.Left, midY));
+            DrawBoxHandles(dc, rect);
         }
         finally
         {
             if (rotated) dc.Pop();
         }
+    }
+
+    /// <summary>八向句柄（四角 + 四边中点）——只有这一处画它，普通元素与曲线共用同一份。</summary>
+    private void DrawBoxHandles(DrawingContext dc, Rect rect)
+    {
+        var midX = rect.X + rect.Width / 2;
+        var midY = rect.Y + rect.Height / 2;
+        DrawHandle(dc, rect.TopLeft);
+        DrawHandle(dc, new Point(midX, rect.Top));
+        DrawHandle(dc, rect.TopRight);
+        DrawHandle(dc, new Point(rect.Right, midY));
+        DrawHandle(dc, rect.BottomRight);
+        DrawHandle(dc, new Point(midX, rect.Bottom));
+        DrawHandle(dc, rect.BottomLeft);
+        DrawHandle(dc, new Point(rect.Left, midY));
     }
 
     private void DrawHandle(DrawingContext dc, Point center)

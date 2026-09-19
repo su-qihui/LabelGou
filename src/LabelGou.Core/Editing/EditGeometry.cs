@@ -195,7 +195,24 @@ public static class EditGeometry
         {
             var tol = Math.Max(toleranceMm, element.ThicknessMm);
             if (Templates.CurveGeometry.IsCurved(element))
-                return Templates.CurveGeometry.DistanceMm(element, xMm, yMm) <= tol;
+            {
+                if (Templates.CurveGeometry.DistanceMm(element, xMm, yMm) <= tol) return true;
+                // 第 85 棒：闭合的那只（「转为曲线」后的多边形/矩形）还要认它外接盒的那一圈边——
+                // 这一棒刚给它的八向句柄正长在盒角与盒边中点上，只认轮廓线的话句柄画出来却够不着，等于没修。
+                // 刻意不认盒的内部（第 83 棒：宽容是便利，不是抢别人的理由）：
+                // 认了整只盒，一只大形状会把它空白处下面那一只的点选抢走。
+                // 点填充形状的内部仍选不中是既成事实，已记 §六 活账。
+                if (Templates.CurveGeometry.IsClosed(element))
+                {
+                    var body = VisualBoxOf(element);
+                    var inside = xMm >= body.X - tol && xMm <= body.X + body.Width + tol
+                        && yMm >= body.Y - tol && yMm <= body.Y + body.Height + tol;
+                    var hollow = xMm > body.X + tol && xMm < body.X + body.Width - tol
+                        && yMm > body.Y + tol && yMm < body.Y + body.Height - tol;
+                    return inside && !hollow;
+                }
+                return false;
+            }
             return DistanceToSegment(xMm, yMm, element.X, element.Y, element.X2, element.Y2) <= tol;
         }
 
@@ -311,7 +328,12 @@ public static class EditGeometry
         {
             if (Near(xMm, yMm, element.X, element.Y, r)) return ResizeHandle.LineStart;
             if (Near(xMm, yMm, element.X2, element.Y2, r)) return ResizeHandle.LineEnd;
-            return ResizeHandle.None;
+            // 第 85 棒：从前到这儿就 return None 了——一条线只有两个端点，于是曲线（含「转为曲线」后的
+            // 多边形/矩形）永远拿不到整只框的八向句柄，属性面板宽高那格也跟着消失（HasBox => Kind != Line），
+            // 用户报的"删角后无法拉伸扭曲"就是这么来的。端点没抓中时落到下面那段盒句柄；
+            // 一条没有节点也没有柄的直线照旧只吃两个端点（第 49 棒口径，不给它造第二种缩放手势）。
+            if (!Templates.CurveGeometry.IsCurved(element) && !Templates.CurveGeometry.IsClosed(element))
+                return ResizeHandle.None;
         }
 
         var box = displayBox ?? VisualBoxOf(element);
@@ -504,6 +526,9 @@ public static class EditGeometry
                 element.X2 = Clamp(element.X2 + dxMm, 0, template.WidthMm);
                 element.Y2 = Clamp(element.Y2 + dyMm, 0, template.HeightMm);
             }
+            // 只抓了端点（或什么都没抓）就到此为止；抓的是整只框的边/角 → 曲线整体缩放。
+            if (handle is ResizeHandle.None or ResizeHandle.LineStart or ResizeHandle.LineEnd) return;
+            ScaleCurveByBox(template, element, handle, dxMm, dyMm, anchor);
             return;
         }
 
@@ -589,6 +614,90 @@ public static class EditGeometry
         element.Width = Math.Max(MinSideMm, right - element.X);
         element.Height = Math.Max(MinSideMm, bottom - element.Y);
     }
+
+    /// <summary>
+    /// 整只框缩放一条曲线（第 85 棒）：先按盒算出新的宽与高（拖角＝等比、拖边＝单轴，
+    /// 与矩形那两套用的是<strong>同一个</strong> <see cref="UniformRatio"/> / 单边夹取算法），
+    /// 再把倍率交给 <c>CurveGeometry.ScaleBy</c> 一次映射到每个点和每根柄上。
+    /// <para>这里<strong>故意不写 element.Width / Height</strong>：曲线的外接框是量出来的
+    /// （<see cref="BoxOf"/> 对曲线走 <c>CurveGeometry.BoundsMm</c>），存进去那两个数没人读，
+    /// 写了只会留下两份互相矛盾的账（§五-62 那一族）。</para>
+    /// </summary>
+    private static void ScaleCurveByBox(LabelTemplate template, TemplateElement element, ResizeHandle handle,
+        double dxMm, double dyMm, ResizeAnchor anchor)
+    {
+        var box = VisualBoxOf(element);
+        if (box.Width <= 1e-9 || box.Height <= 1e-9) return;      // 退化成一条横/竖线的形状：没有可放大的那一轴
+        var (ldx, ldy) = ToLocalDelta(element, dxMm, dyMm);
+        var (heldX, heldY) = HeldPoint(box, handle, anchor);
+        var horizontal = handle.HasFlag(ResizeHandle.Left) || handle.HasFlag(ResizeHandle.Right);
+        var vertical = handle.HasFlag(ResizeHandle.Top) || handle.HasFlag(ResizeHandle.Bottom);
+
+        double sx, sy;
+        if (horizontal && vertical)
+        {
+            var ratio = UniformRatio(box, handle, anchor, ldx, ldy);
+            sx = sy = ratio;
+        }
+        else if (horizontal)
+        {
+            var left = box.X;
+            var right = box.X + box.Width;
+            if (handle.HasFlag(ResizeHandle.Left)) left = Math.Min(left + ldx, right - MinSideMm);
+            if (handle.HasFlag(ResizeHandle.Right)) right = Math.Max(right + ldx, left + MinSideMm);
+            sx = (right - left) / box.Width;
+            sy = 1;
+        }
+        else if (vertical)
+        {
+            var top = box.Y;
+            var bottom = box.Y + box.Height;
+            if (handle.HasFlag(ResizeHandle.Top)) top = Math.Min(top + ldy, bottom - MinSideMm);
+            if (handle.HasFlag(ResizeHandle.Bottom)) bottom = Math.Max(bottom + ldy, top + MinSideMm);
+            sy = (bottom - top) / box.Height;
+            sx = 1;
+        }
+        else return;
+
+        // 与矩形那条路同一档夹紧：新盒不许超过这张纸。
+        var newWidth = Math.Clamp(box.Width * sx, MinSideMm, template.WidthMm);
+        var newHeight = Math.Clamp(box.Height * sy, MinSideMm, template.HeightMm);
+        sx = newWidth / box.Width;
+        sy = newHeight / box.Height;
+        if (Math.Abs(sx - 1) < 1e-9 && Math.Abs(sy - 1) < 1e-9) return;
+        Templates.CurveGeometry.ScaleBy(element, sx, sy, heldX, heldY);
+    }
+
+    /// <summary>
+    /// 把元素的盒"设定"到指定宽高（属性面板那两格走这里，第 85 棒）。
+    /// <para>普通元素就是写 <c>Width</c>/<c>Height</c>；<strong>曲线不行</strong>——它的外接框是量出来的
+    /// （<see cref="BoxOf"/> 对曲线走 <c>CurveGeometry.BoundsMm</c>），写进去那两个数没有任何人读，
+    /// 于是"面板填了宽、形状一动不动"。这里改成按倍率整体缩放，锚点取盒左上角（与"X/Y 不动"那条老直觉一致）。
+    /// 面板与拖框两条路都从这一处过，不留第二份算式（§五-62 那一族）。</para>
+    /// </summary>
+    public static void SetBoxSize(TemplateElement element, double? widthMm, double? heightMm)
+    {
+        if (!HasMeasuredBox(element))
+        {
+            if (widthMm > 0) element.Width = Math.Max(MinSideMm, widthMm.Value);
+            if (heightMm > 0) element.Height = Math.Max(MinSideMm, heightMm.Value);
+            return;
+        }
+        var box = VisualBoxOf(element);
+        if (box.Width <= 1e-9 || box.Height <= 1e-9) return;      // 退化成一条线：那一轴没有"宽"可设
+        var sx = widthMm > 0 ? Math.Max(MinSideMm, widthMm.Value) / box.Width : 1;
+        var sy = heightMm > 0 ? Math.Max(MinSideMm, heightMm.Value) / box.Height : 1;
+        Templates.CurveGeometry.ScaleBy(element, sx, sy, box.X, box.Y);
+    }
+
+    /// <summary>
+    /// 这只元素的盒是不是<strong>量出来的</strong>（曲线与「转为曲线」后的形状）：
+    /// 是 → <c>Width</c>/<c>Height</c> 那两个字段没人读，改尺寸只能整体缩放。
+    /// 一条没有节点也没有柄的直线不算（它吃两个端点，第 49 棒口径）。
+    /// </summary>
+    public static bool HasMeasuredBox(TemplateElement element) =>
+        element.Kind == ElementKind.Line
+        && (Templates.CurveGeometry.IsCurved(element) || Templates.CurveGeometry.IsClosed(element));
 
     /// <summary>
     /// 角柄拖拽的等比倍率：把"新的角位置"投影到「锚点 → 原来的角」这条对角线上，投影比就是倍率。

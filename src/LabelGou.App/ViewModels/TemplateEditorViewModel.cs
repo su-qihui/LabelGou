@@ -1484,7 +1484,8 @@ public sealed class TemplateEditorViewModel : ObservableObject
         Touch();
         RebuildSample();
         RecomputeIssues();
-        StatusText = "已转为曲线：顶点可拖、双击段可加点、选中点可按 Delete 删（Ctrl+Z 退回转换前）。";
+        StatusText = "已转为曲线：顶点可拖、双击段可加点、选中点可按 Delete 删；整只框的拖角缩放与「宽(mm)/高(mm)」照旧可用。"
+            + "边数不再起作用（要改边数请 Ctrl+Z 退回多边形）。";
         result = converted;
         return true;
     }
@@ -1690,9 +1691,11 @@ public sealed class TemplateEditorViewModel : ObservableObject
             if (_dragMode == DragMode.Node)
             {
                 pts[hit.Index] = n with { X = n.X + dx, Y = n.Y + dy };
-                // 闭合曲线的首尾是同一个可见点：拖一个另一个跟着走（与 CurveGeometry.MoveNode 同口径，
-                // 不然"拖顶点转出来的闭合曲线"一拖就裂口——第 53 棒）。
-                if (CurveGeometry.IsClosed(element) && (hit.Index == 0 || hit.Index == pts.Count - 1))
+                // 闭合曲线的接缝【只在首尾真重合时】才是同一个可见点：拖一个另一个跟着走
+                // （与 CurveGeometry.MoveNode 同口径，不然"拖顶点转出来的闭合曲线"一拖就裂口——第 53 棒）。
+                // 「转为曲线」产的那一种首尾是两个不同的角，无条件同步会把末点叠到首点上、当场塌一角（第 85 棒）。
+                if (CurveGeometry.IsClosed(element) && CurveGeometry.SeamCoincides(_dragSnapshot)
+                    && (hit.Index == 0 || hit.Index == pts.Count - 1))
                 {
                     var twin = hit.Index == 0 ? pts.Count - 1 : 0;
                     pts[twin] = pts[twin] with { X = n.X + dx, Y = n.Y + dy };
@@ -2535,16 +2538,24 @@ public sealed class EditableElement : ObservableObject
 
     public bool IsImage => _element.Kind == ElementKind.Image;
 
-    public bool HasBox => _element.Kind != ElementKind.Line;
+    /// <summary>
+    /// 这只元素有没有"整只框"（决定「宽(mm)/高(mm)」那两格显不显示）。
+    /// <para>第 85 棒：曲线也算有——它的外接框是<strong>量出来的</strong>（<c>EditGeometry.BoxOf</c> 对曲线走
+    /// <c>CurveGeometry.BoundsMm</c>）。从前这里写死 <c>Kind != Line</c>，于是「转为曲线」后的多边形
+    /// 连宽高两格一起没了，加上画布上不画八向句柄，用户报的就是"删角之后没法拉伸扭曲"。
+    /// 一条没有节点也没有柄的直线仍然不给（它的"缩放"就是拖那两个端点）。</para>
+    /// </summary>
+    public bool HasBox => _element.Kind != ElementKind.Line || EditGeometry.HasMeasuredBox(_element);
 
     /// <summary>只有文本才有「折行宽度」这一格（第 46 棒）。</summary>
     public bool HasText => _element.Kind == ElementKind.Text;
 
     /// <summary>
-    /// 折行宽度（毫米）。<strong>0 = 永不折行</strong>：内容多长排多长，排到纸外由「缩回纸内」收回。
-    /// <para>填一个正值（例如与「宽(mm)」相同）就恢复老行为：按这个宽度折行、按它缩字号。
-    /// 这条字段是第 46 棒把折行边界从隐形行带手里交出来的产物，别与「宽(mm)」混为一谈——
-    /// 后者只管字在哪对齐。</para>
+    /// 折行宽度（毫米）。<strong>0 = 这一行不按宽度断行</strong>：内容多长排多长，排到纸外由「缩回纸内」收回。
+    /// <para>它同时是<strong>缩字号的目标宽度</strong>——第 85 棒把这两件事拆开了：从前只有"允许折行"开着时它才起作用，
+    /// 关掉折行就连字也不缩了，长值只能原字号伸出去被裁。现在不管折不折行，它都照量。</para>
+    /// <para>别与「宽(mm)」混为一谈——后者只管字在哪对齐。要老行为（按这个宽度折行）就填一个正值并把下面那颗
+    /// 「允许折行」勾上。</para>
     /// </summary>
     public double WrapWidthMm
     {
@@ -2554,6 +2565,25 @@ public sealed class EditableElement : ObservableObject
             if (Near(value, _element.WrapWidthMm)) return;
             Prepare(nameof(WrapWidthMm));
             _element.WrapWidthMm = Math.Max(0, Math.Round(value, 2));
+            Done();
+        }
+    }
+
+    /// <summary>
+    /// 允许折行（第 85 棒，用户 2026-09-19：「即使超出也不折行」）。勾上 = 按「折行宽度」断行（老行为）；
+    /// 关掉 = 这一行<strong>永不折行、也永不出省略号</strong>，装不下先缩字号，缩到下限仍装不下就单行伸出纸外，
+    /// 由裁切与越界提醒接手。
+    /// <para>行式骨架与 AI 出的版式默认是<strong>关</strong>（一行就是一行，不许把下一格压住）；
+    /// 客户名/地址那种确实要排两行的，勾上它。</para>
+    /// </summary>
+    public bool AllowWrap
+    {
+        get => _element.AllowWrap ?? true;
+        set
+        {
+            if (value == AllowWrap) return;
+            Prepare(nameof(AllowWrap));
+            _element.AllowWrap = value ? null : false;   // 勾上就撤掉字段：与 v12 老文件逐字一样（与 Stroked 同一写法）
             Done();
         }
     }
@@ -2932,8 +2962,20 @@ public sealed class EditableElement : ObservableObject
     /// <summary>是不是椭圆（第 51 棒）。</summary>
     public bool IsEllipse => _element.Kind == ElementKind.Ellipse;
 
-    /// <summary>是不是多边形（第 51 棒，决定「边数」那一格显不显示）。</summary>
+    /// <summary>是不是多边形（第 51 棒，决定「边数」那一格可不可改）。</summary>
     public bool IsPolygon => _element.Kind == ElementKind.Polygon;
+
+    /// <summary>
+    /// 「边数」那一格显不显示（第 85 棒⑥）。多边形照旧；<strong>已转为闭合曲线</strong>的那只也显示、但是灰的。
+    /// <para>从前它直接消失，用户只知道"边数没了"、不知道为什么也找不回（他 2026-09-19 拍的：不做回转，
+    /// 但要说清）。开口曲线（曲线工具画的那条）不给——它本来就没有"边数"这件事。</para>
+    /// </summary>
+    public bool ShowsPolygonSides => IsPolygon || CurveGeometry.IsClosed(_element);
+
+    /// <summary>「边数」那一格此刻该说什么（灰掉时把原因写在原地，不让人去猜）。</summary>
+    public string PolygonSidesHint => IsPolygon
+        ? "CorelDRAW 的「多边形的边数」：3 起步，100 封顶（再多画出来就是圆）。"
+        : "这只已经是闭合曲线了：形状由节点决定，边数不再起作用。要改边数请 Ctrl+Z 退回多边形再改。";
 
     /// <summary>「转为曲线」那颗给谁看（第 53 棒）：多边形与矩形；椭圆这棒不给（转它要用四段弧，还没做）。</summary>
     public bool ShowsConvertToCurve => _element.Kind is ElementKind.Polygon or ElementKind.Rect;
@@ -3115,9 +3157,37 @@ public sealed class EditableElement : ObservableObject
 
     public double Y { get => _element.Y; set { if (Near(value, _element.Y)) return; Prepare(nameof(Y)); _element.Y = value; Done(); } }
 
-    public double Width { get => _element.Width; set { if (Near(value, _element.Width)) return; Prepare(nameof(Width)); _element.Width = Math.Max(EditGeometry.MinSideMm, value); Done(); } }
+    /// <summary>
+    /// 盒宽（毫米）。曲线那一只读的是<strong>量出来的</strong>外接框，写回去走整体缩放
+    /// （<see cref="EditGeometry.SetBoxSize"/>）——直接写 <c>_element.Width</c> 对它是空操作（第 85 棒）。
+    /// 文本仍读排版盒（不是拉伸后的视觉盒）：面板这一格改的是折行判定，与「字面拉伸」两码事（第 43 棒口径）。
+    /// </summary>
+    public double Width
+    {
+        get => EditGeometry.HasMeasuredBox(_element) ? EditGeometry.VisualBoxOf(_element).Width : _element.Width;
+        set
+        {
+            var want = Math.Max(EditGeometry.MinSideMm, value);
+            if (Near(want, Width)) return;
+            Prepare(nameof(Width));
+            EditGeometry.SetBoxSize(_element, want, null);
+            Done();
+        }
+    }
 
-    public double Height { get => _element.Height; set { if (Near(value, _element.Height)) return; Prepare(nameof(Height)); _element.Height = Math.Max(EditGeometry.MinSideMm, value); Done(); } }
+    /// <summary>盒高（毫米）。口径同 <see cref="Width"/>。</summary>
+    public double Height
+    {
+        get => EditGeometry.HasMeasuredBox(_element) ? EditGeometry.VisualBoxOf(_element).Height : _element.Height;
+        set
+        {
+            var want = Math.Max(EditGeometry.MinSideMm, value);
+            if (Near(want, Height)) return;
+            Prepare(nameof(Height));
+            EditGeometry.SetBoxSize(_element, null, want);
+            Done();
+        }
+    }
 
     public double X2 { get => _element.X2; set { if (Near(value, _element.X2)) return; Prepare(nameof(X2)); _element.X2 = value; Done(); } }
 
@@ -3245,7 +3315,7 @@ public sealed class EditableElement : ObservableObject
         {
             nameof(X), nameof(Y), nameof(Width), nameof(Height), nameof(X2), nameof(Y2), nameof(Text), nameof(ImagePath),
             nameof(FontFamily), nameof(FontSizePt), nameof(Bold), nameof(ThicknessMm), nameof(MaxLines),
-            nameof(ShrinkToFit), nameof(Visible), nameof(Align), nameof(WrapWidthMm),
+            nameof(ShrinkToFit), nameof(Visible), nameof(Align), nameof(WrapWidthMm), nameof(AllowWrap),
             nameof(RotationDeg), nameof(TextScaleX), nameof(TextScaleY), nameof(CanRotate), nameof(CanStretchText), nameof(CanSetFont), nameof(CanTintInk),
             // 第 47 棒：墨色那一整组。撤销之后面板上还得刷回真值，漏一个就是一格数字在骗人。
             nameof(InkColor), nameof(InkSwatch), nameof(InkSummary), nameof(InkUsesCmyk), nameof(InkUsesRgb),
@@ -3259,6 +3329,8 @@ public sealed class EditableElement : ObservableObject
             nameof(CornerRadiusBottomRightMm), nameof(CornerRadiusBottomLeftMm),
             nameof(FillShowsSlash), nameof(PenShowsSlash), nameof(IsRect),
             nameof(IsEllipse), nameof(IsPolygon), nameof(HasShapeAppearance), nameof(PolygonSides), nameof(ShowsConvertToCurve),
+            // 第 85 棒：曲线也吃"整只框"了——转曲线/撤销回多边形这两下，宽高格与边数格的显隐必须刷回真值。
+            nameof(HasBox), nameof(ShowsPolygonSides), nameof(PolygonSidesHint),
             nameof(PenSwatch), nameof(FillSwatch), nameof(PenSummary), nameof(FillSummary),
             nameof(InkTargetText), nameof(InkPopupOpen), nameof(ThicknessText),
         })

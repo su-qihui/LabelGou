@@ -205,7 +205,7 @@ public class ColorModelTests
     /// <see cref="LabelTemplate.CurrentSchemaVersion"/> 的注释里（一份事实只留一处）。
     /// </summary>
     [Fact]
-    public void SchemaVersionTracksTheLatestFieldAddition() => Assert.Equal(12, LabelTemplate.CurrentSchemaVersion);
+    public void SchemaVersionTracksTheLatestFieldAddition() => Assert.Equal(13, LabelTemplate.CurrentSchemaVersion);
 
     private static LabelTemplate WriteThenReadJson(string json)
     {

@@ -17,6 +17,14 @@ public partial class MainWindow : Window
 {
     private readonly MainViewModel _viewModel = new();
 
+    /// <summary>
+    /// ① 步那张表的列是自动生成的 —— 这里把 WPF 拿列名当绑定路径解析那一环换掉。
+    /// 缘由与口径见 <see cref="Services.PreviewGridColumns"/>（表头含 <c>/</c> 的列整列显示为空，
+    /// 而按下标取数的下游照旧正常，用户 2026-09-19 报的"列消失了还能正常读取打印"）。
+    /// </summary>
+    private void PreviewGrid_AutoGeneratingColumn(object? sender, DataGridAutoGeneratingColumnEventArgs e)
+        => Services.PreviewGridColumns.AutoGenerating(sender, e);
+
     public MainWindow()
     {
         InitializeComponent();

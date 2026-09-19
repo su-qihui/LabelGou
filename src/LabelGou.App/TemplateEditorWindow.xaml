@@ -347,9 +347,14 @@
                                 <CheckBox Content="显示这个元素" IsChecked="{Binding Editing.Visible}" Grid.Row="13" Grid.Column="1" Margin="0,6,0,0" />
 
                                 <TextBlock Grid.Row="14" Text="折行宽度" Style="{StaticResource Caption}" Visibility="{Binding Editing.HasText, Converter={StaticResource BoolVis}}" />
-                                <TextBox Grid.Row="14" Grid.Column="1" Margin="0,4,0,4" Text="{Binding Editing.WrapWidthMm, StringFormat={}{0:0.##}}"
-                                         ToolTip="0 = 永不折行：内容多长排多长，排到纸外就看得见地超出去，用工具栏「缩回纸内」收回。填一个正值（例如与宽相同）就恢复按这个宽度折行与缩字号。"
-                                         Visibility="{Binding Editing.HasText, Converter={StaticResource BoolVis}}" />
+                                <WrapPanel Grid.Row="14" Grid.Column="1" Margin="0,4,0,4"
+                                           Visibility="{Binding Editing.HasText, Converter={StaticResource BoolVis}}">
+                                    <TextBox Width="74" Text="{Binding Editing.WrapWidthMm, StringFormat={}{0:0.##}}"
+                                             ToolTip="这一行「多宽算装不下」的尺子：装不下就先缩字号。0 = 不按宽度缩、内容多长排多长，排到纸外就看得见地超出去，用工具栏「缩回纸内」收回。" />
+                                    <CheckBox Content="允许折行" Margin="8,0,0,0" VerticalAlignment="Center"
+                                              IsChecked="{Binding Editing.AllowWrap}"
+                                              ToolTip="勾上：超过上面那个宽度就折成两行（老行为，客户名、地址那种要排两行的用）。&#10;不勾（行式骨架与 AI 出的版式默认如此）：一行就是一行，永不折行也不打省略号——先缩字号，缩到最小仍装不下就单行伸出纸外，超出的一截由裁切与「探出标签」提醒接手。" />
+                                </WrapPanel>
 
                                 <!--  墨色（第 47 棒）：这一支笔的颜色由 Core 的 LabelColor 存两端原值，
                                       画布 / ③④ 步预览 / 打印 / 位图 / SVG 五个出口读同一份（RenderRules.InkOf、InkHex）。
@@ -629,12 +634,14 @@
                                                   ToolTip="描边粗细（毫米）。直接打字——0.35、0.35 mm、0.35毫米 都认；下拉里是常用档。&#10;认不出的写法退回上一个数，不会把框悄悄清成 0。&#10;描边关掉时这颗置灰：改了也看不见，不给骗人的旋钮。" />
                                         <TextBlock Text="线宽(mm)" VerticalAlignment="Center" Margin="5,0,0,0" FontSize="11" Foreground="#8A8F98" />
                                     </WrapPanel>
-                                    <WrapPanel Margin="0,4,0,0" Visibility="{Binding Editing.IsPolygon, Converter={StaticResource BoolVis}}">
+                                    <WrapPanel Margin="0,4,0,0" Visibility="{Binding Editing.ShowsPolygonSides, Converter={StaticResource BoolVis}}"
+                                               ToolTip="{Binding Editing.PolygonSidesHint}">
                                         <TextBlock Text="边数" Width="52" VerticalAlignment="Center" FontSize="11"
-                                                   ToolTip="CorelDRAW 的「多边形的边数」：3 起步，100 封顶（再多画出来就是圆）。" />
+                                                   ToolTip="{Binding Editing.PolygonSidesHint}" />
                                         <TextBox Width="46" VerticalAlignment="Center"
+                                                 IsEnabled="{Binding Editing.IsPolygon}"
                                                  Text="{Binding Editing.PolygonSides}"
-                                                 ToolTip="正多边形的边数（3~100）。顶点首点朝正上，与 CorelDRAW 起手一致。" />
+                                                 ToolTip="{Binding Editing.PolygonSidesHint}" />
                                     </WrapPanel>
                                     <WrapPanel Margin="0,4,0,0" Visibility="{Binding Editing.ShowsConvertToCurve, Converter={StaticResource BoolVis}}">
                                         <Button Content="转为曲线" Command="{Binding Editing.ConvertToCurveCommand}" Padding="6,1" HorizontalAlignment="Left"

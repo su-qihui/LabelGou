@@ -87,13 +87,22 @@ public sealed record TextItem(
     double TextScaleX = 1,
     double TextScaleY = 1,
     double WrapWidthMm = 0,
-    Colors.LabelColor? Ink = null) : LayoutItem
+    Colors.LabelColor? Ink = null,
+    bool AllowWrap = true) : LayoutItem
 {
     /// <summary>这一项带不带几何变换（旋转或任一方向拉伸）。渲染端用它决定要不要 Push/Pop 变换组。</summary>
     public bool HasGeometry => RotationDeg != 0 || TextScaleX != 1 || TextScaleY != 1;
 
-    /// <summary>永不折行（第 46 棒）：内容多长排多长，对齐偏移由 <c>TextFit</c> 自己算，不靠 <c>MaxTextWidth</c>。</summary>
-    public bool NoWrap => WrapWidthMm <= 0;
+    /// <summary>
+    /// 折不折行（第 46 棒拆出宽度、第 85 棒再拆出"允不允许"）：<strong>给了折行宽度且没被关掉</strong>才折。
+    /// <para>不折行时内容多长排多长，对齐偏移由 <c>TextFit</c> 自己算，不靠 <c>MaxTextWidth</c>；
+    /// 但 <see cref="WrapWidthMm"/> 仍然当<strong>缩字目标</strong>用——这是第 85 棒那一刀的全部意义：
+    /// "缩到多小"和"在哪儿断行"是两件事，从前共用一个数，结果长值默默折回两行压到下一格上。</para>
+    /// </summary>
+    public bool Wraps => WrapWidthMm > 0 && AllowWrap;
+
+    /// <summary><see cref="Wraps"/> 的反面。五处消费方共用这两个判据，别各写一遍。</summary>
+    public bool NoWrap => !Wraps;
 
     /// <summary>
     /// 生成这一项的模板元素（不参与 JSON 序列化，只给运行时用）。
@@ -409,6 +418,7 @@ public static class LayoutEngine
                         TextScaleX: element.TextScaleX,
                         TextScaleY: element.TextScaleY,
                         WrapWidthMm: element.WrapWidthMm,
+                        AllowWrap: element.AllowWrap ?? true,
                         Ink: InkOf(element.InkColor, context))
                     { Source = element });
                     break;
