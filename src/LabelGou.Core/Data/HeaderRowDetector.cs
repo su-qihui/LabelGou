@@ -161,14 +161,21 @@ public static class HeaderRowDetector
     /// <para>为什么不再只扫前几行（导入层第 1 棒）：工厂表的列名不总在上面——TOP 那张 411 行表
     /// 把列名写在最后一行（r410），上面 409 行全是货。只扫前 8 行时软件会把 r1 当表头，
     /// 结果 409 行全部绑不上字段，而真表头那一行反倒被当成一条货印出来。</para>
+    /// <para>第 90 棒①：打分前先问一句「这一列是不是右侧那块手抄的标签样子/指令」，
+    /// 是的话它<strong>不参与选行</strong>。那几格里写着 <c>ITEM NO: SHJ-278</c>、<c>一开四</c> 这类词，
+    /// 撞上字段别名就是 +4 分——比真表头那一行还像表头，于是把货认成列名（爆朵那张的现场）。
+    /// 只影响"用哪几列判断"，<strong>数据一格都不少</strong>：那一块是版式层唯一的表内参照物，认出来、圈出去，不许删。</para>
     /// </summary>
     private static int BestHeaderIndex(IReadOnlyList<string[]> grid, int width)
     {
+        var side = SideColumnIndexes(grid);
+        var effective = width - side.Count;
+        if (effective < 1) effective = width;      // 整张表都被判成"右侧块"（空表一类）时退回原口径，不许除零
         var bestIndex = 0;
         var bestScore = double.MinValue;
         for (var i = 0; i < grid.Count; i++)
         {
-            var score = Score(grid[i], width, i);
+            var score = Score(grid[i], effective, i, side);
             if (score > bestScore)
             {
                 bestScore = score;
@@ -179,16 +186,57 @@ public static class HeaderRowDetector
     }
 
     /// <summary>
+    /// 右侧那些<strong>稀疏</strong>列（厂方在数据右边手抄的标签样子、或写"一开四"这类指令的那几列）。
+    /// <para>判据只有两条，都在"密不密"上：① 它在最后一个密列的<strong>右边</strong>；② 它整张表填的格数
+    /// 不超过最密那一列的三分之一。装真数据的密列（OLU 的 M 列：r2 就是外箱尺码）永远进不来。</para>
+    /// <para>公开成静态方法是为了让判据能直接问这一列到底排没排——只看最终认第几行，抓不住"排错了方向"。</para>
+    /// </summary>
+    public static IReadOnlyList<int> SideColumnIndexes(IReadOnlyList<string[]> grid)
+    {
+        var width = grid.Count == 0 ? 0 : grid.Max(r => r.Length);
+        if (width <= 1) return Array.Empty<int>();
+
+        var filled = new int[width];
+        foreach (var row in grid)
+        {
+            for (var c = 0; c < row.Length; c++)
+            {
+                if (!string.IsNullOrWhiteSpace(row[c])) filled[c]++;
+            }
+        }
+
+        var peak = filled.Max();
+        if (peak == 0) return Array.Empty<int>();
+        var denseFloor = Math.Max(2, peak * 0.5);
+        var sideCap = Math.Max(3, peak * 0.34);
+
+        var lastDense = -1;
+        for (var c = 0; c < width; c++)
+        {
+            if (filled[c] >= denseFloor) lastDense = c;
+        }
+        if (lastDense < 0) return Array.Empty<int>();
+
+        var side = new List<int>();
+        for (var c = lastDense + 1; c < width; c++)
+        {
+            if (filled[c] <= sideCap) side.Add(c);
+        }
+        return side;
+    }
+
+    /// <summary>
     /// 给一行"像不像表头"打分。命中越多标准字段别名，权重越高——这是最强信号。
     /// </summary>
-    private static double Score(string[] row, int width, int rowIndex)
+    private static double Score(string[] row, int width, int rowIndex, IReadOnlyCollection<int>? ignoredColumns = null)
     {
-        var nonEmpty = row.Count(c => !string.IsNullOrWhiteSpace(c));
+        var cells = row.Where((c, i) => ignoredColumns is null || !ignoredColumns.Contains(i)).ToArray();
+        var nonEmpty = cells.Count(c => !string.IsNullOrWhiteSpace(c));
         if (nonEmpty == 0) return double.MinValue;
 
         var coverage = (double)nonEmpty / width;              // 非空覆盖率
-        var labelish = row.Count(c => LooksLikeLabel(c));      // 短、非纯数字
-        var aliasHits = row.Count(c => AliasHit(c));           // 命中唛头字段别名
+        var labelish = cells.Count(c => LooksLikeLabel(c));   // 短、非纯数字
+        var aliasHits = cells.Count(AliasHit);                // 命中唛头字段别名
 
         var score = 0d;
         score += coverage * 3.0;
@@ -233,17 +281,31 @@ public static class HeaderRowDetector
     /// 于是「件数⏎CTN」粘成「件数ctn」，词典里没这个词 → 整张表一个别名都不命中。
     /// TOP 那张 411 行表的真表头写在最后一行，就是靠「件数」「ctn」这两段才被认出来的。</para>
     /// <para>口径仍是<strong>精确相等</strong>，不做包含匹配——包含会抢列（§五-66）。</para>
+    /// <para><strong>分段这一条有个前提</strong>：这一格得真的是个"名字"。第 90 棒①现场——厂方在数据右边
+    /// 手抄的标签样子 <c>ITEM NO: SHJ-278</c>，按空白切段后 <c>ITEM</c> 一段命中货号别名（+4 分），
+    /// 于是那条货比真表头还像表头。冒号后头还带着内容 = 这是<strong>填好了的一条值</strong>，不是列名；
+    /// 收尾一个冒号（<c>货号 ITEM NO:</c>）照旧算名字。</para>
     /// </summary>
     public static bool IsKnownFieldName(string? cell)
     {
         var text = cell?.Trim() ?? string.Empty;
         if (text.Length == 0) return false;
+        if (CarriesValue(text)) return false;
         if (AliasKeys.Value.Contains(Normalize(text))) return true;
         foreach (var segment in text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries))
         {
             if (AliasKeys.Value.Contains(Normalize(segment))) return true;
         }
         return false;
+    }
+
+    private static readonly char[] ColonMarks = { ':', '：' };
+
+    /// <summary>冒号（半角或全角）后头还有内容 = 这一格是「标签：值」，是内容不是列名。</summary>
+    private static bool CarriesValue(string text)
+    {
+        var at = text.IndexOfAny(ColonMarks);
+        return at >= 0 && text.AsSpan(at + 1).Trim().Length > 0;
     }
 
     /// <summary>该文本（或分段）是否命中某个标准字段的别名。</summary>

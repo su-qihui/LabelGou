@@ -290,6 +290,27 @@ public sealed class ExportViewModel : ObservableObject
     }
     private bool _isBusy;
 
+    /// <summary>
+    /// 正在跑的那一件事叫什么（"打印" / "导出 PNG"…），没在跑就是 null。
+    /// <para>第 90 棒③要它：退出时那句确认得说清"正在干什么"，一句"有任务在跑"他不知道是不是自己刚点的那次打印。</para>
+    /// </summary>
+    public string? RunningJob { get; private set; }
+
+    /// <summary>
+    /// 打印／导出还在跑时要退出软件，问的那一句（第 90 棒③，用户：「确认（确认退出软件）／取消」）。
+    /// <para>单独放在这儿是为了让判据能直接读它——主窗口在测试进程里造不出来。</para>
+    /// <para>口径写明白两件他容易误会的事：已经交给打印机的纸收不回来；这一停是"后面不打了"，
+    /// 不是"这一单作废了重来"。</para>
+    /// </summary>
+    public static string ComposeExitDuringJobText(string? job)
+    {
+        var what = string.IsNullOrWhiteSpace(job) ? "输出" : job;
+        return $"正在{what}，现在退出会中断它。\n" +
+               "已经送进打印机的页会继续打完，后面还没送出去的就不打了——软件没法把已经交出去的纸收回来。\n" +
+               "想接着打完就先别退，等状态栏那句跑完再说。\n\n" +
+               "「确定」= 停下这个任务并退出软件；「取消」= 留下，什么都不动。";
+    }
+
     public bool CanStartJob => !IsBusy && _owner.Sheet.HasPlan;
 
     public string StatusText
@@ -748,12 +769,14 @@ public sealed class ExportViewModel : ObservableObject
         }
         _cts = new CancellationTokenSource();
         IsBusy = true;
+        RunningJob = jobName;
         StatusText = jobName + " 开始…";
         var started = Stopwatch.StartNew();
         var task = StaWorker.RunAsync(job, text => StatusText = $"{jobName}：{text}", _cts.Token);
         task.ContinueWith(t =>
         {
             IsBusy = false;
+            RunningJob = null;
             _cts?.Dispose();
             _cts = null;
             if (t.IsCanceled)
@@ -807,7 +830,12 @@ public sealed class ExportViewModel : ObservableObject
         return dialog.ShowDialog() == true ? dialog.FileName : null;
     }
 
-    private void Cancel()
+    /// <summary>
+    /// 停下当前这一件（打印与导出共用这一个取消源）。
+    /// <para>公开是为了第 90 棒③：他在退出确认里点了「确定」，主窗口要先叫这一句再走，
+    /// 不能一边退出还一边往打印机里送页。</para>
+    /// </summary>
+    public void Cancel()
     {
         try { _cts?.Cancel(); }
         catch (ObjectDisposedException) { /* 任务刚好结束，忽略 */ }

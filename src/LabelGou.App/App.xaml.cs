@@ -39,6 +39,9 @@ public partial class App : Application
         // ⑤ 步那三格与「打印首选项…」改的是这台打印机在本机的用户默认（别的软件也吃它），用完得还回去
         var failed = PrinterDefaultsGuard.RestoreAllOnExit();
         if (failed is not null) AppLog.Info(failed);
+        // 导入时暂存的那份表副本也在这儿清掉（第 90 棒②）：它只为"这一次正在做的表"存在。
+        // 换文件时已经清过一轮，这一句管的是"关掉软件"那一头；忘了清也不出事，下次启动导入会顶掉它。
+        LabelGou.Core.Data.ImportCache.Clear();
         AppLog.Info($"退出，代码 {e.ApplicationExitCode}");
         base.OnExit(e);
     }

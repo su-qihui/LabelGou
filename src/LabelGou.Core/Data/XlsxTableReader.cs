@@ -23,10 +23,21 @@ public static class XlsxTableReader
     private static readonly XNamespace RelPackage = "http://schemas.openxmlformats.org/package/2006/relationships";
     private static readonly XNamespace RelDoc = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 
+    /// <summary>
+    /// 以<strong>不挡别人</strong>的方式打开这份 xlsx 读（第 90 棒②）。
+    /// <para>为什么不用 <c>ZipFile.OpenRead</c>：它内部要的是 <c>FileShare.Read</c>，意思是
+    /// "我读的时候别人只许读、不许写"。而 WPS / Excel 打开一份表是读+写一起申请的（它要拿编辑锁），
+    /// 于是我们这份读句柄存在的那一段时间里，它拿不到锁 → 用户看到的「文件被其他软件使用」。
+    /// 这里给出去 <c>ReadWrite | Delete</c>：我们只读，但别人要改、要改名、要删都随他。</para>
+    /// </summary>
+    private static ZipArchive OpenForRead(string filePath) => new(
+        new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete),
+        ZipArchiveMode.Read);
+
     /// <summary>列出工作簿中的工作表名（按显示顺序）。</summary>
     public static List<string> ListSheetNames(string filePath)
     {
-        using var zip = ZipFile.OpenRead(filePath);
+        using var zip = OpenForRead(filePath);
         return ReadWorkbook(zip).Select(s => s.Name).ToList();
     }
 
@@ -35,7 +46,7 @@ public static class XlsxTableReader
     /// </summary>
     public static List<string[]> ReadRawGrid(string filePath, string? sheetName = null)
     {
-        using var zip = ZipFile.OpenRead(filePath);
+        using var zip = OpenForRead(filePath);
 
         var sheets = ReadWorkbook(zip);
         if (sheets.Count == 0) throw new InvalidDataException("XLSX 中没有任何工作表。");
@@ -69,7 +80,7 @@ public static class XlsxTableReader
     {
         try
         {
-            using var zip = ZipFile.OpenRead(filePath);
+            using var zip = OpenForRead(filePath);
             var sheets = ReadWorkbook(zip);
             if (sheets.Count == 0) return Array.Empty<string>();
             var target = sheetName is null
@@ -181,7 +192,7 @@ public static class XlsxTableReader
     {
         try
         {
-            using var zip = ZipFile.OpenRead(filePath);
+            using var zip = OpenForRead(filePath);
             var sheets = ReadWorkbook(zip);
             if (sheets.Count == 0) return Array.Empty<CellFormat>();
             var target = sheetName is null
@@ -305,7 +316,7 @@ public static class XlsxTableReader
     /// </summary>
     public static IReadOnlyList<SheetImage> ReadSheetImages(string filePath, string? sheetName = null)
     {
-        using var zip = ZipFile.OpenRead(filePath);
+        using var zip = OpenForRead(filePath);
 
         var sheets = ReadWorkbook(zip);
         if (sheets.Count == 0) return Array.Empty<SheetImage>();

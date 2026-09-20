@@ -113,6 +113,33 @@ public partial class MainWindow : Window
         Services.AppLog.Info("主窗口初始化完成");
     }
 
+    /// <summary>
+    /// 打印／导出还在跑就想关窗 → 先问一句（第 90 棒③，用户：「在执行打印过程中退出软件会阻止，
+    /// 出现弹窗提示——确认（确认退出软件）／取消」）。
+    /// <para>用原生 <c>MessageBox</c> 的「确定／取消」这一对，不是自己画框：他要的就是这两颗键和它们的位次，
+    /// 而 Esc 与右上角的叉都天然落在「取消＝留下」这一边，不会误杀一份打到一半的活。</para>
+    /// <para>点「确定」先叫 <c>Export.Cancel()</c> 再放行关闭：一边退出还一边往打印机里送页是最坏的一种收尾
+    /// ——他既看不到进度，也不知道到底送出几页。</para>
+    /// </summary>
+    protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
+    {
+        if (_viewModel.Export.IsBusy)
+        {
+            var answer = MessageBox.Show(this,
+                ExportViewModel.ComposeExitDuringJobText(_viewModel.Export.RunningJob),
+                "LabelGou 正在输出", MessageBoxButton.OKCancel, MessageBoxImage.Warning);
+            if (answer != MessageBoxResult.OK)
+            {
+                e.Cancel = true;                       // 取消 = 什么都不动，留在软件里等它跑完
+                return;
+            }
+            _viewModel.Export.Cancel();
+            Services.AppLog.Info("用户在输出任务进行中确认退出：已请求停止当前任务");
+        }
+
+        base.OnClosing(e);      // 走到这一步才 raise Closing（那条 SaveAiDock 只在真要关窗时写盘）
+    }
+
     private void OnErrorRaised(string message)
         => MessageBox.Show(this, message, "LabelGou", MessageBoxButton.OK, MessageBoxImage.Warning);
 
