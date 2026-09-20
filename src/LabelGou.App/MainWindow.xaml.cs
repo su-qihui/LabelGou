@@ -171,6 +171,52 @@ public partial class MainWindow : Window
 
     private void OnDetachAiClick(object sender, RoutedEventArgs e) => _aiPanel?.Toggle();
 
+    private SimpleMainWindow? _simpleShell;
+
+    /// <summary>
+    /// 「视图 → 简洁版工作台」（第 91 棒 · 阶段一第一刀）：开新一代壳窗，本窗隐藏待命。
+    /// <para><strong>只有一份状态、只有一份 AI 面板</strong>：壳窗吃同一个 <see cref="MainViewModel"/>；
+    /// AI 面板本体从泊位**搬**进指令岛（<see cref="Services.SimpleShellFlow.Park"/>），
+    /// 绝不 new 第二块——两块同时发请求就是双份模型钱（本文件构造里钉着的规矩）。</para>
+    /// <para>复核闸门临时改挂壳窗：主窗此刻是藏着的，问人的框得盖在**看得见**的那扇窗上，
+    /// 不然 MessageBox 顶着一个隐藏 owner，操作员盯着屏幕等一个不弹出来的框。回专业版原样换回。</para>
+    /// </summary>
+    private void OnOpenSimpleShellClick(object sender, RoutedEventArgs e)
+    {
+        if (_simpleShell is { IsLoaded: true })
+        {
+            _simpleShell.Activate();
+            return;
+        }
+        // 面板飘着时先收回泊位：浮动窗持有内容，摘法不一样
+        _aiPanel?.Dock();
+        _simpleShell = new SimpleMainWindow(_viewModel);
+        if (_aiPanel is { } ap)
+        {
+            Services.SimpleShellFlow.Park(ap, _simpleShell.IslandHost);
+            AiPanel.ShowDragGrip = false;      // 指令岛里没有拖拽控制器，握把收起来
+        }
+        var gateWas = _viewModel.ConfirmGate;
+        _viewModel.ConfirmGate = text => MessageBox.Show(_simpleShell, text, "LabelGou 打印前复核",
+            MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes;
+        var shell = _simpleShell;   // 回调里先清字段再用它会当场踩空，引用先抄一份
+        shell.Closed += (_, _) =>
+        {
+            _simpleShell = null;
+            _viewModel.ConfirmGate = gateWas;
+            if (_aiPanel is { } p)
+            {
+                Services.SimpleShellFlow.TakeBack(p, shell.IslandHost);
+                AiPanel.ShowDragGrip = true;
+            }
+            Show();
+            Services.AppLog.Info("从简洁版回到专业版：AI 面板搬回原泊位，复核闸门改挂主窗");
+        };
+        _simpleShell.Show();
+        Hide();
+        Services.AppLog.Info("已打开简洁版壳窗（同一份 MainViewModel，专业版隐藏待命）");
+    }
+
     /// <summary>右栏那一栏里的手动退回入口：与拖到下缘同一个 <see cref="DetachablePanel.Dock(DockSite)"/>，不开第二套。</summary>
     private void OnAiDockBottomClick(object sender, RoutedEventArgs e) => _aiPanel?.Dock(DockSite.Bottom);
 

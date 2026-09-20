@@ -42,6 +42,10 @@
                 <MenuItem Header="退出(_X)" Click="OnExitClick" />
             </MenuItem>
             <MenuItem Header="视图(_V)">
+                <!-- 第 91 棒：新一代界面（简洁版壳窗）。默认启动仍是这套专业版——换默认没经用户点头（§五-116） -->
+                <MenuItem Header="简洁版工作台（新一代界面）…(_S)" Click="OnOpenSimpleShellClick"
+                      ToolTip="预览当主角的新界面：细顶栏 + 表格抽屉 + AI 指令岛 + 出纸全屏确认。数据与 AI 会话是同一份，「回专业版」随时切回来" />
+                <Separator />
                 <MenuItem Header="拆下 / 收回 AI 助手窗口(_D)" Click="OnDetachAiClick"
                           ToolTip="只把 AI 那一块拆成独立窗口（AI 在窗外、排版在窗内，摆在一起对照）；再点一下收回原位" />
                 <!-- 用户 2026-09-09：「两边稍微缩一点，然后再可以关闭左边或右边」——状态明写的入口，

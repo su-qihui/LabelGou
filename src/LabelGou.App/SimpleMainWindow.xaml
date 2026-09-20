@@ -1,0 +1,207 @@
+<Window x:Class="LabelGou.App.SimpleMainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:render="clr-namespace:LabelGou.App.Rendering"
+        xmlns:mvvm="clr-namespace:LabelGou.App.Mvvm"
+        Title="LabelGou 简洁版"
+        Width="1320" Height="860"
+        MinWidth="1080" MinHeight="700"
+        FontFamily="Segoe UI, Microsoft YaHei" FontSize="14"
+        WindowStartupLocation="CenterScreen">
+    <!-- 简洁版壳窗（第 91 棒 · 阶段一第一刀）：工作台画布 + 表格抽屉 + 指令岛 + 出纸全屏确认。
+         设计真源 = labelgou-word\specs\2026-09-20-新一代界面设计思路.md 与同名概念稿 HTML。
+         这里只做「呈现」：数据、命令、闸门全走专业版那份 MainViewModel（同一个实例），
+         所以本窗不许出现任何会自己算毫米、自己拼版、自己出纸的路——画法唯一、出口唯一照旧。 -->
+    <Window.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="Themes/SimpleTokens.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+            <BooleanToVisibilityConverter x:Key="BoolVis"/>
+            <mvvm:InverseBooleanToVisibilityConverter x:Key="InvBoolVis"/>
+        </ResourceDictionary>
+    </Window.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- ===== 细顶栏：这批是谁的货 + 活件流四节点 + 四颗钮（表格 / 打印 / 回专业版） ===== -->
+        <Border Grid.Row="0" Background="{StaticResource CardBrush}" BorderBrush="{StaticResource LineBrush}" BorderThickness="0,0,0,1" Padding="16,10">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="{Binding SourcePath, FallbackValue=还没打开表}" Style="{StaticResource SubText}" MaxWidth="300" TextTrimming="CharacterEllipsis"/>
+                    <TextBlock Text="{Binding RecordInfoText}" FontWeight="Bold" FontSize="16" Foreground="{StaticResource InkBrush}" TextTrimming="CharacterEllipsis" MaxWidth="300"/>
+                </StackPanel>
+
+                <!-- 活件流：读表 → 拍板 → 排版 → 出纸。档位由 SimpleShellFlow 判（代码里刷颜色），这里只摆形状 -->
+                <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <StackPanel x:Name="FlowNode0" Orientation="Horizontal">
+                        <Ellipse x:Name="FlowDot0" Width="10" Height="10" Fill="{StaticResource LineBrush}" VerticalAlignment="Center"/>
+                        <TextBlock x:Name="FlowLabel0" Text="读表" Margin="6,0,0,0" VerticalAlignment="Center" Foreground="{StaticResource SubInkBrush}"/>
+                    </StackPanel>
+                    <Border Width="34" Height="2" Background="{StaticResource LineBrush}" Margin="10,0"/>
+                    <StackPanel x:Name="FlowNode1" Orientation="Horizontal">
+                        <Ellipse x:Name="FlowDot1" Width="10" Height="10" Fill="{StaticResource LineBrush}" VerticalAlignment="Center"/>
+                        <TextBlock x:Name="FlowLabel1" Text="拍板" Margin="6,0,0,0" VerticalAlignment="Center" Foreground="{StaticResource SubInkBrush}"/>
+                    </StackPanel>
+                    <Border Width="34" Height="2" Background="{StaticResource LineBrush}" Margin="10,0"/>
+                    <StackPanel x:Name="FlowNode2" Orientation="Horizontal">
+                        <Ellipse x:Name="FlowDot2" Width="10" Height="10" Fill="{StaticResource LineBrush}" VerticalAlignment="Center"/>
+                        <TextBlock x:Name="FlowLabel2" Text="排版" Margin="6,0,0,0" VerticalAlignment="Center" Foreground="{StaticResource SubInkBrush}"/>
+                    </StackPanel>
+                    <Border Width="34" Height="2" Background="{StaticResource LineBrush}" Margin="10,0"/>
+                    <StackPanel x:Name="FlowNode3" Orientation="Horizontal">
+                        <Ellipse x:Name="FlowDot3" Width="10" Height="10" Fill="{StaticResource LineBrush}" VerticalAlignment="Center"/>
+                        <TextBlock x:Name="FlowLabel3" Text="出纸" Margin="6,0,0,0" VerticalAlignment="Center" Foreground="{StaticResource SubInkBrush}"/>
+                    </StackPanel>
+                </StackPanel>
+
+                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Button Content="打开数据文件…" Style="{StaticResource GhostButton}" Command="{Binding OpenFileCommand}" Margin="0,0,8,0"/>
+                    <Button x:Name="TableToggleBtn" Content="表格" Style="{StaticResource GhostButton}" Margin="0,0,8,0"
+                            ToolTip="点开这张表读进来的原样（左滑出）；抽屉右上角「收起」关掉"/>
+                    <Button x:Name="PrintAskBtn" Content="打印整版" Style="{StaticResource PrimaryButton}"/>
+                    <Button x:Name="BackToProBtn" Content="回专业版" Style="{StaticResource GhostButton}" Margin="8,0,0,0"
+                            ToolTip="回到一代全功能界面：同一份数据、同一个 AI 会话搬回去，两边随时可切"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- ===== 工作台画布：预览是主角 ===== -->
+        <Grid Grid.Row="1" x:Name="Stage" Margin="16">
+            <Border Style="{StaticResource Card}" Background="{StaticResource PageBgBrush}">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <!-- 没数据时的引导（不是空白一块让人以为程序坏了） -->
+                    <TextBlock Grid.Row="0" Text="把工厂发来的 Excel / CSV 点「打开数据文件…」选进来&#10;AI 模式会先读表，只问要你拍板的事"
+                               Visibility="{Binding HasData, Converter={StaticResource InvBoolVis}}"
+                               HorizontalAlignment="Center" VerticalAlignment="Center" TextAlignment="Center"
+                               FontSize="16" Foreground="{StaticResource SubInkBrush}"/>
+
+                    <ContentControl Grid.Row="0" Visibility="{Binding HasLayout, Converter={StaticResource BoolVis}}">
+                        <render:LabelPreviewControl x:Name="LabelView"
+                                                    Layout="{Binding CurrentLayout}"
+                                                    Zoom="{Binding Zoom}"
+                                                    ShowGuides="{Binding ShowGuides}"
+                                                    HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                    Margin="24"/>
+                    </ContentControl>
+
+                    <!-- 画布脚：翻页与缩放（都是现成命令，不新开路） -->
+                    <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,0,0,12">
+                        <Button Content="⏮" Style="{StaticResource GhostButton}" MinWidth="36" Command="{Binding FirstRecordCommand}"/>
+                        <Button Content="◀" Style="{StaticResource GhostButton}" MinWidth="36" Margin="6,0,0,0" Command="{Binding PrevRecordCommand}"/>
+                        <TextBlock Text="{Binding RecordInfoText}" VerticalAlignment="Center" Margin="12,0" FontWeight="SemiBold" Foreground="{StaticResource InkBrush}"/>
+                        <Button Content="▶" Style="{StaticResource GhostButton}" MinWidth="36" Command="{Binding NextRecordCommand}"/>
+                        <Button Content="⏭" Style="{StaticResource GhostButton}" MinWidth="36" Margin="6,0,0,0" Command="{Binding LastRecordCommand}"/>
+                        <Button Content="示意预览" Style="{StaticResource GhostButton}" Margin="14,0,0,0" Command="{Binding SamplePreviewCommand}"/>
+                        <Button Content="－" Style="{StaticResource GhostButton}" MinWidth="36" Margin="14,0,0,0" Command="{Binding ZoomOutCommand}"/>
+                        <Button Content="＋" Style="{StaticResource GhostButton}" MinWidth="36" Margin="6,0,0,0" Command="{Binding ZoomInCommand}"/>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <!-- ===== 表格抽屉：右上角「表格」点开、抽屉自己的右上角「收起」关（用户 2026-09-20 点名的交互） ===== -->
+            <Border x:Name="TableDrawer" Style="{StaticResource FloatCard}" Width="560" MaxWidth="620"
+                    HorizontalAlignment="Left" Margin="0,4" Visibility="Collapsed">
+                <Border.RenderTransform>
+                    <TranslateTransform x:Name="DrawerShift" X="-620"/>
+                </Border.RenderTransform>
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <Grid Grid.Row="0" Margin="14,12,12,8">
+                        <StackPanel>
+                            <TextBlock Text="这张表（软件读进来的原样）" FontWeight="Bold" FontSize="16"/>
+                            <TextBlock Text="行号＝Excel 行号；要改数据回表里改，这里只是镜子" Style="{StaticResource SubText}"/>
+                        </StackPanel>
+                        <Button x:Name="TableCloseBtn" Content="收起 «" Style="{StaticResource GhostButton}" HorizontalAlignment="Right" VerticalAlignment="Top"/>
+                    </Grid>
+                    <Border Grid.Row="1" Margin="14,0,14,8" BorderBrush="{StaticResource LineBrush}" BorderThickness="1" CornerRadius="8">
+                        <DataGrid ItemsSource="{Binding PreviewTable}"
+                                  AutoGenerateColumns="True"
+                                  AutoGeneratingColumn="TableGrid_AutoGeneratingColumn"
+                                  IsReadOnly="True" CanUserAddRows="False" CanUserDeleteRows="False"
+                                  HeadersVisibility="Column" GridLinesVisibility="All" SelectionUnit="Cell"
+                                  FontSize="12.5" RowHeaderWidth="0" BorderThickness="0"/>
+                    </Border>
+                    <TextBlock Grid.Row="2" Margin="14,0,14,12" Style="{StaticResource SubText}"
+                               Text="合计行/被剔行按 ① 步的口径来；这里看到的就是引擎拿到的。"/>
+                </Grid>
+            </Border>
+
+            <!-- ===== 指令岛：AI 面板本体住在里面（从主窗泊位搬来，全程只有一个实例） ===== -->
+            <Border x:Name="IslandCard" Style="{StaticResource FloatCard}" Width="440" MaxHeight="560"
+                    HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,4,4" Padding="12,10">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <TextBlock Grid.Row="0" Text="AI 指令岛" FontWeight="Bold" FontSize="14" Foreground="{StaticResource BrandBrush}" Margin="2,0,0,6"/>
+                    <!-- 内容 = MainWindow 的 AiChatPanel 本体（SimpleShellFlow.Park 搬进来）；壳窗只当宿主，不建第二份面板 -->
+                    <ContentControl x:Name="Island" Grid.Row="1" MinHeight="320"/>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <!-- ===== 底部状态条：一句话，取 VM 的 StatusMessage（谁最后写谁，口径同 §五-129） ===== -->
+        <Border Grid.Row="2" Background="{StaticResource CardBrush}" BorderBrush="{StaticResource LineBrush}" BorderThickness="0,1,0,0" Padding="16,6">
+            <TextBlock Text="{Binding StatusMessage}" Style="{StaticResource SubText}" TextTrimming="CharacterEllipsis"/>
+        </Border>
+
+        <!-- ===== 出纸全屏确认：整张纸放大 + 一颗大按钮（第 75 棒 ConfirmGate 的可视化，不开第二条出纸路） ===== -->
+        <Grid Grid.RowSpan="3" x:Name="PrintOverlay" Background="#F010151C" Visibility="Collapsed">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            <StackPanel Grid.Row="0" HorizontalAlignment="Center" VerticalAlignment="Center">
+                <Border Background="White" Padding="10" CornerRadius="4">
+                    <render:SheetPreviewControl x:Name="ShellSheetView"
+                                                Plan="{Binding Sheet.Plan}"
+                                                PageIndex="{Binding Sheet.PageIndex}"
+                                                Zoom="{Binding Sheet.SheetZoom}"
+                                                ShowGuides="False" ShowLabelDividers="False"
+                                                MaxHeight="520"/>
+                </Border>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,10,0,0">
+                    <Button Content="⏮ ◀" Style="{StaticResource GhostButton}" Command="{Binding Sheet.FirstPageCommand}"/>
+                    <TextBlock Text="{Binding Sheet.PageText}" Foreground="#C7D0DB" VerticalAlignment="Center" Margin="12,0" FontWeight="Bold"/>
+                    <Button Content="▶ ⏭" Style="{StaticResource GhostButton}" Command="{Binding Sheet.NextPageCommand}"/>
+                </StackPanel>
+                <TextBlock Text="{Binding Sheet.PlanText}" Foreground="#9AA6B5" FontSize="12" HorizontalAlignment="Center" TextWrapping="Wrap" TextAlignment="Center"/>
+            </StackPanel>
+            <Border Grid.Row="1" Style="{StaticResource FloatCard}" HorizontalAlignment="Center" Margin="0,0,0,26" Padding="16,12">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <StackPanel Margin="0,0,16,0" MinWidth="190">
+                        <TextBlock Text="{Binding Export.SelectionText}" FontWeight="Bold" FontSize="14" Foreground="{StaticResource InkBrush}" TextWrapping="Wrap"/>
+                        <TextBlock Text="{Binding Export.FitText}" Style="{StaticResource SubText}" TextWrapping="Wrap"/>
+                    </StackPanel>
+                    <ComboBox ItemsSource="{Binding Export.Printers}" SelectedItem="{Binding Export.SelectedPrinter}"
+                              DisplayMemberPath="DisplayName" MinWidth="200" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                    <TextBox Text="{Binding Export.Copies, UpdateSourceTrigger=PropertyChanged}" Width="52" VerticalAlignment="Center" Margin="0,0,14,0"/>
+                    <Button Content="打印整版" Style="{StaticResource PrimaryButton}" Command="{Binding Export.PrintCommand}" FontSize="15" Padding="22,10"/>
+                    <Button Content="导出 PDF" Style="{StaticResource GhostButton}" Margin="8,0,0,0" Command="{Binding Export.ExportPdfCommand}"/>
+                    <Button x:Name="PrintBackBtn" Content="← 回去改" Style="{StaticResource GhostButton}" Margin="8,0,0,0"/>
+                </StackPanel>
+            </Border>
+        </Grid>
+    </Grid>
+</Window>

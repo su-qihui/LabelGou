@@ -319,6 +319,12 @@ public sealed partial class AiChatPanel : UserControl
     /// </summary>
     public Border DragGrip { get; private set; } = null!;
 
+    /// <summary>
+    /// 握把那一行的显/隐（第 91 棒）：简洁版指令岛里没有 <see cref="PanelDragController"/>，
+    /// 握把留着只会让人按住拖出个寂寞——搬进岛里时收起，回主窗再放出来。默认（主窗）照旧显示。
+    /// </summary>
+    public bool ShowDragGrip { set => DragGrip.Visibility = value ? Visibility.Visible : Visibility.Collapsed; }
+
     /// <summary>握把那一行：一个拖拽把手该有的样子（≡ 图标 + 一句怎么用 + 十字移动光标）。</summary>
     private static Border BuildDragGrip()
     {
