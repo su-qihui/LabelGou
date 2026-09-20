@@ -149,6 +149,13 @@ public sealed partial class MainViewModel : ObservableObject, ILabelSource
     private IReadOnlyList<MappingIssue> _mappingIssues = Array.Empty<MappingIssue>();
 
     private string? _sourcePath;
+
+    /// <summary>
+    /// 他从文件对话框里挑的那一份<strong>原件</strong>的路径（<see cref="_sourcePath"/> 是软件自己暂存的那份副本）。
+    /// <para>两件事必须拿原件说：① 「这是不是一张新表」的判据（副本每暂存一次换一个时间戳目录）；
+    /// ② 下次打开文件对话框该摆在哪个文件夹——拿副本的目录会把人带进 %APPDATA% 里。</para>
+    /// </summary>
+    private string? _sourceOriginalPath;
     private string _statusMessage = "请打开工厂发来的 Excel / CSV 数据文件。";
     private string _headerInfoText = "尚未导入数据";
     private string _recordInfoText = "示意预览（未导入数据）";
@@ -1608,9 +1615,11 @@ public sealed partial class MainViewModel : ObservableObject, ILabelSource
             Filter = TableImporter.OpenFileFilter,
             CheckFileExists = true,
         };
-        if (!string.IsNullOrEmpty(_sourcePath))
+        if (!string.IsNullOrEmpty(_sourceOriginalPath))
         {
-            var dir = Path.GetDirectoryName(_sourcePath);
+            // 问的是原件在哪个文件夹，不是 _sourcePath——那份副本在 %APPDATA%\LabelGou\import-cache 里，
+            // 拿它当初始目录会把人下一次挑文件时带进缓存目录（第 90 棒②）。
+            var dir = Path.GetDirectoryName(_sourceOriginalPath);
             if (dir is not null && Directory.Exists(dir)) dialog.InitialDirectory = dir;
         }
         if (dialog.ShowDialog() != true) return;
@@ -1979,9 +1988,32 @@ public sealed partial class MainViewModel : ObservableObject, ILabelSource
     public void LoadSource(string? path, string? sheet, bool newTable = true)
     {
         if (string.IsNullOrWhiteSpace(path)) return;
+
+        // 第 90 棒②（用户方案「导入表格后暂时把表格存在软件内，切换文件或退出软件清掉文件缓存」）：
+        // 外部原件先暂存一份进软件自己的缓存，之后每一次重读都读那一份副本——换工作表、改切法、
+        // 一键修复、撤回、AI 每轮重算表画像（一趟两开 zip）全在这一条路上，一次都不许再碰他的原件。
+        // 两头各治一件事：一面是他报的「WPS 说文件被其他软件使用」，另一面是他在 WPS 里存过一次盘
+        // 之后，内存里那张表和磁盘上那份就对不上了——而 AI 报的是原表行号，行号一错就是剔错行、少印货。
+        var fromCache = ImportCache.IsCached(path);
+        var original = fromCache ? _sourceOriginalPath ?? Path.GetFullPath(path) : Path.GetFullPath(path);
+        if (!fromCache)
+        {
+            var staged = ImportCache.Stage(path);
+            if (staged.Note is not null) AppLog.Info($"导入暂存没成（这一趟直接读原件）：{staged.Note}");
+            path = staged.Path;
+        }
+
         // 换文件 = 切表指令作废的那只手：上一张表剔的「第 412 行」对新表毫无意义（拿它切新表就是切错行）。
-        if (!string.Equals(_sourcePath, Path.GetFullPath(path), StringComparison.OrdinalIgnoreCase))
+        // 第 90 棒②把判据换成比"原件"：副本目录按原件路径归，但拿副本比总归绕了一层，说原件最清楚。
+        var anotherFile = !string.Equals(_sourceOriginalPath, original, StringComparison.OrdinalIgnoreCase);
+        if (anotherFile)
+        {
             _choice = SheetLayoutChoice.Auto;
+            // 上一张表的暂存跟着作废（用户：「切换文件或退出软件清掉文件缓存」）。只删它自己那个目录——
+            // 清整个缓存会把另一条正在读表的路的副本一起端掉。
+            if (_sourceOriginalPath is not null) ImportCache.Drop(_sourceOriginalPath);
+        }
+        _sourceOriginalPath = original;
         try
         {
             var data = TableImporter.Import(path, sheet, _choice);
@@ -2753,6 +2785,7 @@ public sealed partial class MainViewModel : ObservableObject, ILabelSource
         _rawRecords = records;
         _mappingIssues = Array.Empty<MappingIssue>();
         SourcePath = null;      // 记录不再来自某个表格文件；数据路径框留空，说明写在 HeaderInfoText 里
+        _sourceOriginalPath = null;   // 上一张表的"原件"也跟着作废：下次再导同一份文件算新表
 
         AiGateBlocked = _rawRecords.Any(r => r.PendingReview().Any());
         HeaderInfoText = $"记录来自智能识别：{sourceDescription}（{records.Count} 条）· 表格映射已暂停";

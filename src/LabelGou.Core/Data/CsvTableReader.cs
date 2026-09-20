@@ -14,13 +14,33 @@ public static class CsvTableReader
     /// <summary>读取 CSV 文件为原始网格（每行一个 string[]，已按最宽行补齐）。</summary>
     public static List<string[]> ReadRawGrid(string filePath)
     {
-        var bytes = File.ReadAllBytes(filePath);
+        var bytes = ReadTolerant(filePath);
         var text = TextDecoder.Decode(bytes, out var encoding);
         var delimiter = TextDecoder.SniffDelimiter(SplitLines(text));
         var grid = Parse(text, delimiter);
         CurrentEncoding = encoding;
         CurrentDelimiter = delimiter;
         return GridNormalizer.Normalize(grid);
+    }
+
+    /// <summary>
+    /// 整份读进内存，但<strong>不申请独占</strong>（第 90 棒②，与 <c>XlsxTableReader.OpenForRead</c> 同一条口径）：
+    /// <c>File.ReadAllBytes</c> 内部给的共享模式是 <c>FileShare.Read</c>，人家（WPS/Excel）正开着这份文件时
+    /// 我们读得动，但反过来我们读的那一瞬间别人想写就被拒。这里读一次字节，锁就只在这一瞬，且允许对方写。
+    /// </summary>
+    private static byte[] ReadTolerant(string filePath)
+    {
+        using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read,
+            FileShare.ReadWrite | FileShare.Delete);
+        var bytes = new byte[stream.Length];
+        var read = 0;
+        while (read < bytes.Length)
+        {
+            var got = stream.Read(bytes, read, bytes.Length - read);
+            if (got <= 0) break;
+            read += got;
+        }
+        return read == bytes.Length ? bytes : bytes.AsSpan(0, read).ToArray();
     }
 
     /// <summary>上一次 <see cref="ReadRawGrid"/> 实际使用的编码（供界面提示"已按 GB18030 打开"）。</summary>
