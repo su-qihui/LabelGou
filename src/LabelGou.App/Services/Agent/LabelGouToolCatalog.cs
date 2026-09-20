@@ -72,7 +72,7 @@ internal sealed class LabelGouToolCatalog
             foreach (var (name, _) in properties) required.Add(name);
             schema["required"] = required;
         }
-        return schema.ToJsonString(JsonRpcMessage.Wire);
+        return JsonRpcMessage.ToWireJson(schema);
     }
 
     public AgentToolRegistry Build(AgentHostKind host)

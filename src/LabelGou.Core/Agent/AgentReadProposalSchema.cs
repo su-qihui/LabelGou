@@ -27,7 +27,7 @@ public static class AgentReadProposalSchema
     public static string FieldKeyList() => string.Join(", ", FieldKeys);
 
     /// <summary>写成文件喂给外部 runtime 的那份 JSON Schema（中文说明原样上路，见 <see cref="JsonRpcMessage.Wire"/>）。</summary>
-    public static string Json() => Build().ToJsonString(JsonRpcMessage.Wire);
+    public static string Json() => JsonRpcMessage.ToWireJson(Build());
 
     private static JsonObject Build() => new()
     {

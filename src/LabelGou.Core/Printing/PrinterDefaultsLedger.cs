@@ -51,7 +51,7 @@ public sealed class PrinterDefaultsLedger
     /// </summary>
     public bool NoteOriginal(string printerName, byte[]? original)
     {
-        ArgumentException.ThrowIfNullOrEmpty(printerName);
+        Net6Compat.ThrowIfNullOrEmpty(printerName);
         var path = PathOf(printerName);
         if (File.Exists(path)) return false;
 

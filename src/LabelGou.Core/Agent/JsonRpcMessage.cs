@@ -1,4 +1,9 @@
+using System.IO;
+using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.Json;
+using System.Text.Json.Nodes;
+using System.Text.Unicode;
 
 namespace LabelGou.Core.Agent;
 
@@ -98,18 +103,30 @@ public sealed record JsonRpcMessage(
     /// <para>默认的 <c>System.Text.Json</c> 会把非 ASCII 转成 <c>\u8FD9\u5F20</c>——那是合法 JSON，
     /// 但对面的提示词与人肉读日志时都成了天书，而 §五-160 那条教训就是"现场只剩一堆读不懂的字节"。
     /// 只在这一个地方开这个口子，别在调用侧各配一份 options。</para>
-    /// <para><c>TypeInfoResolver</c> <strong>必须显式给</strong>：<c>JsonNode.ToJsonString(options)</c> 会直接要求它，
-    /// 而这份 options 若先被 <c>JsonSerializer.Serialize</c> 用过一次才会补上默认解析器——
-    /// 于是"只在某条测试先跑时才炸"。红检当场抓到过一次，别拿"我这边跑是绿的"当证据。</para>
+    /// <para>为什么本变体不走 <c>ToJsonString(options)</c>：那条路要 <c>TypeInfoResolver</c>（主仓在 net7+ 上显式给了它，
+    /// 因为谁先把这份 options 冻住决定了炸不炸——"按执行顺序才红"），而 <c>JsonSerializerOptions.TypeInfoResolver</c>
+    /// 这个属性在 net6 引用集里根本不存在，我们给不了。<c>Utf8JsonWriter</c> 写 <see cref="JsonNode"/> 和写字符串
+    /// 都不查契约元数据，真 net6 运行时与 roll-forward 到 net8 的运行时上是同一行为，这条路上没有那个顺序坑。</para>
     /// </summary>
-    public static readonly JsonSerializerOptions Wire = new()
+    private static readonly JavaScriptEncoder WireEncoder = JavaScriptEncoder.Create(UnicodeRanges.All);
+
+    /// <summary>把一棵 <see cref="JsonNode"/> 写成线上 JSON（中文原样，不转成 <c>\uXXXX</c>）。</summary>
+    public static string ToWireJson(JsonNode node)
     {
-        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.Create(System.Text.Unicode.UnicodeRanges.All),
-        TypeInfoResolver = new System.Text.Json.Serialization.Metadata.DefaultJsonTypeInfoResolver(),
-    };
+        using var buffer = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(buffer, new JsonWriterOptions { Encoder = WireEncoder }))
+            node.WriteTo(writer);
+        return Encoding.UTF8.GetString(buffer.ToArray());
+    }
 
     /// <summary>把字符串塞成 JSON 字面量（引号与换行都转掉，别让一句人话把帧打断）。</summary>
-    public static string Quote(string text) => JsonSerializer.Serialize(text, Wire);
+    public static string Quote(string text)
+    {
+        using var buffer = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(buffer, new JsonWriterOptions { Encoder = WireEncoder }))
+            writer.WriteStringValue(text);
+        return Encoding.UTF8.GetString(buffer.ToArray());
+    }
 
     private static string ParamsOrEmpty(string json)
         => string.IsNullOrWhiteSpace(json) ? "{}" : json;

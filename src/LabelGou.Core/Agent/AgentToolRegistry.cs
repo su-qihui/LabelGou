@@ -71,7 +71,7 @@ public sealed class AgentToolRegistry
                 ["description"] = spec.Description,
                 ["inputSchema"] = JsonNode.Parse(spec.InputSchemaJson),
             });
-        return new JsonObject { ["tools"] = tools }.ToJsonString(JsonRpcMessage.Wire);
+        return JsonRpcMessage.ToWireJson(new JsonObject { ["tools"] = tools });
     }
 
     /// <summary>
