@@ -1058,6 +1058,19 @@ public partial class MainWindow : Window
             _viewModel.ShowGuides = !_viewModel.ShowGuides;
             e.Handled = true;
         }
+        // 第 89 棒②：行检查开着时，裸 ←/→ 就是上一张/下一张。谁该让开、谁不让，规则写在
+        // Services/PreviewArrows 那一处（判据也只能在那儿问——这个窗口在测试进程里造不出来）。
+        else if (e.Key is Key.Left or Key.Right && modifiers == ModifierKeys.None
+                 && Services.PreviewArrows.TryPage(_viewModel, Keyboard.FocusedElement, e.Key))
+        {
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Escape && _viewModel.SlideshowPlaying)
+        {
+            // 幻灯片正在放，Esc 的第一含义是"停下"，不是"关掉这个窗口"
+            _viewModel.StopSlideshow("按了 Esc");
+            e.Handled = true;
+        }
 
         base.OnPreviewKeyDown(e);
     }

@@ -1031,10 +1031,39 @@
                                      还有开关（折叠）可以全部检查和单个检查」）：一行几张纸的货，核对内容时只看第一张 -->
                                 <CheckBox Content="行检查（一行一张）" IsChecked="{Binding RowCheck}" VerticalAlignment="Center"
                                           Margin="0,0,8,0"
-                                          ToolTip="开着：翻页按表格行走，一行只画该行的第一张（一行五张纸不必翻五遍）。&#10;关着：逐张翻（一张纸一条）。只影响这里怎么看，打印与导出仍是整份标签。" />
+                                          ToolTip="开着：翻页按表格行走，一行只画该行的第一张（一行五张纸不必翻五遍），&#10;这时 ← / → 就是上一张、下一张。&#10;关着：逐张翻（一张纸一条）。只影响这里怎么看，打印与导出仍是整份标签。" />
                                 <CheckBox Content="全部行" IsChecked="{Binding RowCheckAll}" VerticalAlignment="Center"
                                           Margin="0,0,8,0" IsEnabled="{Binding RowCheck}"
-                                          ToolTip="开着：一屏把所有行各画一张缩略，纵向滚着扫一遍（这一态用固定小比例，放大按钮先收起）。&#10;关着：只看当前那一行的一张。" />
+                                          ToolTip="开着：一屏把所有行各画一张缩略，纵向滚着扫一遍（这一态用固定小比例，放大按钮先收起）。&#10;关着：只看当前那一行的一张。&#10;一行摆几格在旁边「每行格数」那儿调，调小就是放大。" />
+                                <!-- 第 89 棒②：幻灯片式检查。一行一张自动往下过，放到最后一行自己停，
+                                     中途手动翻一张就停下（判据在 RowCheckPagingAndSlideshowTests）。 -->
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,8,0"
+                                            Visibility="{Binding RowCheck, Converter={StaticResource BoolVis}}">
+                                    <Button Content="{Binding SlideshowButtonLabel}" Command="{Binding ToggleSlideshowCommand}"
+                                            MinWidth="104"
+                                            ToolTip="一行一张自动往下过：核对几十行不必点几十次「下一件」。&#10;再点一颗停；中途用 ← / → 自己翻也会自动停下。&#10;放到最后一行就停住，不绕回第一行——看完了就是看完了。" />
+                                    <TextBlock Text="每行停" VerticalAlignment="Center" Margin="6,0,2,0" />
+                                    <Button Content="－" Command="{Binding SlideshowShorterCommand}" MinWidth="28"
+                                            ToolTip="快一点（每张少停 0.5 秒）" />
+                                    <TextBox Text="{Binding SlideshowIntervalText, UpdateSourceTrigger=PropertyChanged}"
+                                             MinWidth="30" VerticalAlignment="Center" VerticalContentAlignment="Center"
+                                             ToolTip="每张停几秒（0.5 ~ 10）。直接填数字也行。" />
+                                    <Button Content="＋" Command="{Binding SlideshowLongerCommand}" MinWidth="28"
+                                            ToolTip="慢一点（每张多停 0.5 秒）" />
+                                    <TextBlock Text="秒" VerticalAlignment="Center" Margin="2,0,0,0" />
+                                </StackPanel>
+                                <!-- 第 89 棒③：「全部行」那一屏要能放大——一行摆几格由他定，格数越少每格越大。 -->
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,8,0"
+                                            Visibility="{Binding RowCheckAll, Converter={StaticResource BoolVis}}">
+                                    <TextBlock Text="每行格数" VerticalAlignment="Center" Margin="0,0,4,0" />
+                                    <Button Content="－" Command="{Binding RowThumbCellsFewerCommand}" MinWidth="28"
+                                            ToolTip="一行少摆一格 = 每张缩略更大（放大看）。最少 1 格。" />
+                                    <TextBox Text="{Binding RowThumbCellsText, UpdateSourceTrigger=PropertyChanged}"
+                                             MinWidth="28" VerticalAlignment="Center" VerticalContentAlignment="Center"
+                                             ToolTip="一行摆几格（1 ~ 10，默认 10）。直接填数字也行。" />
+                                    <Button Content="＋" Command="{Binding RowThumbCellsMoreCommand}" MinWidth="28"
+                                            ToolTip="一行多摆一格 = 每张缩略更小（一屏看得更多）。最多 10 格。" />
+                                </StackPanel>
                                 <Separator Width="14" Background="Transparent" />
                                 <StackPanel Orientation="Horizontal" Visibility="{Binding RowCheckAll, Converter={StaticResource InvBoolVis}}">
                                     <Button Content="－" Command="{Binding ZoomOutCommand}" MinWidth="34" />
@@ -1117,7 +1146,7 @@
                                 <TextBlock Text="{Binding RowSnapshotLostNotice}" Style="{StaticResource Hint}"
                                            Foreground="#B3261E" FontWeight="Bold" TextWrapping="Wrap" />
                                 <TextBlock Style="{StaticResource Hint}" TextWrapping="Wrap"
-                                           Text="说明：此处已是编号后的单张标签（一行多箱时会展开成多张）；预览按毫米真实尺寸绘制，打印/PDF（M3）复用同一份版面数据。&#10;勾「行检查」= 一行只画第一张（标题写本行几张纸）；再勾「全部行」= 一行摆 10 格往下排，点任意一格就跳到那一行并收起一览。这两态只改这里怎么看，出片仍是整份标签。&#10;「编辑这一张…」= 只改这一张：打开时那一行的文字已按真值写死，保存只影响这一行，模板本身与别的行都不动（件号 No.x/y 仍由软件逐张算）。改错了点旁边「恢复这一张」退回跟模板一致。" />
+                                           Text="说明：此处已是编号后的单张标签（一行多箱时会展开成多张）；预览按毫米真实尺寸绘制，打印/PDF（M3）复用同一份版面数据。&#10;勾「行检查」= 一行只画第一张（标题写本行几张纸），这时 ← / → 就是上一张、下一张，旁边那颗「▶ 幻灯片检查」会一行一张自动往下过（放到最后一行自己停，手动翻一张就停下）；再勾「全部行」= 一屏把所有行各画一张缩略往下扫，「每行格数」调小就是放大，点任意一格就跳到那一行并收起一览。这三样只改这里怎么看，出片仍是整份标签。&#10;「编辑这一张…」= 只改这一张：打开时那一行的文字已按真值写死，保存只影响这一行，模板本身与别的行都不动（件号 No.x/y 仍由软件逐张算）。改错了点旁边「恢复这一张」退回跟模板一致。" />
                             </StackPanel>
                         </Grid>
                     </TabItem>
