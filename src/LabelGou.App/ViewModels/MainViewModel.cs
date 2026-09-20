@@ -1,6 +1,7 @@
 ﻿using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Data;
+using System.Globalization;
 using System.IO;
 using System.Windows;
 using System.Windows.Media;
@@ -126,7 +127,7 @@ public sealed class FieldRowVm : ObservableObject
 /// 这样 M3 打印直接复用 Core，不必从界面里挖逻辑。
 /// </para>
 /// </summary>
-public sealed class MainViewModel : ObservableObject, ILabelSource
+public sealed partial class MainViewModel : ObservableObject, ILabelSource
 {
     private readonly ProfileStore _profileStore = new();
 
@@ -214,6 +215,10 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         HealthUndoCommand = new RelayCommand(UndoHealthFix, () => CanUndoHealthFix);
         ZoomInCommand = new RelayCommand(() => Zoom = Math.Min(8, Zoom * 1.25));
         ZoomOutCommand = new RelayCommand(() => Zoom = Math.Max(0.2, Zoom / 1.25));
+        // 第 89 棒③：一览一行摆几格。－ 是放大（每行少一格），＋ 是缩小（多一格，到默认十格为止）。
+        RowThumbCellsFewerCommand = new RelayCommand(() => RowThumbCellsPerRow--);
+        RowThumbCellsMoreCommand = new RelayCommand(() => RowThumbCellsPerRow++);
+        InitRowCheckTools();
 
         // M2：拼版与编号的界面状态独立成一个 VM，它通过 ILabelSource 反过来取记录与模板
         // （先建好再选模板，因为 SelectedTemplate 的 setter 会通知它重算）
@@ -1285,16 +1290,27 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         set
         {
             if (!Set(ref _rowCheck, value)) return;
+            if (!value) StopSlideshow("行检查关了");
             RebuildRowSheets();
             CurrentIndex = Math.Min(Math.Max(1, CurrentIndex), RecordTotal);
             RebuildLayout();
             RebuildRowThumbs();
             Raise(nameof(RecordTotal));
+            Raise(nameof(ArrowPagesRows));
             StatusMessage = value
-                ? $"行检查开了：{RecordTotal} 行各看一张（一行几张纸的只画第一张），关掉回到逐张看。"
+                ? $"行检查开了：{RecordTotal} 行各看一张（一行几张纸的只画第一张），关掉回到逐张看；" +
+                  "这时 ← / → 就是上一张、下一张。"
                 : "行检查已关，逐张翻。";
         }
     }
+
+    /// <summary>
+    /// 这一态下裸 ← / → 归"翻页"管吗（第 89 棒②，用户：「向右箭头--下一张，向左箭头--上一张」）。
+    /// <para>只在<strong>行检查开着、且没摊成全部行</strong>时接管：全部行那一屏满屏都是，没有"下一张"可翻；
+    /// 关着时是逐张核对，那两条键仍归原来的控件（步骤条、下拉、表格）。焦点让不让由
+    /// <see cref="Services.PreviewArrows"/> 判，规则只在那一处。</para>
+    /// </summary>
+    public bool ArrowPagesRows => _rowCheck && !_rowCheckAll;
 
     private bool _rowCheckAll;
 
@@ -1305,23 +1321,68 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         set
         {
             if (!Set(ref _rowCheckAll, value)) return;
+            if (value) StopSlideshow("摊成全部行了");
             RebuildRowThumbs();
+            Raise(nameof(ArrowPagesRows));
         }
     }
 
     /// <summary>
-    /// 缩略一览一格占几份宽：用户 2026-09-14「默认一行 10 个，多的往下排一行（以此类推）」——
-    /// 一排几格不靠模板尺寸碰运气，而是<strong>可用宽 ÷ 10</strong>：窗口多宽都是 10 格一排。
+    /// 缩略一览一格占几份宽：<strong>默认</strong>一行十格（用户 2026-09-14「默认一行 10 个，多的往下排一行」）。
+    /// <para>第 89 棒③：这个数从前是写死的常量，他想"放大看看"只能把窗口拉宽——现在改由他定，
+    /// <see cref="RowThumbCellsPerRow"/> 越小每格越大。</para>
     /// </summary>
-    public const int RowThumbCellsPerRow = 10;
+    public const int RowThumbCellsPerRowDefault = 10;
+
+    /// <summary>一行最多摆几格（= 默认那档），再小就不是"一览"而是逐张看了。</summary>
+    public const int RowThumbCellsPerRowMax = 10;
+
+    private int _rowThumbCellsPerRow = RowThumbCellsPerRowDefault;
+
+    /// <summary>
+    /// 一览一行摆几格（1 ~ <see cref="RowThumbCellsPerRowMax"/>，默认 10）。
+    /// <para>用户 2026-09-20：「开启全部行时可以放大——调整一行几张进行放大查看」。这一格宽 = 视口宽 ÷ 格数，
+    /// 所以<strong>调小 = 每格变大 = 放大</strong>；出片一张不多一张不少，改的只是这一屏怎么排。</para>
+    /// </summary>
+    public int RowThumbCellsPerRow
+    {
+        get => _rowThumbCellsPerRow;
+        set
+        {
+            Set(ref _rowThumbCellsPerRow, Math.Clamp(value, 1, RowThumbCellsPerRowMax));
+            ApplyRowThumbCellWidth();
+            // 填了 99 夹回 10 时，框里那句也得跟着弹回来，不许留着一个 VM 里根本不存在的数
+            Raise(nameof(RowThumbCellsText));
+        }
+    }
+
+    /// <summary>格数的"直接填数字"那条路（与工具栏那对 －/＋ 并存，不许二选一）。</summary>
+    public string RowThumbCellsText
+    {
+        get => _rowThumbCellsPerRow.ToString(CultureInfo.InvariantCulture);
+        set
+        {
+            // 填不进就不改（半截数字、字母都算）：正在输入时把框清空比留着旧值更难用
+            if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var cells))
+                RowThumbCellsPerRow = cells;
+        }
+    }
+
+    /// <summary>放大一档（每行少摆一格）。</summary>
+    public RelayCommand RowThumbCellsFewerCommand { get; }
+
+    /// <summary>缩小一档（每行多摆一格，最多回到默认十格）。</summary>
+    public RelayCommand RowThumbCellsMoreCommand { get; }
 
     private double _rowThumbCellWidth = 200;   // 还没量到预览区宽度时的兜底（首帧不至于零宽）
+
+    private double _previewViewportWidth;
 
     /// <summary>缩略一览一格的宽度（WrapPanel 的 ItemWidth）：可用宽 ÷ <see cref="RowThumbCellsPerRow"/>。</summary>
     public double RowThumbItemWidth => _rowThumbCellWidth;
 
     /// <summary>
-    /// 预览区量到宽度时由界面调用（<strong>不管自动适应开没开</strong>）：缩略一览按它分十格。
+    /// 预览区量到宽度时由界面调用（<strong>不管自动适应开没开</strong>）：缩略一览按它分格。
     /// <para>第 71 棒：这一格宽从前只在「适应窗口」那条路里更新，而一览开着时那排按钮（含那颗勾）整排是
     /// 藏起来的 —— 于是格宽永远停在兜底值，他看到的「太小、显示不全」就从这里来（「不换行」另有一条，
     /// 是横向滚动把 WrapPanel 撑成无限宽，见 XAML 那侧的注释）。</para>
@@ -1331,7 +1392,15 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
     public void SetPreviewViewport(double width)
     {
         if (width < 60) return;
-        var cell = Math.Max(80, (width - 44) / RowThumbCellsPerRow);
+        _previewViewportWidth = width;
+        ApplyRowThumbCellWidth();
+    }
+
+    /// <summary>按当前视口宽与格数重算一格多宽（两条入口共用：量到宽度、改了格数）。</summary>
+    private void ApplyRowThumbCellWidth()
+    {
+        if (_previewViewportWidth < 60) return;
+        var cell = Math.Max(80, (_previewViewportWidth - 44) / RowThumbCellsPerRow);
         if (Math.Abs(_rowThumbCellWidth - cell) < 1) return;
         _rowThumbCellWidth = cell;
         Raise(nameof(RowThumbItemWidth));
@@ -1457,6 +1526,9 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
         get => _currentIndex;
         set
         {
+            // 第 89 棒②：幻灯片放着时他手动翻了一张（点按钮、按箭头、点缩略格都走这一处）就停下自动播放——
+            // 自动的手不许跟人的手抢方向盘，否则他刚停在哪一行下一秒就被搬走。
+            if (_slideshowPlaying && !_slideshowAdvancing) StopSlideshow("手动翻页");
             var v = Math.Max(0, Math.Min(value, Math.Max(RecordTotal, 0)));
             if (Set(ref _currentIndex, v)) RebuildLayout();
         }
@@ -1472,6 +1544,19 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
     {
         get => _showGuides;
         set => Set(ref _showGuides, value);
+    }
+
+    private bool _showLabelDividers = true;
+
+    /// <summary>
+    /// 整版拼版预览里每枚标签的<strong>分界虚线</strong>（第 82 棒③，用户：「仅预览使用不会被打印」）。
+    /// <para>它与「显示要素边框」是两件事：那颗框的是单枚标签<em>里面</em>的元素，这颗画的是<em>枚与枚</em>的边界。
+    /// 只活在这一块画布上——位图/PDF/TIFF/打印/SVG 五条出口走 <c>Image</c> / <c>Printer</c> 用途，拿不到这条线。</para>
+    /// </summary>
+    public bool ShowLabelDividers
+    {
+        get => _showLabelDividers;
+        set => Set(ref _showLabelDividers, value);
     }
 
     /// <summary>
@@ -2546,7 +2631,10 @@ public sealed class MainViewModel : ObservableObject, ILabelSource
             return;
         }
 
-        var layout = RowCheck ? BuildLayoutForRow(_currentIndex) : BuildLayoutFor(_currentIndex);
+        // 第 89 棒①：行检查开着而"这一行"还不存在（还没导数据、或序号越界）时，退回这份模板的示意版式。
+        // 从前那一路直接把整块预览清成 null，于是 ③ 步选模板时右侧一片空白——用户圈的那片红框就是这个
+        // （他图上那颗「行检查」是勾着的，而表还没导）。有数据时画的仍是真那一行，兜底只在拿不到行时生效。
+        var layout = (RowCheck ? BuildLayoutForRow(_currentIndex) : null) ?? BuildLayoutFor(_currentIndex);
         if (layout is null)
         {
             CurrentLayout = null;

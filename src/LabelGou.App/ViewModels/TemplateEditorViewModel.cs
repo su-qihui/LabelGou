@@ -4,6 +4,7 @@ using System.IO;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using LabelGou.App.Mvvm;
 using LabelGou.App.Rendering;
 using LabelGou.App.Services;
@@ -52,6 +53,8 @@ public sealed class TemplateEditorViewModel : ObservableObject
     private bool _snapToGrid = true;
     private double _gridStepMm = 1;
     private bool _showPreviewText = true;
+    private bool _showElementBoxes = true;
+    private bool _showCenterLines = true;
     private IReadOnlyList<GuideLine> _activeGuides = Array.Empty<GuideLine>();
 
     public TemplateEditorViewModel(LabelTemplate working, TemplateStore store, string? savedFileName = null)
@@ -202,6 +205,9 @@ public sealed class TemplateEditorViewModel : ObservableObject
     /// <summary>「条码」工具（第 55 棒）：没有条码就放一只 Code128 占位供摆位，已有就选中来调。</summary>
     public ICommand AddBarcodeCommand { get; private set; } = null!;
     public ICommand AddImageCommand { get; private set; } = null!;
+
+    /// <summary>粘贴剪贴板里的图片或文字（第 81 棒⑤，与 Ctrl+V 同一个命令）。</summary>
+    public ICommand PasteCommand { get; private set; } = null!;
     public ICommand RemoveCommand { get; private set; } = null!;
     public ICommand DuplicateCommand { get; private set; } = null!;
     public ICommand BringToFrontCommand { get; private set; } = null!;
@@ -346,6 +352,31 @@ public sealed class TemplateEditorViewModel : ObservableObject
         set { if (Set(ref _showPreviewText, value)) CanvasChanged?.Invoke(); }
     }
 
+    /// <summary>
+    /// 要不要画那些"编辑期才有"的元素框（第 81 棒③，用户：「墨迹框可以选择关闭显示」）。
+    /// <para>关掉之后<strong>未选中的元素不再画框，选中的那一只连句柄照画</strong>——一句"全不画"看起来更干净，
+    /// 但换来的是看不见在改谁、句柄也抓不到，那等于把编辑层关掉。CorelDRAW 也是这个口径：
+    /// 未选中的对象不显示边界，选中的显示包围框与手柄。</para>
+    /// <para>它与 <see cref="ShowPreviewText"/> 正好相反的一对：那个管"印出来长什么样"，这个管"编辑期的辅助框"。</para>
+    /// </summary>
+    public bool ShowElementBoxes
+    {
+        get => _showElementBoxes;
+        set { if (Set(ref _showElementBoxes, value)) CanvasChanged?.Invoke(); }
+    }
+
+    /// <summary>
+    /// 画布上过<strong>纸的中心</strong>画横竖两条常驻虚线（第 82 棒②，用户拿 CorelDRAW 的截图说「添加显示横/竖中心虚线」）。
+    /// <para>它与「吸附」不是一回事：那颗管的是"拖到中线附近吸过去、当时闪一条粉色辅助线"（<see cref="ActiveGuides"/>），
+    /// 松手就没；这两条是<strong>一直在</strong>的定位参照——想知道"这只元素在整张纸上正不正"不必先拖一下。</para>
+    /// <para>只活在编辑期：画法（<c>LabelRenderer</c>）一个字不动，五出口拿不到它。</para>
+    /// </summary>
+    public bool ShowCenterLines
+    {
+        get => _showCenterLines;
+        set { if (Set(ref _showCenterLines, value)) CanvasChanged?.Invoke(); }
+    }
+
     public string StatusText
     {
         get => _statusText;
@@ -395,6 +426,7 @@ public sealed class TemplateEditorViewModel : ObservableObject
         AddBarcodeCommand = new RelayCommand(AddBarcode);
         BuildNodeCommands();
         AddImageCommand = new RelayCommand(AddImage);
+        PasteCommand = new RelayCommand(Paste);
         RemoveCommand = new RelayCommand(RemoveSelected, () => SelectedRow is not null);
         DuplicateCommand = new RelayCommand(DuplicateSelected, () => SelectedRow is not null);
         BringToFrontCommand = new RelayCommand(() => ChangeLayer(999), () => SelectedRow is not null);
@@ -491,13 +523,23 @@ public sealed class TemplateEditorViewModel : ObservableObject
             Filter = "图片文件|*.png;*.jpg;*.jpeg;*.bmp;*.gif|所有文件|*.*",
         };
         if (dialog.ShowDialog() != true) return;
+        AddImageFile(dialog.FileName);
+    }
 
+    /// <summary>
+    /// 把一张图片文件加进模板（「图片」那颗按钮与单测共用的这一步）。
+    /// <para>第 82 棒①：尺寸不再写死 20×12——那是用户报「导入图片比例显示不正常」的真因：
+    /// 渲染端把位图填满框（CDR 的语义），框是扁的图就是扁的。现在按文件自己的像素与 DPI 走
+    /// <see cref="ImageSizing"/>，与「粘贴」同一条算式（同一件事不许有两份代码）。</para>
+    /// </summary>
+    internal void AddImageFile(string pickedPath)
+    {
         var targetDirectory = Path.Combine(_store.UserDirectory, "assets");
         Directory.CreateDirectory(targetDirectory);
-        var target = Path.Combine(targetDirectory, Path.GetFileName(dialog.FileName));
+        var target = Path.Combine(targetDirectory, Path.GetFileName(pickedPath));
         try
         {
-            File.Copy(dialog.FileName, target, overwrite: true);
+            File.Copy(pickedPath, target, overwrite: true);
         }
         catch (Exception ex)
         {
@@ -505,9 +547,145 @@ public sealed class TemplateEditorViewModel : ObservableObject
             return;
         }
 
+        var (widthMm, heightMm) = NaturalSizeIntoContentArea(pickedPath);
         AddElement(TemplateFactory.NewImage(
-            Path.Combine("assets", Path.GetFileName(dialog.FileName)),
-            _template.PaddingMm, _template.PaddingMm, 20, 12), "图片");
+            Path.Combine("assets", Path.GetFileName(pickedPath)),
+            _template.PaddingMm, _template.PaddingMm, widthMm, heightMm), "图片");
+    }
+
+    /// <summary>这张图在现在这份标签上该占多大（原样大，装不下才等比缩到内容区）。</summary>
+    private (double Width, double Height) NaturalSizeIntoContentArea(string path)
+    {
+        var (px, py, dpiX, dpiY) = ImageFile.ReadDimensions(path);
+        return ImageSizing.PlacementFor(px, py, dpiX, dpiY, ContentWidthMm, ContentHeightMm);
+    }
+
+    /// <summary>内容区（纸面减掉内边距）的宽高——图片、粘贴进来的图都按它兜底。</summary>
+    private (double Width, double Height) ContentArea()
+        => (Math.Max(1, _template.WidthMm - 2 * _template.PaddingMm),
+            Math.Max(1, _template.HeightMm - 2 * _template.PaddingMm));
+
+    private double ContentWidthMm => ContentArea().Width;
+
+    private double ContentHeightMm => ContentArea().Height;
+
+    /// <summary>
+    /// 粘贴（第 81 棒⑤，用户：「添加粘贴——可以粘贴其他软件复制的图片文字等」）。
+    /// <para>分派只看剪贴板里<strong>真有什么</strong>：有位图先当图片（截图工具、看图器、Word 里复制的图都走这一路），
+    /// 否则有文字就落一条文本元素（内容原样，换行留着——从 Excel 单元格复制来的常是多行）。</para>
+    /// <para>两样都没有要把话说出口，不许静默：这软件从前根本没有粘贴，"点了没反应"和"没这个功能"在用户那边是同一件事。</para>
+    /// </summary>
+    private void Paste()
+    {
+        if (Clipboard.ContainsImage())
+        {
+            PasteImage();
+            return;
+        }
+        if (Clipboard.ContainsText())
+        {
+            var text = Clipboard.GetText().TrimEnd('\r', '\n');   // 末尾那个换行是复制时带上的，不是内容
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                SayNothingToPaste();
+                return;
+            }
+            AddElement(TemplateFactory.NewText(text, _template.PaddingMm, _template.PaddingMm, 30, 6), "粘贴的文字");
+            return;
+        }
+        SayNothingToPaste();
+    }
+
+    private void SayNothingToPaste() =>
+        StatusText = "剪贴板里没有可粘贴的图片或文字。在别的软件里先复制一次（截图、看图器里复制图片、" +
+                     "或选中文字 Ctrl+C），再回这里按 Ctrl+V。";
+
+    /// <summary>
+    /// 把剪贴板里那张图落成模板自带的 PNG，再加一只图片元素。
+    /// <para>为什么必须落盘而不是"记在内存里"：图片元素存的是<strong>相对路径</strong>
+    /// （<c>assets\xxx.png</c>，见 <see cref="AddImage"/>），模板拷到店里另一台电脑才带得走；
+    /// 不落盘的话这份模板换机器就只剩一个空框。</para>
+    /// <para>尺寸按图片自己的 DPI 换成毫米＝它的"原样大"，<strong>不凭空放大</strong>（放大只会糊）；
+    /// 只有比内容区还大才等比缩到装得下——一张屏幕截图按原样大是 200 多毫米，任何唛头纸都装不下。</para>
+    /// </summary>
+    private void PasteImage()
+    {
+        BitmapSource? source;
+        try
+        {
+            source = Clipboard.GetImage();
+        }
+        catch (Exception ex)
+        {
+            Report($"剪贴板里那张图没能取出来：{ex.Message}");
+            return;
+        }
+        if (source is null or { PixelWidth: 0 } or { PixelHeight: 0 })
+        {
+            SayNothingToPaste();
+            return;
+        }
+
+        var name = $"pasted-{DateTime.Now:yyyyMMdd-HHmmss}-{Guid.NewGuid().ToString("N")[..4]}.png";
+        var assetsDirectory = Path.Combine(_store.UserDirectory, "assets");
+        var relative = Path.Combine("assets", name);
+        try
+        {
+            Directory.CreateDirectory(assetsDirectory);
+            var encoder = new PngBitmapEncoder();
+            encoder.Frames.Add(BitmapFrame.Create(source));
+            using var stream = File.Create(Path.Combine(assetsDirectory, name));
+            encoder.Save(stream);
+        }
+        catch (Exception ex)
+        {
+            Report($"粘贴的图片没能存进模板目录：{ex.Message}");
+            return;
+        }
+
+        // 尺寸口径与「图片」那颗按钮同一条算式（Core 的 ImageSizing）：原样大、装不下才等比缩
+        var (widthMm, heightMm) = ImageSizing.PlacementFor(source.PixelWidth, source.PixelHeight,
+            source.DpiX, source.DpiY, ContentWidthMm, ContentHeightMm);
+        AddElement(TemplateFactory.NewImage(relative, _template.PaddingMm, _template.PaddingMm,
+            Math.Round(widthMm, 2), Math.Round(heightMm, 2)), "粘贴的图片");
+    }
+
+    /// <summary>
+    /// 双击画布：这一点上该就地编辑的那条文字（点到的不是文字、或没命中 → null）。
+    /// <para>命中走 <see cref="EditGeometry.TopmostAt"/> 那两遍（第 83 棒①）：<strong>谁的字看得见就选谁</strong>，
+    /// 不再让上面那条通栏行带把别人的字抢走。</para>
+    /// </summary>
+    public TemplateElement? TextAtForEdit(double xMm, double yMm)
+    {
+        var index = EditGeometry.TopmostAt(_template, xMm, yMm, inkBoxes: DisplayBoxOf);
+        if (index < 0) return null;
+        var element = _template.Elements[index];
+        return element.Kind == ElementKind.Text && element.Visible ? element : null;
+    }
+
+    /// <summary>
+    /// 就地编辑框里放什么：<strong>模板原文</strong>（含 <c>{{col:货号}}</c> 这类占位符），不是屏幕上那份样例值。
+    /// <para>画布平时显示的是样例数据排出来的结果（"QTY:48PCS"），双击后要改的是这一格的<strong>模板</strong>
+    /// （"QTY:{{col:QTY}}PCS"）。编辑框里给样例值，用户就会把字段整个写死成数字——那是第 73 棒定稿之后
+    /// 最不该再犯的一次（进库会印到别的行的货上）。</para>
+    /// </summary>
+    public string InlineEditDraftFor(TemplateElement element) => element.Text ?? string.Empty;
+
+    /// <summary>
+    /// 提交就地编辑：先选中这一行，再走属性面板「内容」那同一格写入口（<c>Prepare/Done</c>：一步撤销、置脏、重建样例）。
+    /// <para>不开第二条写路径——内容这个字段以前就有两个写家（面板与插入字段），第三个只会让它们再漂移。</para>
+    /// </summary>
+    public bool CommitInlineEdit(TemplateElement element, string text)
+    {
+        var row = Elements.FirstOrDefault(r => ReferenceEquals(r.Element, element));
+        if (row is null) return false;
+        SelectedRow = row;
+        if (Editing is null || string.Equals(text, Editing.Text, StringComparison.Ordinal)) return false;
+
+        Editing.Text = text;
+        StatusText = "已改这一行的内容（画布上显示的是样例数据排出来的结果；占位符写回模板里了）。" +
+                     "Ctrl+Z 可退。";
+        return true;
     }
 
     private void RemoveSelected()
@@ -919,7 +1097,9 @@ public sealed class TemplateEditorViewModel : ObservableObject
         {
             var element = TemplateFactory.NewLine(xMm, yMm, xMm, yMm, DefaultLineThicknessMm);
             Capture();                       // 必须在加入之前录：快照里带着这个新元素的话，Esc/撤销会把它原样放回来
-            var outcome = TemplateFactory.AddElement(_template, element, xMm, yMm);
+            // 第 81 棒④：画布上这一下是用户下的手，不找空位、不夹进纸内——AI 行式模板满纸通栏行带，
+            // 从前每一次按下都被 FindFreeSpot 搬到 2mm 网格上的别处，看起来就是"起点不是点的那一下"。
+            var outcome = TemplateFactory.AddElement(_template, element, xMm, yMm, exactlyWhereAsked: true);
             if (outcome is null)
             {
                 StatusText = "元素数量已到上限，画不下去了。";
@@ -933,7 +1113,7 @@ public sealed class TemplateEditorViewModel : ObservableObject
             var placed = _template.Elements[outcome.Index];
             _pathElement = placed;           // 下标会漂（撤销换对象、删元素变短），写回前拿这个引用对一下
             SelectedRow = Elements.FirstOrDefault(r => ReferenceEquals(r.Element, placed));
-            // 落点以元素为准：AddElement 找不到原位时会把它挪到最近的空位，拿点击坐标当第一个节点就会与元素对不上。
+            // 仍以元素为准（它是唯一事实）：第 81 棒起这一条不再搬位置，两者必然相等。
             _path.Add(new CurveNode(placed.X, placed.Y, 0, 0, 0, 0));
         }
         else
@@ -1119,7 +1299,8 @@ public sealed class TemplateEditorViewModel : ObservableObject
             _ => ElementKind.Rect,
         };
         var element = TemplateFactory.NewShape(kind, xMm, yMm, EditGeometry.MinSideMm, EditGeometry.MinSideMm);
-        var outcome = TemplateFactory.AddElement(_template, element, xMm, yMm);
+        // 第 81 棒④：按下那一点就是这只形状的起点，不许被"找空位"搬走（与 BeginPath 同一条路）。
+        var outcome = TemplateFactory.AddElement(_template, element, xMm, yMm, exactlyWhereAsked: true);
         if (outcome is null)
         {
             StatusText = "元素数量已到上限，画不下去了。";
@@ -1303,7 +1484,8 @@ public sealed class TemplateEditorViewModel : ObservableObject
         Touch();
         RebuildSample();
         RecomputeIssues();
-        StatusText = "已转为曲线：顶点可拖、双击段可加点、选中点可按 Delete 删（Ctrl+Z 退回转换前）。";
+        StatusText = "已转为曲线：顶点可拖、双击段可加点、选中点可按 Delete 删；整只框的拖角缩放与「宽(mm)/高(mm)」照旧可用。"
+            + "边数不再起作用（要改边数请 Ctrl+Z 退回多边形）。";
         result = converted;
         return true;
     }
@@ -1509,9 +1691,11 @@ public sealed class TemplateEditorViewModel : ObservableObject
             if (_dragMode == DragMode.Node)
             {
                 pts[hit.Index] = n with { X = n.X + dx, Y = n.Y + dy };
-                // 闭合曲线的首尾是同一个可见点：拖一个另一个跟着走（与 CurveGeometry.MoveNode 同口径，
-                // 不然"拖顶点转出来的闭合曲线"一拖就裂口——第 53 棒）。
-                if (CurveGeometry.IsClosed(element) && (hit.Index == 0 || hit.Index == pts.Count - 1))
+                // 闭合曲线的接缝【只在首尾真重合时】才是同一个可见点：拖一个另一个跟着走
+                // （与 CurveGeometry.MoveNode 同口径，不然"拖顶点转出来的闭合曲线"一拖就裂口——第 53 棒）。
+                // 「转为曲线」产的那一种首尾是两个不同的角，无条件同步会把末点叠到首点上、当场塌一角（第 85 棒）。
+                if (CurveGeometry.IsClosed(element) && CurveGeometry.SeamCoincides(_dragSnapshot)
+                    && (hit.Index == 0 || hit.Index == pts.Count - 1))
                 {
                     var twin = hit.Index == 0 ? pts.Count - 1 : 0;
                     pts[twin] = pts[twin] with { X = n.X + dx, Y = n.Y + dy };
@@ -2113,9 +2297,11 @@ public sealed class TemplateEditorViewModel : ObservableObject
     }
 
     /// <summary>
-    /// 永不折行的文本，越界只能按<strong>看得见的墨迹</strong>判（Core 量不了字，这里用屏幕上那份样例版面量）。
-    /// <para>第 46 棒：折行边界从行带手里交出去之后，"内容别出纸"这份保护由这里接手；出纸前还有一道
-    /// 按真数据量的闸门（<c>PageContentSource</c>），两处共用 <see cref="Rendering.TextInkBox"/> 同一份量法。</para>
+    /// 文本的墨迹探出纸边，按<strong>屏幕上这份样例</strong>量出来提醒（第 46 棒接手行带那份保护，第 81 棒放开摆位后扩到全部文本）。
+    /// <para><strong>为什么是 Warning 不是 Error</strong>：这里量的是样例值，不是这批货的真值——
+    /// 拿样例拦存盘等于冤枉一份好模板（真值更长时 ④⑤ 步那道按真数据量的闸会再拦一次，那才是该拦的地方）。
+    /// 而本棒把文本摆位从纸边放开之后，再留成 Error 就是"能拖出去、存不进来"的死路（§五 记过这条）。</para>
+    /// <para>三处共用 <see cref="Rendering.TextInkBox"/> 同一份量法：编辑器画框、这里提醒、出纸前闸门。</para>
     /// </summary>
     private IReadOnlyList<TemplateIssue> WithInkOverflow(IReadOnlyList<TemplateIssue> issues)
     {
@@ -2123,12 +2309,12 @@ public sealed class TemplateEditorViewModel : ObservableObject
         for (var i = 0; i < _template.Elements.Count; i++)
         {
             var element = _template.Elements[i];
-            if (element.Kind != ElementKind.Text || !element.NoWrap || !element.Visible) continue;
+            if (element.Kind != ElementKind.Text || !element.Visible) continue;
             var over = InkOverflowMm(element);
             if (over <= TemplateValidator.ToleranceMm) continue;
-            list.Add(new TemplateIssue(IssueLevel.Error,
-                $"第 {i + 1} 个元素的字排出来探出标签约 {over:0.#} mm。这一行是「永不折行」，不会被行带默默收回去——" +
-                "请挪回纸内、改小字号，或点工具栏「缩回纸内」。", i));
+            list.Add(new TemplateIssue(IssueLevel.Warning,
+                $"第 {i + 1} 个元素的字排出来探出标签约 {over:0.#} mm（屏幕上这份样例量的）。" +
+                "印到纸上那一截会被刀模裁掉——请挪回纸内、改小字号，或点工具栏「缩回纸内」。", i));
         }
         list.AddRange(ArtworkDegradations());
         return list;
@@ -2256,6 +2442,7 @@ public sealed class ElementRow
         ElementKind.Ellipse => "椭圆",
         ElementKind.Polygon => "多边形",
         ElementKind.Image => "图片",
+        ElementKind.Placeholder => "占位对象",
         _ => "元素",
     };
 
@@ -2269,6 +2456,10 @@ public sealed class ElementRow
                 return Truncate(string.IsNullOrWhiteSpace(Element.Text) ? "（空文本）" : Element.Text);
             if (Element.Kind == ElementKind.Image)
                 return Truncate(Path.GetFileName(Element.ImagePath ?? "未选图片"));
+            if (Element.Kind == ElementKind.Placeholder)
+                // 图层行上就把"为什么画不出"说出来：它在纸上确实占着一块，但只是个占位框。
+                // 只说"占位对象"会让人以为软件弄丢了东西（第 88 棒：降级不许静默）。
+                return Element.SourceNotes is { Count: > 0 } notes ? Truncate(notes[0]) : "本通道拿不出画法";
             var box = EditGeometry.BoxOf(Element);
             return $"{box.Width:0.#} × {box.Height:0.#} mm";
         }
@@ -2352,16 +2543,24 @@ public sealed class EditableElement : ObservableObject
 
     public bool IsImage => _element.Kind == ElementKind.Image;
 
-    public bool HasBox => _element.Kind != ElementKind.Line;
+    /// <summary>
+    /// 这只元素有没有"整只框"（决定「宽(mm)/高(mm)」那两格显不显示）。
+    /// <para>第 85 棒：曲线也算有——它的外接框是<strong>量出来的</strong>（<c>EditGeometry.BoxOf</c> 对曲线走
+    /// <c>CurveGeometry.BoundsMm</c>）。从前这里写死 <c>Kind != Line</c>，于是「转为曲线」后的多边形
+    /// 连宽高两格一起没了，加上画布上不画八向句柄，用户报的就是"删角之后没法拉伸扭曲"。
+    /// 一条没有节点也没有柄的直线仍然不给（它的"缩放"就是拖那两个端点）。</para>
+    /// </summary>
+    public bool HasBox => _element.Kind != ElementKind.Line || EditGeometry.HasMeasuredBox(_element);
 
     /// <summary>只有文本才有「折行宽度」这一格（第 46 棒）。</summary>
     public bool HasText => _element.Kind == ElementKind.Text;
 
     /// <summary>
-    /// 折行宽度（毫米）。<strong>0 = 永不折行</strong>：内容多长排多长，排到纸外由「缩回纸内」收回。
-    /// <para>填一个正值（例如与「宽(mm)」相同）就恢复老行为：按这个宽度折行、按它缩字号。
-    /// 这条字段是第 46 棒把折行边界从隐形行带手里交出来的产物，别与「宽(mm)」混为一谈——
-    /// 后者只管字在哪对齐。</para>
+    /// 折行宽度（毫米）。<strong>0 = 这一行不按宽度断行</strong>：内容多长排多长，排到纸外由「缩回纸内」收回。
+    /// <para>它同时是<strong>缩字号的目标宽度</strong>——第 85 棒把这两件事拆开了：从前只有"允许折行"开着时它才起作用，
+    /// 关掉折行就连字也不缩了，长值只能原字号伸出去被裁。现在不管折不折行，它都照量。</para>
+    /// <para>别与「宽(mm)」混为一谈——后者只管字在哪对齐。要老行为（按这个宽度折行）就填一个正值并把下面那颗
+    /// 「允许折行」勾上。</para>
     /// </summary>
     public double WrapWidthMm
     {
@@ -2371,6 +2570,25 @@ public sealed class EditableElement : ObservableObject
             if (Near(value, _element.WrapWidthMm)) return;
             Prepare(nameof(WrapWidthMm));
             _element.WrapWidthMm = Math.Max(0, Math.Round(value, 2));
+            Done();
+        }
+    }
+
+    /// <summary>
+    /// 允许折行（第 85 棒，用户 2026-09-19：「即使超出也不折行」）。勾上 = 按「折行宽度」断行（老行为）；
+    /// 关掉 = 这一行<strong>永不折行、也永不出省略号</strong>，装不下先缩字号，缩到下限仍装不下就单行伸出纸外，
+    /// 由裁切与越界提醒接手。
+    /// <para>行式骨架与 AI 出的版式默认是<strong>关</strong>（一行就是一行，不许把下一格压住）；
+    /// 客户名/地址那种确实要排两行的，勾上它。</para>
+    /// </summary>
+    public bool AllowWrap
+    {
+        get => _element.AllowWrap ?? true;
+        set
+        {
+            if (value == AllowWrap) return;
+            Prepare(nameof(AllowWrap));
+            _element.AllowWrap = value ? null : false;   // 勾上就撤掉字段：与 v12 老文件逐字一样（与 Stroked 同一写法）
             Done();
         }
     }
@@ -2749,8 +2967,20 @@ public sealed class EditableElement : ObservableObject
     /// <summary>是不是椭圆（第 51 棒）。</summary>
     public bool IsEllipse => _element.Kind == ElementKind.Ellipse;
 
-    /// <summary>是不是多边形（第 51 棒，决定「边数」那一格显不显示）。</summary>
+    /// <summary>是不是多边形（第 51 棒，决定「边数」那一格可不可改）。</summary>
     public bool IsPolygon => _element.Kind == ElementKind.Polygon;
+
+    /// <summary>
+    /// 「边数」那一格显不显示（第 85 棒⑥）。多边形照旧；<strong>已转为闭合曲线</strong>的那只也显示、但是灰的。
+    /// <para>从前它直接消失，用户只知道"边数没了"、不知道为什么也找不回（他 2026-09-19 拍的：不做回转，
+    /// 但要说清）。开口曲线（曲线工具画的那条）不给——它本来就没有"边数"这件事。</para>
+    /// </summary>
+    public bool ShowsPolygonSides => IsPolygon || CurveGeometry.IsClosed(_element);
+
+    /// <summary>「边数」那一格此刻该说什么（灰掉时把原因写在原地，不让人去猜）。</summary>
+    public string PolygonSidesHint => IsPolygon
+        ? "CorelDRAW 的「多边形的边数」：3 起步，100 封顶（再多画出来就是圆）。"
+        : "这只已经是闭合曲线了：形状由节点决定，边数不再起作用。要改边数请 Ctrl+Z 退回多边形再改。";
 
     /// <summary>「转为曲线」那颗给谁看（第 53 棒）：多边形与矩形；椭圆这棒不给（转它要用四段弧，还没做）。</summary>
     public bool ShowsConvertToCurve => _element.Kind is ElementKind.Polygon or ElementKind.Rect;
@@ -2925,6 +3155,7 @@ public sealed class EditableElement : ObservableObject
         ElementKind.Ellipse => "椭圆",
         ElementKind.Polygon => "多边形",
         ElementKind.Image => "图片",
+        ElementKind.Placeholder => "占位对象",
         _ => "元素",
     };
 
@@ -2932,9 +3163,37 @@ public sealed class EditableElement : ObservableObject
 
     public double Y { get => _element.Y; set { if (Near(value, _element.Y)) return; Prepare(nameof(Y)); _element.Y = value; Done(); } }
 
-    public double Width { get => _element.Width; set { if (Near(value, _element.Width)) return; Prepare(nameof(Width)); _element.Width = Math.Max(EditGeometry.MinSideMm, value); Done(); } }
+    /// <summary>
+    /// 盒宽（毫米）。曲线那一只读的是<strong>量出来的</strong>外接框，写回去走整体缩放
+    /// （<see cref="EditGeometry.SetBoxSize"/>）——直接写 <c>_element.Width</c> 对它是空操作（第 85 棒）。
+    /// 文本仍读排版盒（不是拉伸后的视觉盒）：面板这一格改的是折行判定，与「字面拉伸」两码事（第 43 棒口径）。
+    /// </summary>
+    public double Width
+    {
+        get => EditGeometry.HasMeasuredBox(_element) ? EditGeometry.VisualBoxOf(_element).Width : _element.Width;
+        set
+        {
+            var want = Math.Max(EditGeometry.MinSideMm, value);
+            if (Near(want, Width)) return;
+            Prepare(nameof(Width));
+            EditGeometry.SetBoxSize(_element, want, null);
+            Done();
+        }
+    }
 
-    public double Height { get => _element.Height; set { if (Near(value, _element.Height)) return; Prepare(nameof(Height)); _element.Height = Math.Max(EditGeometry.MinSideMm, value); Done(); } }
+    /// <summary>盒高（毫米）。口径同 <see cref="Width"/>。</summary>
+    public double Height
+    {
+        get => EditGeometry.HasMeasuredBox(_element) ? EditGeometry.VisualBoxOf(_element).Height : _element.Height;
+        set
+        {
+            var want = Math.Max(EditGeometry.MinSideMm, value);
+            if (Near(want, Height)) return;
+            Prepare(nameof(Height));
+            EditGeometry.SetBoxSize(_element, null, want);
+            Done();
+        }
+    }
 
     public double X2 { get => _element.X2; set { if (Near(value, _element.X2)) return; Prepare(nameof(X2)); _element.X2 = value; Done(); } }
 
@@ -3062,7 +3321,7 @@ public sealed class EditableElement : ObservableObject
         {
             nameof(X), nameof(Y), nameof(Width), nameof(Height), nameof(X2), nameof(Y2), nameof(Text), nameof(ImagePath),
             nameof(FontFamily), nameof(FontSizePt), nameof(Bold), nameof(ThicknessMm), nameof(MaxLines),
-            nameof(ShrinkToFit), nameof(Visible), nameof(Align), nameof(WrapWidthMm),
+            nameof(ShrinkToFit), nameof(Visible), nameof(Align), nameof(WrapWidthMm), nameof(AllowWrap),
             nameof(RotationDeg), nameof(TextScaleX), nameof(TextScaleY), nameof(CanRotate), nameof(CanStretchText), nameof(CanSetFont), nameof(CanTintInk),
             // 第 47 棒：墨色那一整组。撤销之后面板上还得刷回真值，漏一个就是一格数字在骗人。
             nameof(InkColor), nameof(InkSwatch), nameof(InkSummary), nameof(InkUsesCmyk), nameof(InkUsesRgb),
@@ -3076,6 +3335,8 @@ public sealed class EditableElement : ObservableObject
             nameof(CornerRadiusBottomRightMm), nameof(CornerRadiusBottomLeftMm),
             nameof(FillShowsSlash), nameof(PenShowsSlash), nameof(IsRect),
             nameof(IsEllipse), nameof(IsPolygon), nameof(HasShapeAppearance), nameof(PolygonSides), nameof(ShowsConvertToCurve),
+            // 第 85 棒：曲线也吃"整只框"了——转曲线/撤销回多边形这两下，宽高格与边数格的显隐必须刷回真值。
+            nameof(HasBox), nameof(ShowsPolygonSides), nameof(PolygonSidesHint),
             nameof(PenSwatch), nameof(FillSwatch), nameof(PenSummary), nameof(FillSummary),
             nameof(InkTargetText), nameof(InkPopupOpen), nameof(ThicknessText),
         })

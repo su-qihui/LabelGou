@@ -87,13 +87,22 @@ public sealed record TextItem(
     double TextScaleX = 1,
     double TextScaleY = 1,
     double WrapWidthMm = 0,
-    Colors.LabelColor? Ink = null) : LayoutItem
+    Colors.LabelColor? Ink = null,
+    bool AllowWrap = true) : LayoutItem
 {
     /// <summary>这一项带不带几何变换（旋转或任一方向拉伸）。渲染端用它决定要不要 Push/Pop 变换组。</summary>
     public bool HasGeometry => RotationDeg != 0 || TextScaleX != 1 || TextScaleY != 1;
 
-    /// <summary>永不折行（第 46 棒）：内容多长排多长，对齐偏移由 <c>TextFit</c> 自己算，不靠 <c>MaxTextWidth</c>。</summary>
-    public bool NoWrap => WrapWidthMm <= 0;
+    /// <summary>
+    /// 折不折行（第 46 棒拆出宽度、第 85 棒再拆出"允不允许"）：<strong>给了折行宽度且没被关掉</strong>才折。
+    /// <para>不折行时内容多长排多长，对齐偏移由 <c>TextFit</c> 自己算，不靠 <c>MaxTextWidth</c>；
+    /// 但 <see cref="WrapWidthMm"/> 仍然当<strong>缩字目标</strong>用——这是第 85 棒那一刀的全部意义：
+    /// "缩到多小"和"在哪儿断行"是两件事，从前共用一个数，结果长值默默折回两行压到下一格上。</para>
+    /// </summary>
+    public bool Wraps => WrapWidthMm > 0 && AllowWrap;
+
+    /// <summary><see cref="Wraps"/> 的反面。五处消费方共用这两个判据，别各写一遍。</summary>
+    public bool NoWrap => !Wraps;
 
     /// <summary>
     /// 生成这一项的模板元素（不参与 JSON 序列化，只给运行时用）。
@@ -117,6 +126,15 @@ public sealed record ImageItem(string AbsolutePath, double X, double Y, double W
 /// 矢量出口则直接写回 SVG；Core 只负责落位，不认 SVG 内容。</para>
 /// </summary>
 public sealed record VectorItem(string AbsolutePath, double X, double Y, double Width, double Height, bool ReferenceOnly = false, double RotationDeg = 0) : LayoutItem;
+
+/// <summary>
+/// 占位项（第 88 棒）：外部设计里<strong>确有此物、但本通道拿不出画法</strong>的那些对象
+/// （CorelDRAW 的 OLE 条码就是典型：盒是准的，里面几个数字读不出来）。
+/// <para>它<strong>必须产出、必须被画出来</strong>——落空即等于"把读不出来当成它不存在"，
+/// 那正是 CDR 分区踩过的坑（判成隐形会一页抹掉 8 只条码）。
+/// <paramref name="Reason"/> 是给人看的那句"为什么画不出"，渲染端与校验端都要能拿到它。</para>
+/// </summary>
+public sealed record PlaceholderItem(double X, double Y, double Width, double Height, string? Reason, double RotationDeg = 0) : LayoutItem;
 
 /// <summary>
 /// 条码项（第 17 棒）。<strong>矩形已经在 Core 算成毫米</strong>，渲染端只负责画，不重算条宽——
@@ -383,11 +401,22 @@ public static class LayoutEngine
                     break;
                 }
 
+                case ElementKind.Placeholder:
+                    // 这一支必须在 `default:` 之前：default 与 Text 合写在同一格，
+                    // 落进去会被当成文字排（element.Text 为空 → 整条被"隐藏"，就是静默丢对象）。
+                    // 读不出来不等于不存在，所以永远产出、永远画，reason 跟着走。
+                    items.Add(new PlaceholderItem(element.X, element.Y, element.Width, element.Height,
+                        element.SourceNotes is { Count: > 0 } notes ? string.Join("；", notes) : null,
+                        element.RotationDeg));
+                    break;
+
                 case ElementKind.Text:
                 default:
-                    var text = ApplyTextCase(
-                        ResolveText(element.Text, template, record, context, unresolved, out var flagReason),
-                        context.TextCase);
+                    // 导入来的文字照 Corel 原样，不吃「唛头大小写」那格：它是给人工排版的字段用的，
+                    // 拿去改人家图上的字就是"软件替用户改了图"。用户 2026-09-19 实测：Corel 里是
+                    // `Item no：olu830-35`，预览变成 `ITEM NO：OLU830-35`，大写更宽，直接把首行顶出纸外。
+                    var resolved = ResolveText(element.Text, template, record, context, unresolved, out var flagReason);
+                    var text = element.Imported ? resolved : ApplyTextCase(resolved, context.TextCase);
                     if (string.IsNullOrWhiteSpace(text))
                     {
                         // 变量全空 或 本来就是空文本 → 隐藏；纯静态文本为空也算隐藏
@@ -409,6 +438,7 @@ public static class LayoutEngine
                         TextScaleX: element.TextScaleX,
                         TextScaleY: element.TextScaleY,
                         WrapWidthMm: element.WrapWidthMm,
+                        AllowWrap: element.AllowWrap ?? true,
                         Ink: InkOf(element.InkColor, context))
                     { Source = element });
                     break;

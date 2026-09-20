@@ -30,6 +30,15 @@ public sealed class TemplateEditorControl : FrameworkElement
     private static readonly Brush HandleBrush = Frozen(new SolidColorBrush(Colors.White));
     private static readonly Brush DimBrush = Frozen(new SolidColorBrush(Color.FromArgb(70, 200, 60, 60)));
 
+    /// <summary>
+    /// 纸中心那两条常驻虚线（第 82 棒②）。<c>internal</c> 是给单测按引用比对用的——
+    /// 判据要问的是"这一帧画没画这两条"，比对颜色常数改个色号就红，比错了方向。
+    /// </summary>
+    internal static readonly Pen CenterPen = Frozen(new Pen(new SolidColorBrush(Color.FromArgb(190, 120, 130, 190)), 0.8)
+    {
+        DashStyle = new DashStyle(new double[] { 4, 3 }, 0),
+    });
+
     private TemplateEditorViewModel? _vm;
     private double _zoom = 1;
     private bool _zoomExplicit;
@@ -57,6 +66,35 @@ public sealed class TemplateEditorControl : FrameworkElement
 
     private bool _dragging;
     private bool _dragIsResize;      // 这一笔抓的是句柄（缩放）还是元素本体（移动）——只服务光标
+
+    /// <summary>
+    /// 双击落在一条文字上：请窗口在 <paramref name="box"/>（画布设备坐标）上开一个就地编辑框（第 83 棒②）。
+    /// <para>控件只管像素，"改哪一格、怎么落"交给窗口与 VM——所以这里只发请求，不搬内容。</para>
+    /// </summary>
+    internal event Action<TemplateElement, Rect>? InlineEditRequested;
+
+    /// <summary>
+    /// 这一点要不要进就地编辑（双击分派的那一步，单测直接叫这一句，不必合成鼠标事件）。
+    /// <para>命中判据是 <see cref="TemplateEditorViewModel.TextAtForEdit"/>——<strong>谁的字看得见就编辑谁</strong>，
+    /// 上面那条通栏行带不许抢（第 83 棒①）。</para>
+    /// </summary>
+    internal bool RequestInlineEditAt(double xMm, double yMm)
+    {
+        var vm = _vm;
+        if (vm is null) return false;
+        var target = vm.TextAtForEdit(xMm, yMm);
+        if (target is null) return false;
+        InlineEditRequested?.Invoke(target, ScreenBoxOf(target));
+        return true;
+    }
+
+    /// <summary>元素在画布上的设备矩形（就地编辑框的落点；转过的元素按未转的盒摆，编辑框不需要跟着转）。</summary>
+    private Rect ScreenBoxOf(TemplateElement element)
+    {
+        var box = _vm?.DisplayBoxOf(element) ?? EditGeometry.VisualBoxOf(element);
+        return new Rect(ToDiuX(box.X), ToDiuY(box.Y),
+            Math.Max(1, Mm.ToDiu(box.Width) * _zoom), Math.Max(1, Mm.ToDiu(box.Height) * _zoom));
+    }
 
     public TemplateEditorControl()
     {
@@ -135,6 +173,14 @@ public sealed class TemplateEditorControl : FrameworkElement
 
     // ---------- 绘制 ----------
 
+    /// <summary>
+    /// 把这一帧画进给定上下文，只为单测看得到"到底画没画"。
+    /// <para>为什么要它：<c>UIElement.RenderOpen</c> 是 protected，测试拿不到画出来的东西；而第 50 棒那条教训摆着——
+    /// 只写在控件里的规则（那次是矩形工具的分支），VM 层 16 条测试全绿也照不出来。
+    /// 「元素框」这种开关正是同一类规则。</para>
+    /// </summary>
+    internal void RenderForTests(DrawingContext dc) => OnRender(dc);
+
     protected override void OnRender(DrawingContext dc)
     {
         var vm = _vm;
@@ -169,6 +215,16 @@ public sealed class TemplateEditorControl : FrameworkElement
             }
         }
 
+        // 纸中心两条常驻虚线（第 82 棒②，照 CorelDRAW）：一直画到画布边缘，才看得出它是"整张纸的中线"
+        // 而不是某只元素的中线。画在内容之上、元素框之下：压着字看不见，被字盖住也看不见。
+        if (vm.ShowCenterLines)
+        {
+            var centerXd = ToDiuX(template.WidthMm / 2);
+            var centerYd = ToDiuY(template.HeightMm / 2);
+            dc.DrawLine(CenterPen, new Point(centerXd, 0), new Point(centerXd, size.Height));
+            dc.DrawLine(CenterPen, new Point(0, centerYd), new Point(size.Width, centerYd));
+        }
+
         if (template.PaddingMm > 0)
         {
             var padX = Mm.ToDiu(template.PaddingMm) * _zoom;
@@ -181,6 +237,7 @@ public sealed class TemplateEditorControl : FrameworkElement
         foreach (var element in template.Elements)
         {
             var selected = ReferenceEquals(vm.SelectedRow?.Element, element);
+            if (!ShowsBoxFor(vm.ShowElementBoxes, selected)) continue;
             DrawElementBox(dc, element, selected, pixelsPerDip);
         }
 
@@ -213,6 +270,13 @@ public sealed class TemplateEditorControl : FrameworkElement
             dc.DrawLine(GridPen, new Point(labelRect.Left, diu), new Point(labelRect.Right, diu));
         }
     }
+
+    /// <summary>
+    /// 这一只元素的编辑期框要不要画（第 81 棒③，规则只在这一处）：<strong>开着都画；关着只画选中的那一只</strong>。
+    /// <para>不许写成"关着就全不画"：那样画布上看不见在改谁、句柄也没了，用户只能凭记忆点——
+    /// 那是把编辑层关掉，不是把辅助框关掉。CorelDRAW 也是这个口径（未选中的对象不显示边界）。</para>
+    /// </summary>
+    internal static bool ShowsBoxFor(bool showElementBoxes, bool selected) => showElementBoxes || selected;
 
     private void DrawElementBox(DrawingContext dc, TemplateElement element, bool selected, double pixelsPerDip)
     {
@@ -258,27 +322,37 @@ public sealed class TemplateEditorControl : FrameworkElement
                 if (CurveGeometry.IsCurved(element) || drawing)
                 {
                     DrawCurveNodes(dc, element);
+                    // 第 85 棒：节点之外还要给整只框的八向句柄。「转为曲线」后的多边形从前到这儿就再也没有
+                    // 缩放的抓手了（一条线只有两个端点，宽高那格也跟着消失）——用户报的"删角后拉不动"。
+                    // 谁先被抓由 BeginDrag 定：先节点后台柄，所以顶点压住的位置仍归节点管，两个手势不打架。
+                    if (!drawing) DrawBoxHandles(dc, rect);
                     return;
                 }
                 DrawHandle(dc, new Point(ToDiuX(element.X), ToDiuY(element.Y)));
                 DrawHandle(dc, new Point(ToDiuX(element.X2), ToDiuY(element.Y2)));
                 return;
             }
-            var midX = rect.X + rect.Width / 2;
-            var midY = rect.Y + rect.Height / 2;
-            DrawHandle(dc, rect.TopLeft);
-            DrawHandle(dc, new Point(midX, rect.Top));
-            DrawHandle(dc, rect.TopRight);
-            DrawHandle(dc, new Point(rect.Right, midY));
-            DrawHandle(dc, rect.BottomRight);
-            DrawHandle(dc, new Point(midX, rect.Bottom));
-            DrawHandle(dc, rect.BottomLeft);
-            DrawHandle(dc, new Point(rect.Left, midY));
+            DrawBoxHandles(dc, rect);
         }
         finally
         {
             if (rotated) dc.Pop();
         }
+    }
+
+    /// <summary>八向句柄（四角 + 四边中点）——只有这一处画它，普通元素与曲线共用同一份。</summary>
+    private void DrawBoxHandles(DrawingContext dc, Rect rect)
+    {
+        var midX = rect.X + rect.Width / 2;
+        var midY = rect.Y + rect.Height / 2;
+        DrawHandle(dc, rect.TopLeft);
+        DrawHandle(dc, new Point(midX, rect.Top));
+        DrawHandle(dc, rect.TopRight);
+        DrawHandle(dc, new Point(rect.Right, midY));
+        DrawHandle(dc, rect.BottomRight);
+        DrawHandle(dc, new Point(midX, rect.Bottom));
+        DrawHandle(dc, rect.BottomLeft);
+        DrawHandle(dc, new Point(rect.Left, midY));
     }
 
     private void DrawHandle(DrawingContext dc, Point center)
@@ -472,9 +546,14 @@ public sealed class TemplateEditorControl : FrameworkElement
                 return;
         }
 
-        // 双击 = 复位视角（缩放 + 平移都回到"自动居中"）；放在按下里而不是 OnMouseDown，否则会先起一次多余的拖动
+        // 双击分派（第 83 棒②）：落在一条文字上 = 就地改这一行的内容；落在空白处 = 复位视角（第 67 棒那条不变）。
         if (e.ClickCount == 2)
         {
+            if (RequestInlineEditAt(ToMmX(point.X), ToMmY(point.Y)))
+            {
+                e.Handled = true;
+                return;
+            }
             _zoomExplicit = false;
             _pan = (0, 0);
             InvalidateMeasure();

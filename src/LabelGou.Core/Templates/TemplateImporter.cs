@@ -14,6 +14,12 @@ public enum TemplateImportSource
 
     /// <summary>直接给的 <c>.cdr</c>：只能拿到内嵌缩略图，当不可打印的参考底图。</summary>
     CdrPreview = 1,
+
+    /// <summary>
+    /// 逐对象的 CDR 设计（第 88 棒）：B 通道离线直解 <c>.cdr</c>，或读 A/C 通道产的 <c>*.cdrx.json</c>，
+    /// 落成一个个可编辑元素——<strong>不再塌成一张底图</strong>。
+    /// </summary>
+    CdrObjects = 2,
 }
 
 /// <summary>
@@ -75,6 +81,16 @@ public sealed class TemplateImportPlan
     /// <summary>从 <c>.cdr</c> 抠出来的预览图；SVG 路线为 null。</summary>
     public CdrPreview? Preview { get; init; }
 
+    /// <summary>逐对象路线（<see cref="TemplateImportSource.CdrObjects"/>）读到的 cdrx；其余路线为 null。</summary>
+    public Interop.Cdr.CdrxDoc? Cdrx { get; init; }
+
+    /// <summary>
+    /// 字体替代的口子（App 层填，Core 不碰 WPF 的系统字体表）：入参是 Corel 里记的字体名，
+    /// 返回 null 表示本机装了、照原样用；返回一个名字表示本机没装、用它替。
+    /// <strong>替了谁会被写进元素的 SourceNotes，界面上看得见</strong>——不静默换脸。
+    /// </summary>
+    public Func<string, string?>? FontResolver { get; set; }
+
     /// <summary>解析/读取过程中的告警与降级说明。</summary>
     public List<TemplateIssue> Issues { get; } = new();
 
@@ -101,7 +117,9 @@ public sealed class TemplateImportPlan
             Source == TemplateImportSource.Svg
                 ? $"SVG 底稿：{SourceName}，画布 {LabelWidthMm:0.#} × {LabelHeightMm:0.#} mm，" +
                   $"几何 {Document?.Paths.Count ?? 0} 项、文字 {Document?.Texts.Count ?? 0} 段、位图 {Document?.Images.Count ?? 0} 张（已折算成毫米，1 用户单位 = {(Document?.UserUnitMm ?? 0):0.####} mm）"
-                : $"CorelDRAW 底稿：{SourceName}，只取到内嵌预览图 {Preview?.Width}×{Preview?.Height} 像素（{CdrPreviewReader.DescribeVersion(Preview?.VersionHint)}）",
+                : Source == TemplateImportSource.CdrObjects
+                    ? $"CorelDRAW 逐对象：{SourceName}，页 {LabelWidthMm:0.#} × {LabelHeightMm:0.#} mm，{Cdrx?.Flattened().Count() ?? 0} 个对象（群组已展平）、文字 {Texts.Count} 段；来源 {Cdrx?.Source.Kind}，降级 {Cdrx?.Source.Degraded.Count ?? 0} 条"
+                    : $"CorelDRAW 底稿：{SourceName}，只取到内嵌预览图 {Preview?.Width}×{Preview?.Height} 像素（{CdrPreviewReader.DescribeVersion(Preview?.VersionHint)}）",
         };
 
         if (Source == TemplateImportSource.CdrPreview && Preview is not null)
@@ -159,6 +177,21 @@ public sealed class TemplateImportPlan
     /// 落成模板：<strong>底图占 1 个元素位</strong>，提升的文字各占 1 个，全部收进标签内。
     /// 资源文件经 <see cref="TemplateStore.SaveAsset(string,string)"/> 落进 <c>assets\</c>。
     /// </summary>
+    static string CdrxDirectory(string cdrxPath) =>
+        System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(cdrxPath)) ?? ".";
+
+    /// <summary>
+    /// 把 cdrx 旁边 objects 目录里的位图搬进模板资源。拿不到就返回 null——
+    /// 调用方会把该对象降级成看得见的占位，而不是悄悄少一个（内嵌位图尚未导出是分区那边的 L1）。
+    /// </summary>
+    static string? SaveCdrxAsset(TemplateStore store, string templateName, string cdrxDir, string relativeFile)
+    {
+        var src = System.IO.Path.Combine(cdrxDir, relativeFile.Replace('/', System.IO.Path.DirectorySeparatorChar));
+        if (!File.Exists(src)) return null;
+        var fileName = TemplateStore.SafeAssetName(templateName) + "_" + System.IO.Path.GetFileName(relativeFile);
+        return store.SaveAsset(fileName, File.ReadAllBytes(src));
+    }
+
     public (LabelTemplate Template, IReadOnlyList<TemplateIssue> Issues) Build(string templateName, TemplateStore store)
     {
         if (store is null) throw new ArgumentNullException(nameof(store));
@@ -167,8 +200,12 @@ public sealed class TemplateImportPlan
         {
             Name = string.IsNullOrWhiteSpace(templateName) ? "底稿导入模板" : templateName.Trim(),
             BuiltIn = false,
-            WidthMm = Math.Clamp(LabelWidthMm, TemplateValidator.MinLabelSideMm, TemplateValidator.MaxLabelSideMm),
-            HeightMm = Math.Clamp(LabelHeightMm, TemplateValidator.MinLabelSideMm, TemplateValidator.MaxLabelSideMm),
+            // 逐对象路线照底稿原数：8~600 那道夹是给手工搭模板防手滑的，拿它去改一张 Corel 画布
+            // 就是"软件替用户改了图"。超界由校验器说话，不在这里悄悄换数。
+            WidthMm = Source == TemplateImportSource.CdrObjects ? LabelWidthMm
+                : Math.Clamp(LabelWidthMm, TemplateValidator.MinLabelSideMm, TemplateValidator.MaxLabelSideMm),
+            HeightMm = Source == TemplateImportSource.CdrObjects ? LabelHeightMm
+                : Math.Clamp(LabelHeightMm, TemplateValidator.MinLabelSideMm, TemplateValidator.MaxLabelSideMm),
             PaddingMm = 4,
             // 黑稿自己带边框，再套一圈就成了双线框；这里明确关掉
             BorderMm = 0,
@@ -177,7 +214,23 @@ public sealed class TemplateImportPlan
 
         var issues = new List<TemplateIssue>(Issues);
 
-        if (Source == TemplateImportSource.Svg && Document is not null)
+        if (Source == TemplateImportSource.CdrObjects && Cdrx is not null)
+        {
+            var built = CdrxElementBuilder.Build(Cdrx, issues,
+                file => SaveCdrxAsset(store, template.Name, CdrxDirectory(SourcePath), file),
+                FontResolver);
+            foreach (var element in built.Elements) template.Elements.Add(element);
+            // 核对窗那批行管两件事：不提升就别上纸；改了绑就把原文换成占位符。
+            // 按引用配对（两边同序同批），不拿下标猜——中间被丢掉时下标会错位。
+            for (var i = 0; i < built.TextElements.Count && i < Texts.Count; i++)
+            {
+                var textElement = built.TextElements[i];
+                var candidate = Texts[i];
+                if (!candidate.Promote) { template.Elements.Remove(textElement); continue; }
+                if (candidate.Field is { } key) textElement.Text = "{{" + key + "}}";
+            }
+        }
+        else if (Source == TemplateImportSource.Svg && Document is not null)
         {
             var background = BuildBackgroundSvg();
             var hasAnything = Document.Paths.Count > 0 || Document.Images.Count > 0
@@ -233,7 +286,9 @@ public sealed class TemplateImportPlan
             }
         }
 
-        foreach (var candidate in Texts.Where(t => t.Promote))
+        // 逐对象路线的文字在上面的分支里落地（那里才拿得到未旋转框、行数与"不折行不缩字"的口径），
+        // 再走一遍会让同一行字出两条元素。
+        foreach (var candidate in Source == TemplateImportSource.CdrObjects ? Array.Empty<TextCandidate>() : Texts.Where(t => t.Promote))
         {
             var element = new TemplateElement
             {
@@ -289,6 +344,56 @@ public sealed class TemplateImportPlan
 /// </summary>
 public static class TemplateImporter
 {
+    /// <summary>
+    /// 离线直解 <c>.cdr</c> 成逐对象方案（B 通道）。<strong>不依赖本机装没装 CorelDRAW</strong>——
+    /// 这是用户 2026-09-19 拍的那条路：换了机器、以后开源给别人，导入不该要求先有一个 CorelDRAW。
+    /// </summary>
+    public static TemplateImportPlan FromCdrDesign(string cdrPath) =>
+        FromCdrx(Interop.Cdr.CdrBinaryParser.ParseFile(cdrPath), cdrPath);
+
+    /// <summary>读一份 <c>*.cdrx.json</c>（A 通道驱动 CorelDRAW 产的，或以后 C 通道产的）成逐对象方案。</summary>
+    public static TemplateImportPlan FromCdrxFile(string cdrxPath) =>
+        FromCdrx(Interop.Cdr.CdrxReader.ReadFile(cdrxPath), cdrxPath);
+
+    static TemplateImportPlan FromCdrx(Interop.Cdr.CdrxDoc doc, string sourcePath)
+    {
+        var plan = new TemplateImportPlan
+        {
+            Source = TemplateImportSource.CdrObjects,
+            SourcePath = sourcePath,
+            Cdrx = doc,
+            // 标签尺寸照底稿自己说的，不夹：那是软件的规矩，不是这张图的规矩。
+            LabelWidthMm = doc.Page.W ?? 100,
+            LabelHeightMm = doc.Page.H ?? 80,
+        };
+        var texts = doc.Flattened()
+            .Where(o => o.Kind == Interop.Cdr.CdrxKinds.Text && o.Text is not null).ToList();
+        for (var i = 0; i < texts.Count; i++)
+        {
+            var box = texts[i].UnrotatedBox ?? texts[i].Box;
+            var t = texts[i].Text!;
+            plan.Texts.Add(new TextCandidate
+            {
+                DocumentIndex = i,
+                Content = t.Contents,
+                XMm = box?.X ?? 0,
+                YMm = box?.Y ?? 0,
+                WidthMm = box?.W ?? 0,
+                HeightMm = box?.H ?? 0,
+                SizePt = t.Font?.SizePt ?? 0,
+                FontFamily = string.IsNullOrWhiteSpace(t.Font?.Name) ? TemplateElement.DefaultFont : t.Font!.Name!,
+                Bold = t.Font?.Bold ?? false,
+                // 默认全提升、默认不绑字段：文字原样写死，绑谁是老板在核对窗里逐条点的事。
+                Promote = true,
+                Reason = t.Lines.Length > 1
+                    ? $"Corel 里这是一块 {t.Lines.Length} 行的文字，按 {t.Lines.Length} 行原样搬"
+                    : "Corel 里的原文字",
+            });
+        }
+        return plan;
+    }
+
+
     /// <summary>样例记录：判定"这行文字是不是可变字段"的对照物。</summary>
     private static readonly MarkRecord Sample = SampleRecords.StandardSample();
 

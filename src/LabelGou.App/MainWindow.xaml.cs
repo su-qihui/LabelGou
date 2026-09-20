@@ -17,6 +17,14 @@ public partial class MainWindow : Window
 {
     private readonly MainViewModel _viewModel = new();
 
+    /// <summary>
+    /// ① 步那张表的列是自动生成的 —— 这里把 WPF 拿列名当绑定路径解析那一环换掉。
+    /// 缘由与口径见 <see cref="Services.PreviewGridColumns"/>（表头含 <c>/</c> 的列整列显示为空，
+    /// 而按下标取数的下游照旧正常，用户 2026-09-19 报的"列消失了还能正常读取打印"）。
+    /// </summary>
+    private void PreviewGrid_AutoGeneratingColumn(object? sender, DataGridAutoGeneratingColumnEventArgs e)
+        => Services.PreviewGridColumns.AutoGenerating(sender, e);
+
     public MainWindow()
     {
         InitializeComponent();
@@ -551,7 +559,7 @@ public partial class MainWindow : Window
         var dialog = new Microsoft.Win32.OpenFileDialog
         {
             Title = "选择 CorelDRAW / Illustrator 导出的底稿",
-            Filter = "底稿|*.svg;*.cdr|SVG 矢量底稿（推荐）|*.svg|CorelDRAW 底稿|*.cdr",
+            Filter = "底稿|*.svg;*.cdr;*.cdrx.json|CorelDRAW 底稿（逐对象可编辑）|*.cdr;*.cdrx.json|SVG 矢量底稿|*.svg",
         };
         if (dialog.ShowDialog(this) != true) return;
 
@@ -1048,6 +1056,19 @@ public partial class MainWindow : Window
         else if (e.Key == Key.G && Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
         {
             _viewModel.ShowGuides = !_viewModel.ShowGuides;
+            e.Handled = true;
+        }
+        // 第 89 棒②：行检查开着时，裸 ←/→ 就是上一张/下一张。谁该让开、谁不让，规则写在
+        // Services/PreviewArrows 那一处（判据也只能在那儿问——这个窗口在测试进程里造不出来）。
+        else if (e.Key is Key.Left or Key.Right && modifiers == ModifierKeys.None
+                 && Services.PreviewArrows.TryPage(_viewModel, Keyboard.FocusedElement, e.Key))
+        {
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Escape && _viewModel.SlideshowPlaying)
+        {
+            // 幻灯片正在放，Esc 的第一含义是"停下"，不是"关掉这个窗口"
+            _viewModel.StopSlideshow("按了 Esc");
             e.Handled = true;
         }
 

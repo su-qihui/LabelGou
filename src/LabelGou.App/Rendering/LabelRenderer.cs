@@ -110,6 +110,9 @@ public static class LabelRenderer
                     case BarcodeItem barcode:
                         DrawBarcode(dc, barcode, scale, showGuides, pixelsPerDip, target);
                         break;
+                    case Core.Layout.PlaceholderItem placeholder:
+                        DrawPlaceholder(dc, placeholder, scale);
+                        break;
                 }
             }
         }
@@ -216,6 +219,27 @@ public static class LabelRenderer
         }
         geometry.Freeze();
         return geometry;
+    }
+
+    /// <summary>
+    /// 占位框那支笔（第 88 棒）：灰色虚线、<strong>不填充</strong>。
+    /// 它刻意不复用 <see cref="ReferencePen"/>——那支是"参考图，进纸前要滤掉"，
+    /// 这支是"这里确有此物，本通道画不出"，两者在被不被打印这件事上正好相反。
+    /// </summary>
+    private static readonly Pen PlaceholderPen = Frozen(new Pen(new SolidColorBrush(Color.FromRgb(150, 150, 150)), 0.25)
+    {
+        DashStyle = DashStyles.Dash,
+    });
+
+    /// <summary>
+    /// 画不出画法的外部对象：只画一只看得见它"在这儿、这么大"的虚线框。
+    /// <strong>绝不因为没有画法就跳过</strong>——那一跳就等于把"我们读不出来"讲成"它不存在"。
+    /// </summary>
+    private static void DrawPlaceholder(DrawingContext dc, Core.Layout.PlaceholderItem placeholder, double scale)
+    {
+        var box = new Rect(Mm.ToDiu(placeholder.X) * scale, Mm.ToDiu(placeholder.Y) * scale,
+            Mm.ToDiu(placeholder.Width) * scale, Mm.ToDiu(placeholder.Height) * scale);
+        DrawRotated(dc, box, placeholder.RotationDeg, () => dc.DrawRectangle(null, PlaceholderPen, box));
     }
 
     /// <summary>椭圆（第 51 棒）：与矩形同一句口径——描边关掉又没填充就什么都不画，校验器负责说话，这里不猜。</summary>
@@ -325,10 +349,10 @@ public static class LabelRenderer
         if (fit is null) return;
 
         var box = fit.BoxDiu;
-        // 旋转锚点（第 52 棒）＝拉伸后的墨迹中心：短字在宽行带里绕带心转会"飞出去"（用户报的偏移），
-        // CDR 的语义是绕对象自己看得见的那块转。墨迹先随拉伸走（绕盒中心），它的中心就是旋转中心。
-        var inkCx = fit.InkLeftDiu + fit.Formatted.WidthIncludingTrailingWhitespace / 2;
-        var inkCy = fit.TextTopDiu + fit.Formatted.Height / 2;
+        // 旋转锚点（第 52 棒定口径）＝拉伸后的墨迹中心：短字在宽行带里绕带心转会"飞出去"（用户报的偏移），
+        // CDR 的语义是绕对象自己看得见的那块转。中心由 TextFit 一处量（InkCenterDiu＝真字形外接的中心），
+        // 从前这里拿 InkLeftDiu + 行盒宽拼，折行那条路的居中没算进来，转居中的字就会横着甩出去（第 81 棒）。
+        var (inkCx, inkCy) = fit.InkCenterDiu;
         var boxCx = box.X + box.Width / 2;
         var boxCy = box.Y + box.Height / 2;
         var rotateAbout = new Point(

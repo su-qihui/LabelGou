@@ -153,6 +153,56 @@ public static class PrinterSettingsReader
         }
     }
 
+    /// <summary>
+    /// 读<strong>驱动自己的默认 DEVMODE</strong>（<c>DM_OUT_DEFAULT</c>）——就是驱动页里那颗「恢复默认设置」回到的那一套。
+    /// <para>它与 <see cref="CaptureCurrentDevMode"/> 不是一回事：那份读的是"这台打印机现在按谁设的"
+    /// （本用户默认，可能已经被我们或上一版写脏），这份读的是出厂默认。第 84 棒第一版拿前者当"原样"，
+    /// 退出时把脏值又放回去了一遍——用户实测"没成功"，日志与注册表现场（自定义 280×200 + 私有纸盘）都对得上。</para>
+    /// </summary>
+    public static byte[]? MachineDefaultDevMode(string? printerName, out string? error)
+    {
+        error = null;
+        var name = ResolveName(printerName);
+        if (name is null)
+        {
+            error = "没找到这台打印机，点「刷新」再试。";
+            return null;
+        }
+        if (!OpenPrinterW(name, out var hPrinter, IntPtr.Zero))
+        {
+            error = $"打不开这台打印机的设置（系统返回错误 {Marshal.GetLastWin32Error()}）。";
+            return null;
+        }
+        IntPtr buffer = IntPtr.Zero;
+        try
+        {
+            int size = DocumentPropertiesW(IntPtr.Zero, hPrinter, name, IntPtr.Zero, IntPtr.Zero, DM_OUT_BUFFER);
+            if (size <= 0)
+            {
+                error = $"读不到「{name}」的驱动默认设置（系统返回错误 {Marshal.GetLastWin32Error()}）。";
+                return null;
+            }
+            buffer = Marshal.AllocHGlobal(size);
+            // 驱动默认可能比当前设置短一截（私有块大小一致，但保险起见按问到的尺寸读，读不到就整份退回 null）
+            if (DocumentPropertiesW(IntPtr.Zero, hPrinter, name, buffer, IntPtr.Zero, DM_OUT_DEFAULT) <= 0)
+            {
+                error = $"读不到「{name}」的驱动默认设置（这台驱动不通过这条通道报出厂默认）。";
+                return null;
+            }
+            return ReadBytes(buffer, size);
+        }
+        catch (Exception ex)
+        {
+            error = $"读驱动默认设置抛了：{ex.GetType().Name} {ex.Message}";
+            return null;
+        }
+        finally
+        {
+            if (buffer != IntPtr.Zero) Marshal.FreeHGlobal(buffer);
+            if (hPrinter != IntPtr.Zero) ClosePrinter(hPrinter);
+        }
+    }
+
     private static byte[] ReadBytes(IntPtr ptr, int count)
     {
         var bytes = new byte[count];
@@ -200,6 +250,8 @@ public static class PrinterSettingsReader
     /// </summary>
     private static bool WriteUserDevMode(string printerName, byte[] blob)
     {
+        // 第 84 棒：动这份值之前先记下"原本是什么"，退出时恢复（恢复那条路自己不再记账，见 IsRestoring）
+        PrinterDefaultsGuard.RememberBeforeChange(printerName);
         try
         {
             using var key = Registry.CurrentUser.OpenSubKey(UserDefaultsKey, writable: true);
@@ -212,11 +264,58 @@ public static class PrinterSettingsReader
             return false;
         }
 
+        return MatchesWhatWeWrote(printerName, blob);
+    }
+
+    /// <summary>读这台打印机现在的本用户默认（注册表里那份值）；没有这条值返回 null。</summary>
+    internal static byte[]? ReadUserDevMode(string printerName)
+    {
+        try
+        {
+            using var key = Registry.CurrentUser.OpenSubKey(UserDefaultsKey);
+            return key?.GetValue(printerName) as byte[];
+        }
+        catch (Exception ex)
+        {
+            AppLog.Info($"读本用户默认 DEVMODE 失败：{ex.GetType().Name} {ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// 恢复原样：有原值就写回去，<strong>原本没有这条值就把值删掉</strong>（不是写一份假的进去）。
+    /// <para>为什么两种都要：一台从没设过首选项的打印机，注册表里根本没有它那条值；我们写完之后
+    /// "恢复"若只是留着那份 blob，就等于把系统的默认行为永久改掉了——正是用户要治的那件事。</para>
+    /// </summary>
+    internal static bool RestoreUserDevMode(string printerName, byte[]? original)
+    {
+        try
+        {
+            using var key = Registry.CurrentUser.OpenSubKey(UserDefaultsKey, writable: true);
+            if (key is null) return false;
+            if (original is null)
+            {
+                if (key.GetValue(printerName) is not null) key.DeleteValue(printerName, throwOnMissingValue: false);
+                return key.GetValue(printerName) is null;
+            }
+            key.SetValue(printerName, original, RegistryValueKind.Binary);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Info($"恢复本用户默认 DEVMODE 抛：{ex.GetType().Name} {ex.Message}");
+            return false;
+        }
+        return MatchesWhatWeWrote(printerName, original);
+    }
+
+    /// <summary>写完/删完立刻回读核对：这台机器上实测过"调用没报错"不等于写进去了（§五-161）。</summary>
+    private static bool MatchesWhatWeWrote(string printerName, byte[]? expected)
+    {
         try
         {
             using var check = Registry.CurrentUser.OpenSubKey(UserDefaultsKey);
             var back = check?.GetValue(printerName) as byte[];
-            return back is not null && back.AsSpan().SequenceEqual(blob);
+            return expected is null ? back is null : back is not null && back.AsSpan().SequenceEqual(expected);
         }
         catch (Exception ex)
         {
@@ -347,6 +446,9 @@ public static class PrinterSettingsReader
     };
 
     private const int DM_OUT_BUFFER = 0x0002;
+
+    /// <summary>wingdi.h：取"驱动自己的默认"那份 DEVMODE（驱动页里「恢复默认设置」回到的就是它）。</summary>
+    private const int DM_OUT_DEFAULT = 0x0003;
     private const int DM_IN_PROMPT = 0x0004;
 
     /// <summary>本用户默认 DEVMODE 的存放处（实测：改它，DocumentProperties 立刻读到新值）。</summary>

@@ -372,7 +372,10 @@ public sealed class ShapeToolTests : IDisposable
         vm.DragTo(top.X - 6, top.Y + 6);                                              // 拖这一点
         vm.EndDrag();
         Assert.True(Math.Abs(converted.X - (top.X - 6)) < 0.5, "顶点没跟着拖走");
-        Assert.True(Math.Abs(converted.X2 - (top.X - 6)) < 0.5, "接缝另一端没同步");   // 首尾是一个点
+        // 第 85 棒：这一格从前断言的是"另一端跟着走"——那是把形状当场塌掉一角的错行为（用户报的"扭曲"）。
+        // 「转为曲线」产的是首尾【不】重合的两个角（靠收口段闭合），末点不许被硬叠到首点上；
+        // 真重合的那种（画到末点双击闭合）仍由 ShapeToolCoreTests 的接缝同步那条管着。
+        Assert.True(Math.Abs(converted.X2 - (top.X - 6)) > 1, "接缝另一端被硬叠过来了：形状当场塌一角");
         vm.Undo();                                                                    // 一步退回转换前（连拖带转都收在同一步里）
         Assert.Equal(ElementKind.Polygon, vm.Template.Elements[0].Kind);
         return true;

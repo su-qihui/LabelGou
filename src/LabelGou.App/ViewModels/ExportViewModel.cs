@@ -253,6 +253,25 @@ public sealed class ExportViewModel : ObservableObject
     }
     private bool _confirmBeforePrint;
 
+    /// <summary>
+    /// <strong>用完把这台打印机的默认还回驱动自己的默认</strong>（第 84 棒补正，用户："在红框位置设置开关——
+    /// 完成打印后恢复打印机默认设置，若打勾后续打印/退出软件自动恢复默认设置"）。
+    /// <para>⑤ 步那三格与「打印首选项…」改的是 <c>HKCU\Printers\DevModePerUser</c>，别的软件也吃它
+    /// （"只对本次生效"这条路本机走不通，§五-155/159），所以只能事后还。</para>
+    /// <para>勾上（默认）：每次打印任务成功后还一次、退出时再兜一次、被强杀则下次启动补还。
+    /// 关掉：什么都不还——那时"手送台/标签纸"是你自己要长期留着的设置，软件不插手。</para>
+    /// </summary>
+    public bool RestorePrinterDefaults
+    {
+        get => _restorePrinterDefaults;
+        set
+        {
+            if (!Set(ref _restorePrinterDefaults, value)) return;
+            PrinterDefaultsGuard.RestoreAtExit = value;      // 退出那条路读这个静态开关（App 拿不到 VM）
+        }
+    }
+    private bool _restorePrinterDefaults = true;
+
     public string OutputDirectory
     {
         get => _outputDirectory;
@@ -388,7 +407,10 @@ public sealed class ExportViewModel : ObservableObject
         foreach (var row in report.Rows) PrinterSettingRows.Add(row);
         PrinterSettingsNote = report.Error ?? "这三项由打印机驱动管：能读回来的读给你看；读不回来的（如纸张来源——驱动把它存在自己的私有设置块里，"
             + "公开字段不动）就进「打印首选项…」看或改。在那里改的是这台打印机在这台电脑上的默认设置，别的软件也共用。"
-            + "嫌每次进驱动页麻烦：设好一次点下面「存为方案」，以后点「套用」一键设回来。";
+            + "嫌每次进驱动页麻烦：设好一次点下面「存为方案」，以后点「套用」一键设回来。"
+            + "\n这些改的是这台打印机在这台电脑上的默认设置（别的软件调用打印机也吃它）。勾上「打印后恢复打印机默认」"
+            + "（默认勾着）：每次打印完、以及退出 LabelGou 时，把它还成驱动自己的默认（就是驱动页那颗「恢复默认设置」）；"
+            + "进程被强杀或断电，下次开软件会先补还一次并告诉你。要长期留着这套设置就把那颗勾去掉。";
         Raise(nameof(PrinterSettingsNote));
     }
 
@@ -766,6 +788,9 @@ public sealed class ExportViewModel : ObservableObject
         };
         StatusText = text;
         if (outcome is PrintOutcome { Fit: not null } p) FitText = p.Fit.Describe("整版");
+        // 第 84 棒补正：一次打印**成功**收尾后就把这台打印机的本用户默认还成驱动默认。
+        // 放在收尾这里而不是打印函数里：半途失败或被取消的任务不该顺手改系统设置（要改也得改回原样）。
+        if (outcome is PrintOutcome { Success: true } && RestorePrinterDefaults) PrinterDefaultsGuard.RestoreAfterPrint();
         ProbeFit();
     }
 

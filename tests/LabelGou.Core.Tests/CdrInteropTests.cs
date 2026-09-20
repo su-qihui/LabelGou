@@ -506,6 +506,92 @@ public class CdrInteropTests
         Assert.Equal("asset", TemplateStore.SafeAssetName("   "));
     }
 
+    [Fact]
+    public void CorelStretchGoesOntoTextShapesKeepTheBoxAndGroupMembersAreNotDoubleCounted()
+    {
+        var doc = new CdrxDoc
+        {
+            Source = new CdrxSource { Kind = "cdr-binary" },
+            Page = new CdrxSize { W = 140, H = 100 },
+            Objects =
+            {
+                new CdrxObject
+                {
+                    Kind = CdrxKinds.Text,
+                    Z = 1,
+                    Box = new CdrxBox { X = 10.3796, Y = 40.0808, W = 116.2835, H = 49.3693 },
+                    Text = new CdrxText
+                    {
+                        Contents = "Item no：olu830-35\nQTY：144 pcs",
+                        Font = new CdrxFont { Name = "Adobe Gothic Std B", SizePt = 41.3915 },
+                    },
+                    ScaleX = 0.821798,
+                },
+                new CdrxObject
+                {
+                    Kind = CdrxKinds.Rect, Z = 2,
+                    Box = new CdrxBox { X = 1, Y = 1, W = 20, H = 8 },
+                    ScaleX = 0.5,
+                },
+                new CdrxObject
+                {
+                    Kind = CdrxKinds.Polygon, Z = 3,
+                    Box = new CdrxBox { X = 25, Y = 1, W = 20, H = 20 },
+                    Geom = new CdrxGeom { Sides = 5 },
+                    ScaleX = 0.5,
+                },
+                new CdrxObject
+                {
+                    Kind = CdrxKinds.Group, Z = 4,
+                    Box = new CdrxBox { X = 40, Y = 30, W = 30, H = 20 },
+                    Children = new List<CdrxObject>
+                    {
+                        new CdrxObject
+                        {
+                            Kind = CdrxKinds.Text, Z = 1,
+                            Box = new CdrxBox { X = 41, Y = 31, W = 28, H = 8 },
+                            Text = new CdrxText { Contents = "OLU830-70", Font = new CdrxFont { SizePt = 20 } },
+                            ScaleX = 0.666059,
+                        },
+                    },
+                },
+            },
+        };
+
+        var issues = new List<TemplateIssue>();
+        var built = CdrxElementBuilder.Build(doc, issues);
+        Assert.Equal(4, built.Elements.Count);
+
+        var text = built.Elements[0];
+        Assert.Equal(0.821798, text.TextScaleX, 6);
+        Assert.Equal(1.0, text.TextScaleY);                        // 没报＝1＝没拉伸，不许写个别的数假装读到
+        Assert.Contains(text.SourceNotes!, n => n.Contains("82.18%", StringComparison.Ordinal));
+        Assert.Equal(41.3915, text.FontSizePt, 4);
+        Assert.False(text.AllowWrap);                              // 「原模原样」：不许重排断行
+        Assert.True(text.ShrinkToFit);
+        Assert.Equal("Adobe Gothic Std B", text.FontFamily);       // 没给 resolveFont＝当本机装了
+        Assert.Contains(text.SourceNotes!, n => n.Contains("txtj", StringComparison.Ordinal));
+
+        // 矩形的几何就是那个盒，盒已经带着比例——不该冒出一句"按未拉伸画"
+        var rect = built.Elements[1];
+        Assert.Equal(1.0, rect.TextScaleX);
+        Assert.DoesNotContain(rect.SourceNotes ?? new(), n => n.Contains("拉伸", StringComparison.Ordinal));
+
+        var poly = built.Elements[2];
+        Assert.Contains(poly.SourceNotes!, n => n.Contains("按盒画内接的那个", StringComparison.Ordinal));
+
+        // 群组成员：盒已是转完的范围，再乘一遍就是把群组的缩放算两次
+        var member = built.Elements[3];
+        Assert.Equal(1.0, member.TextScaleX);
+        Assert.Contains(member.SourceNotes!, n => n.Contains("不重复乘", StringComparison.Ordinal));
+
+        // 带进来的拉伸必须还在软件能表达的区间里，否则导入窗会因一条 Error 直接锁死「导入」按钮
+        var template = new LabelTemplate { Name = "拉伸", WidthMm = 140, HeightMm = 100 };
+        foreach (var e in built.Elements) template.Elements.Add(e);
+        Assert.DoesNotContain(TemplateValidator.Validate(template),
+            i => i.Severity == IssueLevel.Error && i.Message.Contains("拉伸", StringComparison.Ordinal));
+    }
+
     private static string MakeTempDir()
     {
         var dir = Path.Combine(Path.GetTempPath(), "labelgou-import-" + Guid.NewGuid().ToString("N"));

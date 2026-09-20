@@ -96,6 +96,55 @@ public static class CurveGeometry
         element.Kind == ElementKind.Line && element.Closed;
 
     /// <summary>
+    /// 接缝是不是<strong>真的重合</strong>：首点与末点落在同一个坐标上。
+    /// <para>为什么要单独问这一句——闭合曲线有<strong>两种活法</strong>：画到末点双击闭合的那条，首尾是同一个可见点；
+    /// 而「转为曲线」（第 53 棒）产的是首尾【不】重合、靠 <see cref="Segments"/> 补一条收口段来闭合的形状
+    /// （见 <c>ShapeGeometry.ToClosedCurve</c>）。从前 <see cref="MoveNode"/> 与 <see cref="RemoveNode"/>
+    /// 都按"首尾同点"这一种写死，于是拖转曲线后多边形的第一个顶点会把末点叠到同一坐标（形状当场塌一角），
+    /// 删点护栏也少允许一次 —— 用户 2026-09-19 报的"删除角无法拉伸扭曲"里那条"扭曲"就是它。</para>
+    /// </summary>
+    public static bool SeamCoincides(TemplateElement element) =>
+        Math.Abs(element.X - element.X2) < 1e-6 && Math.Abs(element.Y - element.Y2) < 1e-6;
+
+    /// <summary>
+    /// 看得见的节点数：接缝重合时首尾那两格是<strong>同一个点</strong>，只算一个。
+    /// 删点护栏与"还剩几个角"的文案都读这一个出口，别各数一遍。
+    /// </summary>
+    public static int VisiblePointCount(TemplateElement element)
+    {
+        var pts = NodesOf(element);
+        return IsClosed(element) && SeamCoincides(element) ? pts.Count - 1 : pts.Count;
+    }
+
+    /// <summary>
+    /// 把整条曲线按<strong>盒</strong>缩放：首点、末点、每个中间节点的坐标，连同<strong>柄的偏移</strong>，
+    /// 一起绕 (<paramref name="anchorX"/>, <paramref name="anchorY"/>) 按 (<paramref name="sx"/>, <paramref name="sy"/>) 映射。
+    /// <para>柄必须跟着乘：柄是"离开节点多远"的相对量，只挪点不挪柄会把原来的弯度改样
+    /// （放大两倍而弧只跟着点走，鼓出去那一截就瘪了）。非等比时柄也被同轴斜切，那正是"抻"该有的样子。</para>
+    /// <para>写回只走 <see cref="ApplyNodes"/> 这一个口子：端点与中间节点不许有第二套账。</para>
+    /// </summary>
+    public static void ScaleBy(TemplateElement element, double sx, double sy, double anchorX, double anchorY)
+    {
+        // 一条没有节点也没有柄的直线不吃这条路：它的"缩放"就是拖那两个端点（第 49 棒口径）。
+        if (!IsCurved(element) && !IsClosed(element)) return;
+        var pts = NodesOf(element);
+        for (var i = 0; i < pts.Count; i++)
+        {
+            var n = pts[i];
+            pts[i] = n with
+            {
+                X = anchorX + (n.X - anchorX) * sx,
+                Y = anchorY + (n.Y - anchorY) * sy,
+                InX = n.InX * sx,
+                InY = n.InY * sy,
+                OutX = n.OutX * sx,
+                OutY = n.OutY * sy,
+            };
+        }
+        ApplyNodes(element, pts);
+    }
+
+    /// <summary>
     /// 这个节点是不是<strong>平滑</strong>的：两根柄都在、且方向大致成一条直线。
     /// <para>拖柄时靠它决定"另一侧跟不跟着镜像"——平滑节点跟着（这是 CDR 里调切线最常用的那半下），
     /// 尖角节点只动这一根（否则单侧切线就调不动了）。角度容差 2°，比人眼在屏幕上的判断还宽一点。</para>
@@ -187,14 +236,20 @@ public static class CurveGeometry
         }
     }
 
-    /// <summary>把某个节点挪到绝对坐标处（柄跟着走，弯度不变）。闭合曲线的起点与终点是同一个可见点：拖一个，另一个跟着走。</summary>
+    /// <summary>
+    /// 把某个节点挪到绝对坐标处（柄跟着走，弯度不变）。
+    /// <para>闭合曲线里<strong>只有接缝真重合时</strong>才"拖一个另一个跟着走"：那种情况下首尾是同一个可见点。
+    /// 「转为曲线」产的那一种首尾是两个不同的角（靠收口段闭合），无条件同步就会把末点叠到首点上、
+    /// 当场把形状塌掉一个角（第 85 棒修掉的正是这一条，见 <see cref="SeamCoincides"/>）。</para>
+    /// </summary>
     public static void MoveNode(TemplateElement element, int index, double xMm, double yMm)
     {
         var pts = NodesOf(element);
         if (index < 0 || index >= pts.Count) return;
+        var seam = IsClosed(element) && SeamCoincides(element);
         var n = pts[index];
         pts[index] = n with { X = xMm, Y = yMm };
-        if (IsClosed(element) && (index == 0 || index == pts.Count - 1))
+        if (seam && (index == 0 || index == pts.Count - 1))
         {
             var twin = index == 0 ? pts.Count - 1 : 0;
             pts[twin] = pts[twin] with { X = xMm, Y = yMm };
@@ -205,12 +260,15 @@ public static class CurveGeometry
     /// <summary>
     /// 删掉一个节点。首尾不许删（那条线就没方向了）；闭合曲线（第 53 棒）还要求<strong>剩下至少 3 个可见点</strong>
     /// ——两个点的"闭合曲线"是一条来回的线段，那不是形状是 bug 现场。删成功与否交调用方说话。
+    /// <para>第 85 棒：这道护栏从前按 <c>pts.Count - 1</c> 数可见点，等于假设了"首尾必然重合"，
+    /// 于是「转为曲线」后的五边形只删得掉一个角、四边形一个角都删不掉，而文案还写着"至少得留三个点"。
+    /// 现在按 <see cref="VisiblePointCount"/> 数——两种表示都算得对。</para>
     /// </summary>
     public static bool RemoveNode(TemplateElement element, int index)
     {
         var pts = NodesOf(element);
         if (index <= 0 || index >= pts.Count - 1) return false;
-        if (IsClosed(element) && pts.Count - 1 < 4) return false;     // 可见点 = pts.Count-1（首尾重合），删后必须 ≥3
+        if (IsClosed(element) && VisiblePointCount(element) - 1 < 3) return false;     // 删完必须还剩三个看得见的点
         pts.RemoveAt(index);
         ApplyNodes(element, pts);
         return true;

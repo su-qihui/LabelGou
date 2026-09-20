@@ -195,7 +195,24 @@ public static class EditGeometry
         {
             var tol = Math.Max(toleranceMm, element.ThicknessMm);
             if (Templates.CurveGeometry.IsCurved(element))
-                return Templates.CurveGeometry.DistanceMm(element, xMm, yMm) <= tol;
+            {
+                if (Templates.CurveGeometry.DistanceMm(element, xMm, yMm) <= tol) return true;
+                // 第 85 棒：闭合的那只（「转为曲线」后的多边形/矩形）还要认它外接盒的那一圈边——
+                // 这一棒刚给它的八向句柄正长在盒角与盒边中点上，只认轮廓线的话句柄画出来却够不着，等于没修。
+                // 刻意不认盒的内部（第 83 棒：宽容是便利，不是抢别人的理由）：
+                // 认了整只盒，一只大形状会把它空白处下面那一只的点选抢走。
+                // 点填充形状的内部仍选不中是既成事实，已记 §六 活账。
+                if (Templates.CurveGeometry.IsClosed(element))
+                {
+                    var body = VisualBoxOf(element);
+                    var inside = xMm >= body.X - tol && xMm <= body.X + body.Width + tol
+                        && yMm >= body.Y - tol && yMm <= body.Y + body.Height + tol;
+                    var hollow = xMm > body.X + tol && xMm < body.X + body.Width - tol
+                        && yMm > body.Y + tol && yMm < body.Y + body.Height - tol;
+                    return inside && !hollow;
+                }
+                return false;
+            }
             return DistanceToSegment(xMm, yMm, element.X, element.Y, element.X2, element.Y2) <= tol;
         }
 
@@ -262,17 +279,41 @@ public static class EditGeometry
     }
 
     /// <summary>命中最上层元素的下标（列表末尾=画在最上面）；没命中返回 -1。
-    /// <para>第 44 棒定口径：<strong>点选按宽容盒（文本=含拉伸的 VisualBoxOf，即整条行带）</strong>——
-    /// 只认墨迹会让"点文字旁边的空白选不中这一行"；精确的墨迹盒只用于画框与句柄（HandleAt 的 displayBox）。</para></summary>
+    /// <para><strong>两遍，顺序就是优先级</strong>（第 83 棒①）：第一遍只认<strong>看得见的那一块</strong>
+    /// （文本 = 墨迹盒，转过的按转完的外接；非文本 = 它自己的框），第二遍才放开到宽容盒。</para>
+    /// <para>为什么要有第二遍：第 44 棒定"点选按宽容盒（文本=整条行带）"是为了"点文字旁边的空白也选得中这一行"；
+    /// 第 63 棒又把墨迹盒<em>并</em>进同一遍命中范围，为的是"永不折行的右半段抓不住"。两条叠在一起就漏出
+    /// 用户今天圈的洞：一条 130×123mm 的通栏行带压在别人家的字上面，<strong>点谁的字都选中它</strong>
+    /// （"点击也是只能被第二行控制"）。宽容是便利，不是抢别人的理由。</para>
+    /// <para>墨迹盒由 App 量（Core 不许碰 WPF）；没递进来或量不到（隐藏、变量全空）的文本第一遍直接跳过，
+    /// 交给第二遍——它照样点得中，只是没有"看得见那块"可优先。</para></summary>
     public static int TopmostAt(LabelTemplate template, double xMm, double yMm, double toleranceMm = HitToleranceMm,
         Func<TemplateElement, (double X, double Y, double Width, double Height)?>? inkBoxes = null)
     {
         for (var i = template.Elements.Count - 1; i >= 0; i--)
         {
             var element = template.Elements[i];
+            if (element.Visible && VisiblePartHit(element, xMm, yMm, toleranceMm, inkBoxes?.Invoke(element))) return i;
+        }
+        for (var i = template.Elements.Count - 1; i >= 0; i--)
+        {
+            var element = template.Elements[i];
             if (element.Visible && HitTest(element, xMm, yMm, toleranceMm, inkBoxes?.Invoke(element))) return i;
         }
         return -1;
+    }
+
+    /// <summary>这一点落在元素"看得见的那一块"里吗（<see cref="TopmostAt"/> 的第一遍）。</summary>
+    private static bool VisiblePartHit(TemplateElement element, double xMm, double yMm, double toleranceMm,
+        (double X, double Y, double Width, double Height)? ink)
+    {
+        if (element.Kind != ElementKind.Text) return HitTest(element, xMm, yMm, toleranceMm);   // 非文本：框就是它自己
+        if (ink is not { } box) return false;                                                    // 量不到 → 交给第二遍
+
+        // 与画出来的那个框同一个外接：绕墨迹自己的中心转（渲染端同一个锚点，第 52 棒）
+        var occ = RotatedBoundsOf(box, element.RotationDeg, box.X + box.Width / 2, box.Y + box.Height / 2);
+        return xMm >= occ.X - toleranceMm && xMm <= occ.Right + toleranceMm
+            && yMm >= occ.Y - toleranceMm && yMm <= occ.Bottom + toleranceMm;
     }
 
     /// <summary>
@@ -287,7 +328,12 @@ public static class EditGeometry
         {
             if (Near(xMm, yMm, element.X, element.Y, r)) return ResizeHandle.LineStart;
             if (Near(xMm, yMm, element.X2, element.Y2, r)) return ResizeHandle.LineEnd;
-            return ResizeHandle.None;
+            // 第 85 棒：从前到这儿就 return None 了——一条线只有两个端点，于是曲线（含「转为曲线」后的
+            // 多边形/矩形）永远拿不到整只框的八向句柄，属性面板宽高那格也跟着消失（HasBox => Kind != Line），
+            // 用户报的"删角后无法拉伸扭曲"就是这么来的。端点没抓中时落到下面那段盒句柄；
+            // 一条没有节点也没有柄的直线照旧只吃两个端点（第 49 棒口径，不给它造第二种缩放手势）。
+            if (!Templates.CurveGeometry.IsCurved(element) && !Templates.CurveGeometry.IsClosed(element))
+                return ResizeHandle.None;
         }
 
         var box = displayBox ?? VisualBoxOf(element);
@@ -349,6 +395,15 @@ public static class EditGeometry
     {
         var element = ElementAt(template, index);
         var occ = occupancy ?? BoxOf(element);
+        // 第 81 棒（用户：「墨迹边框被固定在纸张范围内无法超出」）：**文本不夹**。文本会印出去的是 App 量出来的
+        // 那块墨迹，排版盒只是"字在哪对齐"的虚拟基准（第 46 棒已经为它撤掉校验器那条），拿它当占物夹住摆位
+        // 就是"短字怎么拖都到不了右边"那堵墙。越界改由两处接手：编辑器清单里按样例墨迹量的提醒，
+        // 与 ④⑤ 步按真数据量的出纸闸——都看得见、都说得出毫米数，还有「缩回纸内」一键可退。
+        if (element.Kind == ElementKind.Text)
+        {
+            ApplyShift(element, dxMm, dyMm);
+            return (dxMm, dyMm);
+        }
         // 占物比标签还宽的那根轴没有"贴边"可言：夹住等于把元素钉死在 0，用户一往右拖就弹回来，
         // 看着既是"被限制"又是"卡顿"。那一轴放开，越界由墨迹那道闸与「缩回纸内」负责说。
         var targetX = occ.Width > template.WidthMm ? occ.X + dxMm
@@ -471,6 +526,9 @@ public static class EditGeometry
                 element.X2 = Clamp(element.X2 + dxMm, 0, template.WidthMm);
                 element.Y2 = Clamp(element.Y2 + dyMm, 0, template.HeightMm);
             }
+            // 只抓了端点（或什么都没抓）就到此为止；抓的是整只框的边/角 → 曲线整体缩放。
+            if (handle is ResizeHandle.None or ResizeHandle.LineStart or ResizeHandle.LineEnd) return;
+            ScaleCurveByBox(template, element, handle, dxMm, dyMm, anchor);
             return;
         }
 
@@ -556,6 +614,90 @@ public static class EditGeometry
         element.Width = Math.Max(MinSideMm, right - element.X);
         element.Height = Math.Max(MinSideMm, bottom - element.Y);
     }
+
+    /// <summary>
+    /// 整只框缩放一条曲线（第 85 棒）：先按盒算出新的宽与高（拖角＝等比、拖边＝单轴，
+    /// 与矩形那两套用的是<strong>同一个</strong> <see cref="UniformRatio"/> / 单边夹取算法），
+    /// 再把倍率交给 <c>CurveGeometry.ScaleBy</c> 一次映射到每个点和每根柄上。
+    /// <para>这里<strong>故意不写 element.Width / Height</strong>：曲线的外接框是量出来的
+    /// （<see cref="BoxOf"/> 对曲线走 <c>CurveGeometry.BoundsMm</c>），存进去那两个数没人读，
+    /// 写了只会留下两份互相矛盾的账（§五-62 那一族）。</para>
+    /// </summary>
+    private static void ScaleCurveByBox(LabelTemplate template, TemplateElement element, ResizeHandle handle,
+        double dxMm, double dyMm, ResizeAnchor anchor)
+    {
+        var box = VisualBoxOf(element);
+        if (box.Width <= 1e-9 || box.Height <= 1e-9) return;      // 退化成一条横/竖线的形状：没有可放大的那一轴
+        var (ldx, ldy) = ToLocalDelta(element, dxMm, dyMm);
+        var (heldX, heldY) = HeldPoint(box, handle, anchor);
+        var horizontal = handle.HasFlag(ResizeHandle.Left) || handle.HasFlag(ResizeHandle.Right);
+        var vertical = handle.HasFlag(ResizeHandle.Top) || handle.HasFlag(ResizeHandle.Bottom);
+
+        double sx, sy;
+        if (horizontal && vertical)
+        {
+            var ratio = UniformRatio(box, handle, anchor, ldx, ldy);
+            sx = sy = ratio;
+        }
+        else if (horizontal)
+        {
+            var left = box.X;
+            var right = box.X + box.Width;
+            if (handle.HasFlag(ResizeHandle.Left)) left = Math.Min(left + ldx, right - MinSideMm);
+            if (handle.HasFlag(ResizeHandle.Right)) right = Math.Max(right + ldx, left + MinSideMm);
+            sx = (right - left) / box.Width;
+            sy = 1;
+        }
+        else if (vertical)
+        {
+            var top = box.Y;
+            var bottom = box.Y + box.Height;
+            if (handle.HasFlag(ResizeHandle.Top)) top = Math.Min(top + ldy, bottom - MinSideMm);
+            if (handle.HasFlag(ResizeHandle.Bottom)) bottom = Math.Max(bottom + ldy, top + MinSideMm);
+            sy = (bottom - top) / box.Height;
+            sx = 1;
+        }
+        else return;
+
+        // 与矩形那条路同一档夹紧：新盒不许超过这张纸。
+        var newWidth = Math.Clamp(box.Width * sx, MinSideMm, template.WidthMm);
+        var newHeight = Math.Clamp(box.Height * sy, MinSideMm, template.HeightMm);
+        sx = newWidth / box.Width;
+        sy = newHeight / box.Height;
+        if (Math.Abs(sx - 1) < 1e-9 && Math.Abs(sy - 1) < 1e-9) return;
+        Templates.CurveGeometry.ScaleBy(element, sx, sy, heldX, heldY);
+    }
+
+    /// <summary>
+    /// 把元素的盒"设定"到指定宽高（属性面板那两格走这里，第 85 棒）。
+    /// <para>普通元素就是写 <c>Width</c>/<c>Height</c>；<strong>曲线不行</strong>——它的外接框是量出来的
+    /// （<see cref="BoxOf"/> 对曲线走 <c>CurveGeometry.BoundsMm</c>），写进去那两个数没有任何人读，
+    /// 于是"面板填了宽、形状一动不动"。这里改成按倍率整体缩放，锚点取盒左上角（与"X/Y 不动"那条老直觉一致）。
+    /// 面板与拖框两条路都从这一处过，不留第二份算式（§五-62 那一族）。</para>
+    /// </summary>
+    public static void SetBoxSize(TemplateElement element, double? widthMm, double? heightMm)
+    {
+        if (!HasMeasuredBox(element))
+        {
+            if (widthMm > 0) element.Width = Math.Max(MinSideMm, widthMm.Value);
+            if (heightMm > 0) element.Height = Math.Max(MinSideMm, heightMm.Value);
+            return;
+        }
+        var box = VisualBoxOf(element);
+        if (box.Width <= 1e-9 || box.Height <= 1e-9) return;      // 退化成一条线：那一轴没有"宽"可设
+        var sx = widthMm > 0 ? Math.Max(MinSideMm, widthMm.Value) / box.Width : 1;
+        var sy = heightMm > 0 ? Math.Max(MinSideMm, heightMm.Value) / box.Height : 1;
+        Templates.CurveGeometry.ScaleBy(element, sx, sy, box.X, box.Y);
+    }
+
+    /// <summary>
+    /// 这只元素的盒是不是<strong>量出来的</strong>（曲线与「转为曲线」后的形状）：
+    /// 是 → <c>Width</c>/<c>Height</c> 那两个字段没人读，改尺寸只能整体缩放。
+    /// 一条没有节点也没有柄的直线不算（它吃两个端点，第 49 棒口径）。
+    /// </summary>
+    public static bool HasMeasuredBox(TemplateElement element) =>
+        element.Kind == ElementKind.Line
+        && (Templates.CurveGeometry.IsCurved(element) || Templates.CurveGeometry.IsClosed(element));
 
     /// <summary>
     /// 角柄拖拽的等比倍率：把"新的角位置"投影到「锚点 → 原来的角」这条对角线上，投影比就是倍率。
@@ -670,11 +812,13 @@ public static class EditGeometry
             snappedY = Math.Round(originY / options.GridStepMm) * options.GridStepMm;
 
         // 吸附完仍要夹紧：贴住中心线却把元素推出边界是不能接受的。
-        // 但占物比标签还宽的那根轴没有边可贴（夹了会把元素钉死在 0），与 MoveBy 同一口径放开。
+        // 但文本不夹（第 81 棒，与 MoveBy 同口径）：它的占物是量出来的墨迹，摆位允许探出纸，
+        // 越界由编辑器那条按样例墨迹量的提醒与出纸前那道真数据闸接手。
+        var free = element.Kind == ElementKind.Text;
         var maxX = template.WidthMm - width;
         var maxY = template.HeightMm - height;
-        var clampedX = maxX < 0 ? snappedX : Math.Clamp(snappedX, 0, maxX);
-        var clampedY = maxY < 0 ? snappedY : Math.Clamp(snappedY, 0, maxY);
+        var clampedX = free || maxX < 0 ? snappedX : Math.Clamp(snappedX, 0, maxX);
+        var clampedY = free || maxY < 0 ? snappedY : Math.Clamp(snappedY, 0, maxY);
         return new SnapResult(clampedX - offX, clampedY - offY, guides)
         {
             OriginalX = xMm,

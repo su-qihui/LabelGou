@@ -244,8 +244,8 @@ public sealed class Step4SheetCountAndRowCheckTests : IDisposable
         {
             var vm = LoadInto();
             vm.SetPreviewViewport(1528);                // 预览区量到多宽，就按那个宽 ÷ 10 分格
-            return (Cell: vm.RowThumbItemWidth, PerRow: MainViewModel.RowThumbCellsPerRow,
-                Used: vm.RowThumbItemWidth * MainViewModel.RowThumbCellsPerRow);
+            return (Cell: vm.RowThumbItemWidth, PerRow: vm.RowThumbCellsPerRow,
+                Used: vm.RowThumbItemWidth * vm.RowThumbCellsPerRow);
         });
 
         Assert.Equal(148.4, result.Cell, 1);
