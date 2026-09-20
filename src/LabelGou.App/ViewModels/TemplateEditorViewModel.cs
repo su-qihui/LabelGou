@@ -2442,6 +2442,7 @@ public sealed class ElementRow
         ElementKind.Ellipse => "椭圆",
         ElementKind.Polygon => "多边形",
         ElementKind.Image => "图片",
+        ElementKind.Placeholder => "占位对象",
         _ => "元素",
     };
 
@@ -2455,6 +2456,10 @@ public sealed class ElementRow
                 return Truncate(string.IsNullOrWhiteSpace(Element.Text) ? "（空文本）" : Element.Text);
             if (Element.Kind == ElementKind.Image)
                 return Truncate(Path.GetFileName(Element.ImagePath ?? "未选图片"));
+            if (Element.Kind == ElementKind.Placeholder)
+                // 图层行上就把"为什么画不出"说出来：它在纸上确实占着一块，但只是个占位框。
+                // 只说"占位对象"会让人以为软件弄丢了东西（第 88 棒：降级不许静默）。
+                return Element.SourceNotes is { Count: > 0 } notes ? Truncate(notes[0]) : "本通道拿不出画法";
             var box = EditGeometry.BoxOf(Element);
             return $"{box.Width:0.#} × {box.Height:0.#} mm";
         }
@@ -3150,6 +3155,7 @@ public sealed class EditableElement : ObservableObject
         ElementKind.Ellipse => "椭圆",
         ElementKind.Polygon => "多边形",
         ElementKind.Image => "图片",
+        ElementKind.Placeholder => "占位对象",
         _ => "元素",
     };
 

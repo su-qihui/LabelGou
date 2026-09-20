@@ -313,6 +313,27 @@ public static class SheetSvgWriter
                 case BarcodeItem barcode:
                     WriteBarcode(builder, barcode, options, notes);
                     break;
+
+                case PlaceholderItem placeholder:
+                    // 与 LabelRenderer.DrawPlaceholder 同一只框：不填充、灰色虚线。
+                    // 画法拿不出来也要在 SVG 里看得见"这里有个东西、这么大"——
+                    // 拿不出画法是一回事，把它写成不存在是另一回事。
+                    {
+                        var rot = Math.Abs(placeholder.RotationDeg) > 1e-6;
+                        if (rot)
+                            builder.StartGroup(SvgBuilder.GeometryTransform(
+                                placeholder.X + placeholder.Width / 2, placeholder.Y + placeholder.Height / 2,
+                                placeholder.RotationDeg, 1, 1));
+                        builder.Rect(placeholder.X, placeholder.Y, placeholder.Width, placeholder.Height,
+                            null, new SvgPaint
+                            {
+                                Color = "#969696",
+                                WidthMm = RenderRules.LineWidthMm(0.25, RenderTarget.Vector),
+                                DashMm = new[] { 1.0, 1.0 },
+                            });
+                        if (rot) builder.EndLayer();
+                    }
+                    break;
             }
         }
     }

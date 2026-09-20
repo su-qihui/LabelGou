@@ -44,6 +44,18 @@ public enum ElementKind
     /// 与椭圆、矩形共用那套外观字段。
     /// </summary>
     Polygon = 7,
+
+    /// <summary>
+    /// 占位：外部设计（CorelDRAW）里<strong>确有这个对象，但本通道拿不出它的画法</strong>。
+    /// 典型是 CDR 的 OLE 条码（真样件里一页 8 只）——位置与尺寸是准的，里面那几个数字读不出来。
+    /// <para>
+    /// <strong>它必须可见、可选中、可挪位</strong>：把"我们读不出来"标成"它不存在"或判成隐形，
+    /// 会把整批对象从图纸上抹掉（这条教训来自 CDR 分区 §九-P6，判成隐形时那 8 只条码在预览里干干净净）。
+    /// 所以它不填充、不描边、不改色，只画一只虚线占位框，并把"为什么画不出"写进
+    /// <see cref="TemplateElement.SourceNotes"/> 让界面说得出原因。
+    /// </para>
+    /// </summary>
+    Placeholder = 8,
 }
 
 public enum HorizontalAlign
@@ -348,6 +360,28 @@ public sealed class TemplateElement
 
     public bool Visible { get; set; } = true;
 
+    /// <summary>
+    /// 来源留痕：这条元素是从外部设计（CorelDRAW 底稿）逐对象搬进来的，这里记
+    /// <strong>"它为什么是现在这样"</strong>——拿不出的画法、读不到的颜色、由别处推算来的落位，逐条点名。
+    /// <para><strong>null / 缺字段 = 不是导入来的</strong>，所以现有模板文件一个字节都不用更新。</para>
+    /// <para>它是给人看的（选中时属性面板与图层行说得出原因），<strong>不参与出纸</strong>。
+    /// 定这条是为了兑现"降级不许静默"：软件读不出 Corel 的 OLE 条码内容是一回事，
+    /// 装作那个对象不存在、或画一只看着正常的黑框是另一回事。</para>
+    /// </summary>
+    public List<string>? SourceNotes { get; set; }
+
+    /// <summary>
+    /// 这条元素是从外部设计（CorelDRAW 逐对象导入）搬进来的，不是软件自己排出来的。
+    /// <strong>缺字段 / false = 不是导入来的 = 逐字旧行为</strong>（与 <see cref="Closed"/> 同一个写法，
+    /// 现有模板文件一个都不用更新）。
+    /// <para>软件对它的态度要和自家排的不一样：<strong>不搬回纸内、不按上下限夹标签尺寸、
+    /// 探出标签只点名不判 Error、不许被自动折行与自动缩字改样</strong>——
+    /// 用户 2026-09-19 的口径「<strong>导入 CDR 文件就按照 CDR 文件原模原样复刻，不受软件约束</strong>」（第 88 棒）
+    /// 就是落在这一个标记上；没有它，那些豁免只能靠"看它有没有 notes"来猜。</para>
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool Imported { get; set; }
+
     /// <summary>默认字体：微软雅黑，Win10/11 自带，中英混排都不会掉字。</summary>
     public const string DefaultFont = "Microsoft YaHei";
 
@@ -403,7 +437,13 @@ public sealed class LabelTemplate
     /// <remarks>v13 = 第 85 棒把「在哪儿断行」从 <see cref="WrapWidthMm"/> 里拆出来，新增 <see cref="AllowWrap"/>。
     /// <strong>缺字段 = null = 允许折行 = 逐字旧行为</strong>（关到 false 才上盘），所以现有模板文件还是一个都不用更新、
     /// 行为也一个字不变（用户 2026-09-19：「已有方案不更改」）；只有新出的行式骨架与 AI 版式会写上 false。</remarks>
-    public const int CurrentSchemaVersion = 13;
+    /// <remarks>v14 = 第 88 棒把 CorelDRAW 底稿<strong>逐对象</strong>并进模板：新增
+    /// <see cref="ElementKind.Placeholder"/>（确有此物但本通道画不出，如 CDR 的 OLE 条码）与两个字段
+    /// <see cref="TemplateElement.SourceNotes"/>（这条为什么是现在这样）、<see cref="TemplateElement.Imported"/>
+    /// （软件对它让开哪几条约束）。<strong>三个全缺 = 逐字旧行为</strong>，
+    /// 现有 23 份模板文件还是一个都不用更新；旧版软件打开带这些字段的新文件会因不认识新 <c>kind</c>
+    /// 而整份读不进列表（<c>TemplateStore.TryRead</c> 静默吞异常），故导入产出的模板只在 ≥0.7.1 上流通。</remarks>
+    public const int CurrentSchemaVersion = 14;
 
     /// <summary>稳定标识，如 <c>builtin.standard-100x80</c>。用户模板用 <c>user.xxx</c>。</summary>
     public string Id { get; set; } = "user." + Guid.NewGuid().ToString("N")[..8];
@@ -528,10 +568,22 @@ public static class TemplateValidator
 
         if (template.Elements.Count == 0)
             issues.Add(new TemplateIssue(IssueLevel.Warning, "模板里还没有任何元素，预览会是空白。"));
-        if (template.Elements.Count > MaxElements)
+        var hand = template.Elements.Count(e => !e.Imported);
+        var imported = template.Elements.Count - hand;
+        if (hand > MaxElements)
         {
             issues.Add(new TemplateIssue(IssueLevel.Error,
-                $"元素数量 {template.Elements.Count} 超过上限 {MaxElements}。"));
+                $"自己搭的元素数量 {hand} 超过上限 {MaxElements}。"));
+        }
+        if (imported > 0 && hand + imported > MaxElements)
+        {
+            // 第 88 棒：逐对象并入 CorelDRAW 底稿后，一份设计动辄几十上百个元素。这条 80 的上限
+            // 原本是给"手工搭模板"防手滑的，旧口径靠"整张底稿只占一个 Vector 位"绕开它——
+            // 用户口径「原模原样复刻，不受软件约束」，所以软件不为凑数砍掉人家的对象。
+            // 但代价要说得出：撤销栈每一步存的是整份模板 JSON（栈深 50），元素一多撤销与保存都会钝。
+            issues.Add(new TemplateIssue(IssueLevel.Warning,
+                $"这份设计里有 {imported} 个对象是从 CorelDRAW 逐对象搬进来的，总数已超手工模板那档上限 {MaxElements}。" +
+                "软件没有为凑数删掉任何一个；代价是撤销与保存会比平时慢（每一步存整份模板快照）。"));
         }
 
         if (template.Elements.Count > 0 && !template.Elements.Any(e => e.Visible && !e.ReferenceOnly) && template.BorderMm <= 0)
@@ -561,7 +613,18 @@ public static class TemplateValidator
             // 接手这份保护的两处都能真量墨迹：编辑器清单里按样例墨迹量的提醒（Warning），
             // 与 ④⑤ 步出纸前按真数据量的那道闸（要用户点头才放行）。
             if (e.Kind != ElementKind.Text && (e.X < -ToleranceMm || e.Y < -ToleranceMm))
-                issues.Add(new TemplateIssue(IssueLevel.Error, $"{tag} 起点超出标签左上角（X={e.X:0.#}, Y={e.Y:0.#} mm）。", i));
+            {
+                // 第 88 棒：外部设计（CorelDRAW）逐对象搬进来的元素照它原来的位置摆——
+                // 探出画布与出血在 CorelDRAW 里是合法状态，判成 Error 等于"保存会被拒绝"，
+                // 那就是拿软件的规矩改人家的图（用户口径：原模原样复刻，不受软件约束）。
+                // 但让开不等于没问题：照旧出声，只是降成 Warning 并说清是导入让开的。
+                if (e.Imported)
+                    issues.Add(new TemplateIssue(IssueLevel.Warning,
+                        $"{tag} 起点在标签左上角之外（X={e.X:0.#}, Y={e.Y:0.#} mm）——" +
+                        "这份是 CorelDRAW 原样搬进来的，软件没有替它搬回纸内。", i));
+                else
+                    issues.Add(new TemplateIssue(IssueLevel.Error, $"{tag} 起点超出标签左上角（X={e.X:0.#}, Y={e.Y:0.#} mm）。", i));
+            }
 
             if (e.Kind != ElementKind.Line)
             {
@@ -581,10 +644,12 @@ public static class TemplateValidator
                         var howFar = Math.Max(
                             Math.Max(occ.Right - template.WidthMm, occ.Bottom - template.HeightMm),
                             Math.Max(-occ.X, -occ.Y));
-                        issues.Add(new TemplateIssue(IssueLevel.Error,
+                        issues.Add(new TemplateIssue(e.Imported ? IssueLevel.Warning : IssueLevel.Error,
                             $"{tag} 占了 X {occ.X:0.#}~{occ.Right:0.#}、Y {occ.Y:0.#}~{occ.Bottom:0.#} mm，" +
                             $"探出标签（{template.WidthMm:0.#} × {template.HeightMm:0.#} mm）约 {howFar:0.##} mm——" +
-                            "会被裁掉，请挪回纸内或减小尺寸/角度。", i));
+                            (e.Imported
+                                ? "这份是 CorelDRAW 原样搬进来的，软件没替它搬回纸内：要它整块上纸得自己挪位或换纸规。"
+                                : "会被裁掉，请挪回纸内或减小尺寸/角度。"), i));
                     }
                 }
             }

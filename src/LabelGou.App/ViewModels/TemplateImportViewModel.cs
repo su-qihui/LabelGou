@@ -84,10 +84,9 @@ public sealed class TemplateImportViewModel : ObservableObject
         _plan = plan ?? throw new ArgumentNullException(nameof(plan));
         _store = store ?? throw new ArgumentNullException(nameof(store));
 
-        TemplateName = SuggestName(plan.SourceName);
-        LabelWidthText = _plan.LabelWidthMm.ToString("0.###", CultureInfo.InvariantCulture);
-        LabelHeightText = _plan.LabelHeightMm.ToString("0.###", CultureInfo.InvariantCulture);
-
+        // 顺序不能反：LabelWidthText/LabelHeightText 的 setter 里会 ImportCommand.RaiseCanExecute()，
+        // 命令建早于赋值。从前两份底稿的画布宽恰好等于兜底值 "100"，setter 里 `Set` 返回 false 直接退出，
+        // 这条没机会炸；140×100 的 CDR 一进来就当场 NullReferenceException（2026-09-19 用户实测）。
         FieldOptions = BuildFieldOptions();
         Rows = new ObservableCollection<ImportTextRow>(
             _plan.Texts.Select(t => new ImportTextRow(t, FieldOptions, OnRowsChanged)));
@@ -96,6 +95,10 @@ public sealed class TemplateImportViewModel : ObservableObject
         PromoteAllCommand = new RelayCommand(() => SetAll(true));
         PromoteNoneCommand = new RelayCommand(() => SetAll(false));
         CloseCommand = new RelayCommand(() => CloseRequested?.Invoke());
+
+        TemplateName = SuggestName(plan.SourceName);
+        LabelWidthText = _plan.LabelWidthMm.ToString("0.###", CultureInfo.InvariantCulture);
+        LabelHeightText = _plan.LabelHeightMm.ToString("0.###", CultureInfo.InvariantCulture);
     }
 
     /// <summary>勾选与改绑只影响状态行与按钮可用性，直接重发通知就够（导入窗里的行数量级是几十）。</summary>
@@ -203,6 +206,9 @@ public sealed class TemplateImportViewModel : ObservableObject
             if (w < TemplateValidator.MinLabelSideMm || w > TemplateValidator.MaxLabelSideMm
                 || h < TemplateValidator.MinLabelSideMm || h > TemplateValidator.MaxLabelSideMm)
                 return $"标签边长必须在 {TemplateValidator.MinLabelSideMm}~{TemplateValidator.MaxLabelSideMm}mm 之间。";
+            // 逐对象路线没有 SvgDocument，它读的是 cdrx：判"解析成功"要看它自己的那份，
+            // 否则一份好好的 CDR 会被当成"没解析成功"卡在窗口里出不去。
+            if (_plan.Source == TemplateImportSource.CdrObjects) return _plan.Cdrx is null ? "这份 cdrx 没读出对象来。" : null;
             if (!IsCdrRoute && _plan.Document is null) return "底稿没解析成功，关掉重开一份吧。";
             if (IsCdrRoute && _plan.Preview is null) return "这份 .cdr 里没找到内嵌预览图，请按窗口下方的说明导出 SVG 再导入。";
             if (!IsCdrRoute && !_plan.HasVectorBackground && PromotedCount == 0) return "这份底稿里没有可印的东西（既没几何也没提升文字）。";
@@ -222,8 +228,30 @@ public sealed class TemplateImportViewModel : ObservableObject
     {
         if (!File.Exists(path)) return (null, "文件打不开：它不在原来的位置了，或被其它程序占用。");
 
-        var isCdr = Path.GetExtension(path).Equals(".cdr", StringComparison.OrdinalIgnoreCase);
-        var plan = isCdr ? TemplateImporter.FromCdrFile(path) : TemplateImporter.FromSvgFile(path);
+        var ext = Path.GetExtension(path);
+        var isCdr = ext.Equals(".cdr", StringComparison.OrdinalIgnoreCase);
+        var isCdrx = path.EndsWith(".cdrx.json", StringComparison.OrdinalIgnoreCase);
+        TemplateImportPlan plan;
+        if (isCdrx)
+        {
+            // 逐对象的中间格式（A 通道驱动 CorelDRAW 产的，或以后 C 通道产的）：同一套消费方。
+            plan = TemplateImporter.FromCdrxFile(path);
+        }
+        else if (isCdr)
+        {
+            // 第 88 棒：.cdr 现在走「离线直解 → 逐对象可编辑元素」。从前这条只抠一张内嵌糊预览图
+            // 当不可打印的参考底图，一个对象都编辑不了。解不动就明确报错给出路，
+            // **不悄悄退回旧的那条**——那等于把"读不出来"演成"导入成功了"。
+            try { plan = TemplateImporter.FromCdrDesign(path); }
+            catch (Exception e)
+            {
+                return (null, "这份 .cdr 没能逐对象读出来：" + e.Message + Environment.NewLine +
+                    "可以改从 CorelDRAW 导出 SVG 再导一次（走矢量底稿那条），或在 CorelDRAW 里另存一份再试。");
+            }
+        }
+        else plan = TemplateImporter.FromSvgFile(path);
+        // 系统字体表只有 App 层拿得到（Core 不碰 WPF），所以在这里把"没装就替"的口子递给计划。
+        plan.FontResolver = Services.FontSubstitution.Resolve;
         var errors = plan.Issues.ErrorMessages();
         if (errors.Count > 0) return (null, string.Join("\n", errors));
 

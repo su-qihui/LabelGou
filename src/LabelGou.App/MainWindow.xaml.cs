@@ -559,7 +559,7 @@ public partial class MainWindow : Window
         var dialog = new Microsoft.Win32.OpenFileDialog
         {
             Title = "选择 CorelDRAW / Illustrator 导出的底稿",
-            Filter = "底稿|*.svg;*.cdr|SVG 矢量底稿（推荐）|*.svg|CorelDRAW 底稿|*.cdr",
+            Filter = "底稿|*.svg;*.cdr;*.cdrx.json|CorelDRAW 底稿（逐对象可编辑）|*.cdr;*.cdrx.json|SVG 矢量底稿|*.svg",
         };
         if (dialog.ShowDialog(this) != true) return;
 

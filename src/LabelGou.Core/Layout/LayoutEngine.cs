@@ -128,6 +128,15 @@ public sealed record ImageItem(string AbsolutePath, double X, double Y, double W
 public sealed record VectorItem(string AbsolutePath, double X, double Y, double Width, double Height, bool ReferenceOnly = false, double RotationDeg = 0) : LayoutItem;
 
 /// <summary>
+/// 占位项（第 88 棒）：外部设计里<strong>确有此物、但本通道拿不出画法</strong>的那些对象
+/// （CorelDRAW 的 OLE 条码就是典型：盒是准的，里面几个数字读不出来）。
+/// <para>它<strong>必须产出、必须被画出来</strong>——落空即等于"把读不出来当成它不存在"，
+/// 那正是 CDR 分区踩过的坑（判成隐形会一页抹掉 8 只条码）。
+/// <paramref name="Reason"/> 是给人看的那句"为什么画不出"，渲染端与校验端都要能拿到它。</para>
+/// </summary>
+public sealed record PlaceholderItem(double X, double Y, double Width, double Height, string? Reason, double RotationDeg = 0) : LayoutItem;
+
+/// <summary>
 /// 条码项（第 17 棒）。<strong>矩形已经在 Core 算成毫米</strong>，渲染端只负责画，不重算条宽——
 /// 这是「预览能扫、印出来也能扫」的唯一保证。
 /// </summary>
@@ -392,11 +401,22 @@ public static class LayoutEngine
                     break;
                 }
 
+                case ElementKind.Placeholder:
+                    // 这一支必须在 `default:` 之前：default 与 Text 合写在同一格，
+                    // 落进去会被当成文字排（element.Text 为空 → 整条被"隐藏"，就是静默丢对象）。
+                    // 读不出来不等于不存在，所以永远产出、永远画，reason 跟着走。
+                    items.Add(new PlaceholderItem(element.X, element.Y, element.Width, element.Height,
+                        element.SourceNotes is { Count: > 0 } notes ? string.Join("；", notes) : null,
+                        element.RotationDeg));
+                    break;
+
                 case ElementKind.Text:
                 default:
-                    var text = ApplyTextCase(
-                        ResolveText(element.Text, template, record, context, unresolved, out var flagReason),
-                        context.TextCase);
+                    // 导入来的文字照 Corel 原样，不吃「唛头大小写」那格：它是给人工排版的字段用的，
+                    // 拿去改人家图上的字就是"软件替用户改了图"。用户 2026-09-19 实测：Corel 里是
+                    // `Item no：olu830-35`，预览变成 `ITEM NO：OLU830-35`，大写更宽，直接把首行顶出纸外。
+                    var resolved = ResolveText(element.Text, template, record, context, unresolved, out var flagReason);
+                    var text = element.Imported ? resolved : ApplyTextCase(resolved, context.TextCase);
                     if (string.IsNullOrWhiteSpace(text))
                     {
                         // 变量全空 或 本来就是空文本 → 隐藏；纯静态文本为空也算隐藏

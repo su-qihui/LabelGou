@@ -81,6 +81,40 @@ public class TemplateImportFlowTests
         return vm!;
     }
 
+    /// <summary>
+    /// 直接按"预览参考底图"那条路建 VM（<c>.cdr</c> 的入口现在默认走逐对象，
+    /// 而这条路本身还在、它的不变量还得有人守着，所以不经入口、直接给计划构造）。
+    /// </summary>
+    private static TemplateImportViewModel PreviewRouteViewModel(string cdrPath, string storeFolder)
+    {
+        var plan = TemplateImporter.FromCdrFile(cdrPath);
+        Assert.True(plan.Source == TemplateImportSource.CdrPreview, "这条路该产 CdrPreview 计划");
+        return new TemplateImportViewModel(plan, new TemplateStore(storeFolder));
+    }
+
+    /// <summary>
+    /// 回归（2026-09-19 用户实测崩在此处）：构造函数先设宽度文字、后建 ImportCommand，
+    /// setter 里 RaiseCanExecute 就撞 NullReferenceException。画布宽恰好等于兜底值 "100" 时
+    /// setter 提前返回所以从没暴露——140×100 的 CDR 一进来就炸。这条钉住"宽度不是 100 也不许抛"。
+    /// </summary>
+    [Fact]
+    public void APlanWhoseCanvasIsNot100MmWideDoesNotCrashTheWindow() => OnStaThread(() =>
+    {
+        WithTemp(folder =>
+        {
+            var plan = new TemplateImportPlan
+            {
+                Source = TemplateImportSource.Svg,
+                SourcePath = Path.Combine(folder, "宽140.cdrx.json"),
+                LabelWidthMm = 140,
+                LabelHeightMm = 100,
+            };
+            var vm = new TemplateImportViewModel(plan, new TemplateStore(folder));
+            Assert.Equal("140", vm.LabelWidthText);
+            Assert.Equal("100", vm.LabelHeightText);
+        });
+    });
+
     // ---------- 入口分流 ----------
 
     [Fact]
@@ -109,7 +143,7 @@ public class TemplateImportFlowTests
     {
         WithTemp(folder =>
         {
-            var vm = OpenViewModel(WriteCdrWithThumbnail(folder), folder);
+            var vm = PreviewRouteViewModel(WriteCdrWithThumbnail(folder), folder);
             Assert.True(vm.IsCdrRoute);
             Assert.Empty(vm.Rows);
             Assert.Contains("CorelDRAW", vm.NoTextHint, StringComparison.Ordinal);
@@ -251,7 +285,7 @@ public class TemplateImportFlowTests
         WithTemp(folder =>
         {
             var store = new TemplateStore(folder);
-            var vm = OpenViewModel(WriteCdrWithThumbnail(folder), folder);
+            var vm = PreviewRouteViewModel(WriteCdrWithThumbnail(folder), folder);
             vm.TemplateName = "参考图测试";
 
             LabelTemplate? saved = null;

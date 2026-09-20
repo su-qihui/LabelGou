@@ -110,6 +110,9 @@ public static class LabelRenderer
                     case BarcodeItem barcode:
                         DrawBarcode(dc, barcode, scale, showGuides, pixelsPerDip, target);
                         break;
+                    case Core.Layout.PlaceholderItem placeholder:
+                        DrawPlaceholder(dc, placeholder, scale);
+                        break;
                 }
             }
         }
@@ -216,6 +219,27 @@ public static class LabelRenderer
         }
         geometry.Freeze();
         return geometry;
+    }
+
+    /// <summary>
+    /// 占位框那支笔（第 88 棒）：灰色虚线、<strong>不填充</strong>。
+    /// 它刻意不复用 <see cref="ReferencePen"/>——那支是"参考图，进纸前要滤掉"，
+    /// 这支是"这里确有此物，本通道画不出"，两者在被不被打印这件事上正好相反。
+    /// </summary>
+    private static readonly Pen PlaceholderPen = Frozen(new Pen(new SolidColorBrush(Color.FromRgb(150, 150, 150)), 0.25)
+    {
+        DashStyle = DashStyles.Dash,
+    });
+
+    /// <summary>
+    /// 画不出画法的外部对象：只画一只看得见它"在这儿、这么大"的虚线框。
+    /// <strong>绝不因为没有画法就跳过</strong>——那一跳就等于把"我们读不出来"讲成"它不存在"。
+    /// </summary>
+    private static void DrawPlaceholder(DrawingContext dc, Core.Layout.PlaceholderItem placeholder, double scale)
+    {
+        var box = new Rect(Mm.ToDiu(placeholder.X) * scale, Mm.ToDiu(placeholder.Y) * scale,
+            Mm.ToDiu(placeholder.Width) * scale, Mm.ToDiu(placeholder.Height) * scale);
+        DrawRotated(dc, box, placeholder.RotationDeg, () => dc.DrawRectangle(null, PlaceholderPen, box));
     }
 
     /// <summary>椭圆（第 51 棒）：与矩形同一句口径——描边关掉又没填充就什么都不画，校验器负责说话，这里不猜。</summary>
