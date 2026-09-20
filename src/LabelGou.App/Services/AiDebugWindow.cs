@@ -5,9 +5,7 @@ using System.Text;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
-using LabelGou.App.Services.Agent;
 using LabelGou.App.Services.Recognition;
-using LabelGou.Core.Agent;
 
 namespace LabelGou.App.Services;
 
@@ -59,33 +57,6 @@ public sealed class AiDebugWindow : Window
     private readonly TextBlock _log = new() { TextWrapping = TextWrapping.Wrap, FontFamily = new FontFamily("Consolas"), FontSize = 12 };
     private readonly ScrollViewer _logScroll;
 
-    // ── 外部 Agent 那一块（第 87 棒）：三颗勾 + 探测状态 + 起停 + 连接串可复制 ──
-    private readonly CheckBox _useExternalAgent = new()
-    {
-        Content = "让外部 agent 来读这张表（装了 codex 这类命令行 agent 才有意义；关着＝一切照原来的通道问）",
-        Margin = new Thickness(0, 2, 0, 6),
-    };
-    private readonly CheckBox _serveClients = new()
-    {
-        Content = "允许外部程序连回这个窗口（Codex / Qoder 那边能看你当前这张表；只监听 127.0.0.1，要令牌）",
-        Margin = new Thickness(0, 0, 0, 6),
-    };
-    private readonly CheckBox _allowWriteTools = new()
-    {
-        Content = "允许连进来的程序下提案改当前表（它会先压快照，面板那颗「↩ 撤回这一步」能一步步退回去）",
-        Margin = new Thickness(0, 0, 0, 6),
-    };
-    private readonly TextBlock _agentStatus = new()
-    {
-        TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 2, 0, 6),
-    };
-    private readonly TextBox _agentConnect = new()
-    {
-        IsReadOnly = true, TextWrapping = TextWrapping.Wrap, MinHeight = 54,
-        FontFamily = new FontFamily("Consolas"), Margin = new Thickness(0, 2, 0, 6),
-    };
-    private readonly AgentSettings _agent = AgentSettings.Load().Settings;
-
     private RecognitionSettings _settings = RecognitionSettings.Load();
 
     /// <summary>构造期：通道下拉的 SelectionChanged 不能拿预设顶掉用户存好的值，也不能顺手发一次 HTTP。</summary>
@@ -124,48 +95,6 @@ public sealed class AiDebugWindow : Window
         // 档位名与官方参数同名（low/medium/xhigh）不翻译：报错信息里冒出来的就是这三个词，对得上才查得动。
         form.Children.Add(Labeled("思考强度（只对云端 OpenAI 兼容通道生效；本机 Ollama 不发这个参数。百炼 qwen3.8 只认 low/medium/xhigh 与关，其它档位可能直接报错）", _thinking));
         form.Children.Add(_networkNotice);
-
-        // ── 外部 Agent（第 87 棒）：整块竖排，按钮那一排用 WrapPanel——横向 StackPanel 会给"想要多少给多少"，
-        //    窗口一窄控件是被外层裁掉的而不是折下去（§五-152 就是在这扇窗邻座学到的）。
-        form.Children.Add(new TextBlock
-        {
-            Text = "外部 Agent（可选增强：不装也能用，装了就多一条会自己读表、还能从外面连回来的路）",
-            FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 12, 0, 2),
-        });
-        form.Children.Add(_useExternalAgent);
-        form.Children.Add(_serveClients);
-        form.Children.Add(_allowWriteTools);
-        form.Children.Add(_agentStatus);
-        var agentButtons = new WrapPanel { Margin = new Thickness(0, 0, 0, 6) };
-        var reprobe = new Button { Content = "重新探测", Padding = new Thickness(12, 6, 12, 6), Margin = new Thickness(0, 0, 8, 0) };
-        reprobe.Click += async (_, _) => await RefreshAgentStatusAsync();
-        agentButtons.Children.Add(reprobe);
-        var serveOn = new Button { Content = "开启外部接入", Padding = new Thickness(12, 6, 12, 6), Margin = new Thickness(0, 0, 8, 0) };
-        serveOn.Click += (_, _) =>
-        {
-            _serveClients.IsChecked = true;      // 点这一下就是把这颗勾打上，别让勾和实际状态两张脸
-            PersistAgent();
-            _agentConnect.Text = AgentServeHost.Start(_agent);
-            RefreshAgentStatus();
-        };
-        agentButtons.Children.Add(serveOn);
-        var serveOff = new Button { Content = "断开接入", Padding = new Thickness(12, 6, 12, 6), Margin = new Thickness(0, 0, 8, 0) };
-        serveOff.Click += (_, _) =>
-        {
-            _agentConnect.Text = AgentServeHost.Stop();
-            RefreshAgentStatus();
-        };
-        agentButtons.Children.Add(serveOff);
-        var copyAgent = new Button { Content = "复制下面那串连接命令", Padding = new Thickness(12, 6, 12, 6) };
-        copyAgent.Click += (_, _) => CopyAgentConnectLine();
-        agentButtons.Children.Add(copyAgent);
-        form.Children.Add(agentButtons);
-        form.Children.Add(Labeled("连接串（贴到 Codex / Qoder 那边用；令牌只活这一次运行，关掉软件就作废）", _agentConnect));
-        AgentControlsForTests = new FrameworkElement[]
-        {
-            _useExternalAgent, _serveClients, _allowWriteTools, _agentStatus,
-            reprobe, serveOn, serveOff, copyAgent, _agentConnect,
-        };
 
         var buttons = new StackPanel { Orientation = Orientation.Horizontal };
         var list = new Button { Content = "拉取模型列表", Padding = new Thickness(12, 6, 12, 6), Margin = new Thickness(0, 0, 8, 0), IsDefault = true };
@@ -243,103 +172,6 @@ public sealed class AiDebugWindow : Window
         _loading = false;
         RefreshNotice();
         RefreshKeyNotice();
-        LoadAgentSettingsIntoControls();
-        RefreshAgentStatus();          // 先上屏"存的是什么"（纯读字段）
-        // 探测要起进程，放在 Loaded 而不是构造期：没上屏的窗口不该派活，
-        // 更不该留一个"窗口已经关了才回来写字"的续跑（§五-112 那类 STA 崩溃）。
-        Loaded += (_, _) => _ = RefreshAgentStatusAsync();
-    }
-
-    // ───────────────────── 外部 Agent 那一块（第 87 棒） ─────────────────────
-
-    private void LoadAgentSettingsIntoControls()
-    {
-        _useExternalAgent.IsChecked = _agent.UseExternalAgent;
-        _serveClients.IsChecked = _agent.ServeExternalClients;
-        _allowWriteTools.IsChecked = _agent.AllowWriteToolsForExternalClient;
-    }
-
-    /// <summary>三颗勾抄回设置；其余几格（命令名、探测上限、答案大小）本窗不给改，原样带回去。</summary>
-    private AgentSettings CollectAgentSettings()
-    {
-        _agent.UseExternalAgent = _useExternalAgent.IsChecked == true;
-        _agent.ServeExternalClients = _serveClients.IsChecked == true;
-        _agent.AllowWriteToolsForExternalClient = _allowWriteTools.IsChecked == true;
-        return _agent;
-    }
-
-    private void PersistAgent() => CollectAgentSettings().Save();
-
-    /// <summary>给单测留的显式路径口：不碰用户真那份 <c>agent.json</c> 也能验三颗勾真写进去了。</summary>
-    internal void SaveAgentSettingsTo(string path) => CollectAgentSettings().SaveTo(path);
-
-    /// <summary>测试读的是"真上屏的那一行"与"真看得见的那几颗"，不是我以为会显示的那句（§五-152）。</summary>
-    internal string AgentStatusForTests => _agentStatus.Text;
-
-    internal string AgentConnectForTests => _agentConnect.Text;
-
-    internal bool UseExternalAgentCheckedForTests => _useExternalAgent.IsChecked == true;
-
-    /// <summary>三颗勾本体（测试要读的是"真上屏的那三颗"，不是我在别处再存一份值）。</summary>
-    internal CheckBox UseExternalAgentBox => _useExternalAgent;
-
-    internal CheckBox ServeClientsBox => _serveClients;
-    internal CheckBox AllowWriteToolsBox => _allowWriteTools;
-
-    /// <summary>这一块的全部控件：布局判据只量它们，不去碰历史遗留的排布。</summary>
-    internal System.Collections.Generic.IReadOnlyList<FrameworkElement> AgentControlsForTests { get; set; }
-        = Array.Empty<FrameworkElement>();
-
-    /// <summary>状态那一行只说<strong>看得见的事实</strong>：存的是什么、有没有探到、现在听在哪个端口。</summary>
-    private void RefreshAgentStatus()
-    {
-        var saved = _agent.UseExternalAgent ? "读表用外部 agent" : "读表用原来的通道";
-        var want = _agent.ServeExternalClients ? "；开机自动允许外部连入" : "；不对外开连接";
-        var serving = AgentServeHost.IsServing
-            ? $"；正在听 127.0.0.1（{AgentServeHost.ConnectCommand}）"
-            : "；现在没在听";
-        _agentStatus.Text = $"{saved}{want}{serving}";
-        if (AgentServeHost.IsServing && string.IsNullOrWhiteSpace(_agentConnect.Text))
-            _agentConnect.Text = AgentServeHost.ConnectCommand + "\n令牌 " + AgentServeHost.Token;
-    }
-
-    private async Task RefreshAgentStatusAsync()
-    {
-        var settings = CollectAgentSettings();
-        _agentStatus.Text = "正在找这台机器上有没有命令行 agent（codex 这类）…";
-        IAgentRuntime runtime;
-        try
-        {
-            runtime = await Task.Run(() => AgentRuntimeProbe.DetectAsync(settings));
-        }
-        catch (Exception ex)
-        {
-            _agentStatus.Text = "探测这件事本身出了错：" + ex.Message + "（不影响原来的通道）";
-            return;
-        }
-        RefreshAgentStatus();
-        _agentStatus.Text += "\n" + (runtime.IsAvailable
-            ? $"探到了：{runtime.ChannelLabel}"
-            : $"没探到：{runtime.UnavailableReason ?? "这台机器上没有可用的命令行 agent"}");
-    }
-
-    private void CopyAgentConnectLine()
-    {
-        var text = _agentConnect.Text?.Trim() ?? string.Empty;
-        if (text.Length == 0 || !AgentServeHost.IsServing)
-        {
-            WriteLine("还没有可复制的连接串：先点「开启外部接入」。");
-            return;
-        }
-        try
-        {
-            System.Windows.Clipboard.SetText(text);
-            WriteLine("连接命令已复制到剪贴板（令牌那行也带着）。");
-        }
-        catch (Exception ex)
-        {
-            WriteLine($"复制没成：{ex.Message}——下面那格可以直接选中复制。");
-        }
     }
 
     /// <summary>密钥那一行：输入框占满剩下的宽，右边一个「眼睛」按钮。两个框叠在同一格，只显示一个。</summary>
@@ -582,7 +414,6 @@ public sealed class AiDebugWindow : Window
     {
         var settings = Collect();
         settings.Save();
-        PersistAgent();
         var keyLine = settings.SavedKeyFailure is not null
             ? $"但密钥那件事没成：{settings.SavedKeyFailure}"
             : settings.RememberApiKey && !string.IsNullOrWhiteSpace(settings.ApiKey)
@@ -590,7 +421,7 @@ public sealed class AiDebugWindow : Window
                 : string.IsNullOrWhiteSpace(settings.ApiKey)
                     ? "这次没有密钥（磁盘上那份已按开关处理）"
                     : "密钥没存盘，只活在这次运行";
-        WriteLine($"已写入 {RecognitionSettings.FilePath} 与 {AgentSettings.FilePath}；{keyLine}");
+        WriteLine($"已写入 {RecognitionSettings.FilePath}；{keyLine}");
         RefreshKeyNotice();
     }
 

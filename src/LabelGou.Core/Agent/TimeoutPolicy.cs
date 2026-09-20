@@ -4,7 +4,9 @@ namespace LabelGou.Core.Agent;
 /// 一次请求到底等多久。<strong>全项目只这一处算术</strong>。
 /// <para>口径与第 27 棒定的一样：<c>0 = 不设限</c>（原来那个 180 秒硬顶已作废——读一张大表两分钟很正常，
 /// 到点切断只会让老板重问一遍）；填了数就当上限，但低于 10 秒没意义，兜到 10。</para>
-/// <para>出站（外部 agent 子进程）与原来的 HTTP 通道共用这一份：两边各写一遍，迟早一边认 0 一边认 ∞。</para>
+/// <para>主仓里出站（外部 agent 子进程）与 HTTP 通道共用这一份。<strong>本 Win7 变体不装外部 Agent</strong>
+/// （它要求本机跑 Node ≥16 的 codex，而 Node 官方自 13 起不支持 Win7），所以下游只剩 HTTP 通道一个消费者；
+/// 文件仍留在原位、口径仍只这一处，这样每次并主仓时这一格不用重新对。</para>
 /// </summary>
 public static class TimeoutPolicy
 {
