@@ -161,36 +161,52 @@ public partial class SimpleMainWindow : Window
     /// <summary>弹入/弹出一帧一帧走：过渡打在 Reveal 那层（两侧列宽是 Auto，跟着它走），
     /// 栏本体钉在目标宽上被裁边——所以内容不重排，只是从屏幕外一点点推进来（用户 2026-09-21 ①：
     /// 「应该是从屏幕外弹进画面的感觉」）。收起时等动画走完再藏，免得半路 Visibility 把它掐断。</summary>
+    /// <summary>弹入/弹出一帧一帧走：过渡打在 Reveal 这层（两侧列宽是 Auto，跟着它走），
+    /// 栏本体钉在目标宽上贴边对齐——内容不重排，是一点点从屏幕边缘外被露出来（用户 2026-09-21 ①：
+    /// 「应该是从屏幕外弹进画面的感觉」）。裁边只在动画这几帧开：停住时关掉，白卡那圈投影才是完整的。</summary>
     private static void RevealTo(Border reveal, double target, bool open, bool animate)
     {
         if (!animate || !reveal.IsLoaded || Math.Abs(reveal.Width - target) < 0.5)
         {
             reveal.Width = target;
+            reveal.ClipToBounds = false;      // 停着的时候不裁：白卡那圈投影是完整的（用户 2026-09-21 圈出来"外框被切平"）
             reveal.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
             return;
         }
         if (open) reveal.Visibility = Visibility.Visible;
+        reveal.ClipToBounds = true;           // 只在弹入/弹出这几帧里裁边——内容不重排，是一点点被露出来
         var anim = new DoubleAnimation(target, new Duration(TimeSpan.FromMilliseconds(180)))
         {
             EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
         };
-        anim.Completed += (_, _) => { if (!open) reveal.Visibility = Visibility.Collapsed; };
+        anim.Completed += (_, _) =>
+        {
+            reveal.ClipToBounds = false;
+            if (!open) reveal.Visibility = Visibility.Collapsed;
+        };
         reveal.BeginAnimation(FrameworkElement.WidthProperty, anim);
         reveal.Width = target;      // 本地值也落到目标：动画收手后不会弹回旧数
     }
 
     /// <summary>预览那一格尺寸变了（开关栏、拖竖柄、改窗口）→ 报视口宽 + 走专业版同一条自适应
-    /// （<see cref="MainViewModel.FitTo"/>，留 24 像素边）。壳窗上一版压根没接这条线，纸才会被裁一半。</summary>
+    /// （<see cref="MainViewModel.FitTo"/>，留 24 像素边）。壳窗压根没接这条线，纸才会被裁一半。</summary>
     private void OnPreviewHostSizeChanged(object sender, SizeChangedEventArgs e)
     {
         _vm.SetPreviewViewport(PreviewHost.ActualWidth);
-        if (_autoFit) _vm.FitTo(PreviewHost.ActualWidth, PreviewHost.ActualHeight);
+        if (_autoFit) FitNow();
     }
+
+    /// <summary>纸要"看得全也看得出台面"：`FitTo` 自己只留 24 像素，用户 2026-09-21 说再小一点点、
+    /// 纸张边框要多看见一些——这里替壳窗多要一份边（专业版那条 24 一个字不动，两版各有各的口味）。</summary>
+    private const double PaperFitMargin = 56;
+
+    private void FitNow()
+        => _vm.FitTo(PreviewHost.ActualWidth - PaperFitMargin, PreviewHost.ActualHeight - PaperFitMargin);
 
     private void OnFitClick(object sender, RoutedEventArgs e)
     {
         _autoFit = true;
-        _vm.FitTo(PreviewHost.ActualWidth, PreviewHost.ActualHeight);
+        FitNow();
     }
 
     /// <summary>手动 −/＋ 就是"这一下我自己定"：自动显示全就此让位，点「适应」按回去。</summary>
