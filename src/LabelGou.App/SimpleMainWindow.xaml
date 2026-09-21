@@ -78,7 +78,7 @@
 
         <!-- ===== 工作台画布：预览是主角 ===== -->
         <Grid Grid.Row="1" x:Name="Stage" Margin="16">
-            <Border Style="{StaticResource Card}" Background="{StaticResource PageBgBrush}">
+            <Border x:Name="CanvasCard" Style="{StaticResource Card}" Background="{StaticResource PageBgBrush}">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="*"/>
@@ -118,7 +118,7 @@
             </Border>
 
             <!-- ===== 表格抽屉：右上角「表格」点开、抽屉自己的右上角「收起」关（用户 2026-09-20 点名的交互） ===== -->
-            <Border x:Name="TableDrawer" Style="{StaticResource FloatCard}" Width="560" MaxWidth="620"
+            <Border x:Name="TableDrawer" Style="{StaticResource FloatCard}" Width="560"
                     HorizontalAlignment="Left" Margin="0,4" Visibility="Collapsed">
                 <Border.RenderTransform>
                     <TranslateTransform x:Name="DrawerShift" X="-620"/>
@@ -146,11 +146,27 @@
                     </Border>
                     <TextBlock Grid.Row="2" Margin="14,0,14,12" Style="{StaticResource SubText}"
                                Text="合计行/被剔行按 ① 步的口径来；这里看到的就是引擎拿到的。"/>
+                    <!-- 抽屉右缘拖宽柄（第 93 棒④，用户：「可以拉伸表格的缩小长度」）：住在抽屉自己的网格里，跟着滑进滑出。
+                         宽 18 且**跨着边线**（右边探出卡片 9）：第一版做成贴着边内的 9 宽，实测鼠标怎么戳都戳不中——
+                         一根手指宽的隐形柄对用鼠标的人是抓不住的（第 93 棒目检撞出来的）。 -->
+                    <Thumb x:Name="DrawerResizeThumb" Grid.RowSpan="3" Width="18" Height="220" Cursor="SizeWE"
+                           HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,-9,0"
+                           Background="Transparent" BorderThickness="0"
+                           ToolTip="按住左右拖：改这张表抽屉的宽度（画布跟着让位）">
+                        <Thumb.Template>
+                            <ControlTemplate TargetType="Thumb">
+                                <Border Background="{TemplateBinding Background}" Width="18" Height="220">
+                                    <Rectangle Width="4" Height="48" RadiusX="2" RadiusY="2" Fill="{StaticResource SubInkBrush}"
+                                               HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0.5"/>
+                                </Border>
+                            </ControlTemplate>
+                        </Thumb.Template>
+                    </Thumb>
                 </Grid>
             </Border>
 
             <!-- ===== 指令岛：AI 面板本体住在里面（从主窗泊位搬来，全程只有一个实例） ===== -->
-            <Border x:Name="IslandCard" Style="{StaticResource FloatCard}" Width="440" MaxHeight="560"
+            <Border x:Name="IslandCard" Style="{StaticResource FloatCard}" Width="440" Height="560"
                     HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,4,4" Padding="12,10">
                 <Grid>
                     <Grid.RowDefinitions>
@@ -162,6 +178,22 @@
                     <ContentControl x:Name="Island" Grid.Row="1" MinHeight="320"/>
                 </Grid>
             </Border>
+            <!-- 右下角拉伸柄（第 93 棒①，用户：「AI 界面不能拉长或者收缩」）：与岛卡平级、同钉右下角——
+                 卡片怎么拉，角永远压着这颗柄（Border 只许一个孩子，所以柄不能住在卡里）。
+                 32×32 且角对齐到舞台角（比卡片再外扩 4）：小柄抓不中这条教训同抽屉柄。 -->
+            <Thumb x:Name="IslandResizeThumb" Width="32" Height="32" Cursor="SizeNWSE"
+                   HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,0,0"
+                   Background="Transparent" BorderThickness="0"
+                   ToolTip="按住斜着拖：拉长/收缩 AI 指令岛（松手记住，下次开还在）">
+                <Thumb.Template>
+                    <ControlTemplate TargetType="Thumb">
+                        <Border Background="{TemplateBinding Background}" Width="32" Height="32">
+                            <Path Data="M 32 32 L 13 32 L 32 13 Z" Fill="{StaticResource SubInkBrush}"
+                                  HorizontalAlignment="Right" VerticalAlignment="Bottom" Opacity="0.7"/>
+                        </Border>
+                    </ControlTemplate>
+                </Thumb.Template>
+            </Thumb>
         </Grid>
 
         <!-- ===== 底部状态条：一句话，取 VM 的 StatusMessage（谁最后写谁，口径同 §五-129） ===== -->

@@ -69,4 +69,32 @@ public static class SimpleShellFlow
         var home = panel.HostAt(panel.Site);
         if (home is not null) home.Content = panel.Content;
     }
+
+    /// <summary>抽屉可拖宽的范围（DIP）：太窄看不了几列，太宽就把画布挤没了——让位之后画布至少还留得下一张纸。</summary>
+    public const double DrawerMinWidth = 360;
+    public const double DrawerMaxWidth = 820;
+
+    /// <summary>抽屉拖到的宽度一律夹进范围；坏数（NaN/∞）退回默认那档，不许把 Infinity 写进状态文件（§五-183 同族）。</summary>
+    public static double ClampDrawerWidth(double wanted)
+        => double.IsFinite(wanted) ? Math.Clamp(wanted, DrawerMinWidth, DrawerMaxWidth) : 560;
+
+    /// <summary>指令岛可拉伸的范围（DIP）。**下限不是拍脑袋**：第 93 棒实测把岛收到 320×380，
+    /// 面板里那块内容区（Star 行）被固定行挤到看不见——AI 问的三条题一个字都读不出来，
+    /// 那比"不能收缩"更糟。420 宽让按钮排只折两行，520 高让对话区还剩得下问题卡。
+    /// 上限不越过壳窗常见尺寸，免得拉到看不见角。</summary>
+    public const double IslandMinWidth = 420, IslandMaxWidth = 900;
+    public const double IslandMinHeight = 520, IslandMaxHeight = 820;
+
+    /// <summary>岛拉到的宽高各自夹住；坏数退回默认 440×560。</summary>
+    public static (double Width, double Height) ClampIslandSize(double wantedWidth, double wantedHeight)
+        => (double.IsFinite(wantedWidth) ? Math.Clamp(wantedWidth, IslandMinWidth, IslandMaxWidth) : 440,
+            double.IsFinite(wantedHeight) ? Math.Clamp(wantedHeight, IslandMinHeight, IslandMaxHeight) : 560);
+
+    /// <summary>
+    /// 答完第 answeredIndex 条问题后，该把哪一条滚进视野（用户 2026-09-21 实测②：答完一条视图弹回顶部，
+    /// 要往下滚回来才能选下一条）。还有下一条就指它（返回下标）；全答完返回 -1——那时进第二步，
+    /// 新内容在对话区，照常滚对话区底部，这里不再抢方向盘。
+    /// </summary>
+    public static int NextQuestionIndex(int answeredIndex, int questionCount)
+        => answeredIndex + 1 < questionCount ? answeredIndex + 1 : -1;
 }

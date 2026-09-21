@@ -55,6 +55,49 @@ public class SimpleShellTests
         Assert.False(SimpleShellFlow.ToggleTableDrawer(true));
     }
 
+    // ===== 第 93 棒：可拖几何的夹取 + 答题后滚到下一条 =====
+
+    [Theory]
+    [InlineData(100, 100, 420, 520, 360)]    // 太小 → 各自的下限（岛 420×520：实测再收就把问题区挤没了、抽屉 360）
+    [InlineData(5000, 5000, 900, 820, 820)]  // 太大 → 各自的上限（岛 900×820、抽屉 820）
+    [InlineData(640, 600, 640, 600, 640)]    // 区间内原样
+    public void ClampGeometry_KeepsSizesInsideSaneBands(double w, double h, double wantIw, double wantIh, double wantDrawer)
+    {
+        var (cw, ch) = SimpleShellFlow.ClampIslandSize(w, h);
+        Assert.Equal(wantIw, cw);
+        Assert.Equal(wantIh, ch);
+        Assert.Equal(wantDrawer, SimpleShellFlow.ClampDrawerWidth(w));
+    }
+
+    [Fact]
+    public void ClampGeometry_RejectsBadNumbersInsteadOfStoringThem()
+    {
+        // NaN/∞ 拖不进状态文件（§五-183 同族）：坏数一律退回默认档
+        Assert.Equal((440, 560), SimpleShellFlow.ClampIslandSize(double.NaN, double.PositiveInfinity));
+        Assert.Equal(560, SimpleShellFlow.ClampDrawerWidth(double.NaN));
+    }
+
+    [Theory]
+    [InlineData(0, 3, 1)]    // 答完第 1 条 → 把第 2 条滚进视野
+    [InlineData(1, 3, 2)]
+    [InlineData(2, 3, -1)]   // 最后一条答完 → 不抢方向盘（进第二步，新内容在对话区）
+    public void NextQuestionIndex_PointsAtTheOneToAnswerOrHandsBack(int answered, int count, int expected)
+        => Assert.Equal(expected, SimpleShellFlow.NextQuestionIndex(answered, count));
+
+    [Fact]
+    public void LastShellAndGeometry_RoundTripThroughTheStateFile()
+    {
+        var store = TestEnvironment.NewTempUiStateStore();
+        var vm = OnSta(() => new MainViewModel(store));
+        // 旧状态文件缺这几格 = 没记过：LastShell 空（启动退回默认简洁版）、几何 0
+        Assert.Equal("", vm.LoadLastShell());
+        var g0 = vm.LoadShellGeometry();
+        Assert.Equal((0d, 0d, 0d), g0);
+        OnSta(() => { vm.SaveLastShell("pro"); vm.SaveShellGeometry(500, 620, 700); return 0; });
+        Assert.Equal("pro", vm.LoadLastShell());
+        Assert.Equal((500d, 620d, 700d), vm.LoadShellGeometry());
+    }
+
     // ===== AI 面板摘挂：全程只有一个实例，两处宿主不同时指它 =====
 
     [Fact]

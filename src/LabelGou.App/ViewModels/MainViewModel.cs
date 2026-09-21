@@ -1002,6 +1002,38 @@ public sealed partial class MainViewModel : ObservableObject, ILabelSource
         _uiState.Save(state);
     }
 
+    // ───────────────────────── 壳窗状态（第 93 棒） ─────────────────────────
+
+    /// <summary>上次用的是哪一版界面。空 = 没记过 = 简洁版（用户 2026-09-21 定的默认入口；只认 "pro"，其余一律简洁）。</summary>
+    internal string LoadLastShell() => _uiState.Load().LastShell;
+
+    internal void SaveLastShell(string shell)
+    {
+        var state = _uiState.Load();
+        if (state.LastShell == shell) return;
+        state.LastShell = shell;
+        _uiState.Save(state);
+    }
+
+    /// <summary>壳窗那三处可拖尺寸（岛宽高、抽屉宽）。0 = 没记过，调用方退回 <c>SimpleShellFlow</c> 的默认档。</summary>
+    internal (double IslandWidth, double IslandHeight, double DrawerWidth) LoadShellGeometry()
+    {
+        var s = _uiState.Load();
+        return (s.IslandWidth, s.IslandHeight, s.DrawerWidth);
+    }
+
+    internal void SaveShellGeometry(double islandWidth, double islandHeight, double drawerWidth)
+    {
+        var state = _uiState.Load();
+        if (Math.Abs(state.IslandWidth - islandWidth) < 1
+            && Math.Abs(state.IslandHeight - islandHeight) < 1
+            && Math.Abs(state.DrawerWidth - drawerWidth) < 1) return;
+        state.IslandWidth = islandWidth;
+        state.IslandHeight = islandHeight;
+        state.DrawerWidth = drawerWidth;
+        _uiState.Save(state);
+    }
+
     // ───────────────────────── 运行模式（第 30 棒） ─────────────────────────
 
     private RunMode _mode = RunMode.Ai;

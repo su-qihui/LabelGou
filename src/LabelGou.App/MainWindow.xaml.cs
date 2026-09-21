@@ -173,6 +173,13 @@ public partial class MainWindow : Window
 
     private SimpleMainWindow? _simpleShell;
 
+    /// <summary>启动该开哪一版（第 93 棒，App.OnStartup 调用）：记住过 pro 就开专业版，其余一律简洁版。</summary>
+    internal void OpenAtStartup()
+    {
+        if (_viewModel.LoadLastShell() == "pro") Show();
+        else OpenSimpleShell();
+    }
+
     /// <summary>
     /// 「视图 → 简洁版工作台」（第 91 棒 · 阶段一第一刀）：开新一代壳窗，本窗隐藏待命。
     /// <para><strong>只有一份状态、只有一份 AI 面板</strong>：壳窗吃同一个 <see cref="MainViewModel"/>；
@@ -180,8 +187,9 @@ public partial class MainWindow : Window
     /// 绝不 new 第二块——两块同时发请求就是双份模型钱（本文件构造里钉着的规矩）。</para>
     /// <para>复核闸门临时改挂壳窗：主窗此刻是藏着的，问人的框得盖在**看得见**的那扇窗上，
     /// 不然 MessageBox 顶着一个隐藏 owner，操作员盯着屏幕等一个不弹出来的框。回专业版原样换回。</para>
+    /// <para>第 93 棒：开/回各记一次 <c>LastShell</c>——下次启动从用户上次实际待着的那版开（默认简洁）。</para>
     /// </summary>
-    private void OnOpenSimpleShellClick(object sender, RoutedEventArgs e)
+    internal void OpenSimpleShell()
     {
         if (_simpleShell is { IsLoaded: true })
         {
@@ -199,6 +207,7 @@ public partial class MainWindow : Window
         var gateWas = _viewModel.ConfirmGate;
         _viewModel.ConfirmGate = text => MessageBox.Show(_simpleShell, text, "LabelGou 打印前复核",
             MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes;
+        _viewModel.SaveLastShell("simple");
         var shell = _simpleShell;   // 回调里先清字段再用它会当场踩空，引用先抄一份
         shell.Closed += (_, _) =>
         {
@@ -209,6 +218,7 @@ public partial class MainWindow : Window
                 Services.SimpleShellFlow.TakeBack(p, shell.IslandHost);
                 AiPanel.ShowDragGrip = true;
             }
+            _viewModel.SaveLastShell("pro");
             Show();
             Services.AppLog.Info("从简洁版回到专业版：AI 面板搬回原泊位，复核闸门改挂主窗");
         };
@@ -216,6 +226,8 @@ public partial class MainWindow : Window
         Hide();
         Services.AppLog.Info("已打开简洁版壳窗（同一份 MainViewModel，专业版隐藏待命）");
     }
+
+    private void OnOpenSimpleShellClick(object sender, RoutedEventArgs e) => OpenSimpleShell();
 
     /// <summary>右栏那一栏里的手动退回入口：与拖到下缘同一个 <see cref="DetachablePanel.Dock(DockSite)"/>，不开第二套。</summary>
     private void OnAiDockBottomClick(object sender, RoutedEventArgs e) => _aiPanel?.Dock(DockSite.Bottom);
