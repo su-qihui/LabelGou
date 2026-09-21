@@ -6,9 +6,10 @@
         Title="LabelGou 简洁版"
         Width="1320" Height="860"
         MinWidth="1080" MinHeight="700"
+        WindowState="Maximized"
         FontFamily="Segoe UI, Microsoft YaHei" FontSize="14"
         WindowStartupLocation="CenterScreen">
-    <!-- 简洁版壳窗（第 91 棒 · 阶段一第一刀）：工作台画布 + 表格抽屉 + 指令岛 + 出纸全屏确认。
+    <!-- 简洁版壳窗（第 91 棒开这一刀，第 94 棒改三栏，第 95 棒补弹入与自适应）：左=这张表 / 中=预览（主导）/ 右=AI + 出纸全屏确认。
          设计真源 = labelgou-word\specs\2026-09-20-新一代界面设计思路.md 与同名概念稿 HTML。
          这里只做「呈现」：数据、命令、闸门全走专业版那份 MainViewModel（同一个实例），
          所以本窗不许出现任何会自己算毫米、自己拼版、自己出纸的路——画法唯一、出口唯一照旧。 -->
@@ -79,18 +80,21 @@
         </Border>
 
         <!-- ===== 三栏工作台（第 94 棒，用户指着 Qoder 界面说的）：左=这张表 / 中=预览（主导）/ 右=AI。
-                 左右两根栏随时开关，收起来占 0 宽、中间那格自己补位；两根竖柄拖宽。 ===== -->
+                 左右两根栏随时开关，收起来占 0 宽、中间那格自己补位；两根竖柄拖宽。
+                 第 95 棒：两侧列宽改成 Auto——真正的宽度长在 Reveal 那层 Border 上，动画只动它一个数。 ===== -->
         <Grid Grid.Row="1" x:Name="Stage" Margin="16">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition x:Name="LeftPaneCol" Width="0"/>
+                <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>
-                <ColumnDefinition x:Name="RightPaneCol" Width="0"/>
+                <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
 
-            <!-- 左栏：这张表读进来的原样（第 91 棒它是浮层抽屉，三栏骨架下改成正儿八经一根栏） -->
-            <Border x:Name="LeftPane" Grid.Column="0" Style="{StaticResource FloatCard}" Width="560" Margin="0,0,6,0">
+            <!-- 弹入容器：ClipToBounds 裁边，Width 从 0 走到目标（PaneRevealWidth），栏就从屏幕外推进来；
+                 里面那层钉死目标宽 + 贴边对齐，所以动画期间内容不重排，只是被一点点露出来 -->
+            <Border x:Name="LeftPaneReveal" Grid.Column="0" Width="0" ClipToBounds="True">
+            <Border x:Name="LeftPane" Style="{StaticResource FloatCard}" Width="560" Margin="0,0,6,0" HorizontalAlignment="Left">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
@@ -117,6 +121,7 @@
                                Text="合计行/被剔行按 ① 步的口径来；这里看到的就是引擎拿到的。"/>
                 </Grid>
             </Border>
+            </Border>
             <!-- 左栏与中间之间那根竖柄：18 DIP 跨着边线（第 93 棒教训：贴着边的 9 DIP 隐形柄等于没有） -->
             <Thumb x:Name="LeftSplitThumb" Grid.Column="1" Width="18" Cursor="SizeWE" HorizontalAlignment="Left"
                    Background="Transparent" BorderThickness="0"
@@ -139,23 +144,27 @@
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
 
-                    <!-- 没数据时的引导（不是空白一块让人以为程序坏了） -->
-                    <TextBlock Grid.Row="0" Text="把工厂发来的 Excel / CSV 点「打开数据文件…」选进来&#10;AI 模式会先读表，只问要你拍板的事"
-                               Visibility="{Binding HasData, Converter={StaticResource InvBoolVis}}"
-                               HorizontalAlignment="Center" VerticalAlignment="Center" TextAlignment="Center"
-                               FontSize="16" Foreground="{StaticResource SubInkBrush}"/>
+                    <!-- 预览可用地那一格（第 95 棒：纸要「自动显示全」就得知道这一格多大）。
+                         尺寸一变就走专业版同一条 FitTo（MainViewModel.cs:1615，留 24 像素边），不开第二套自适应。 -->
+                    <Grid Grid.Row="0" x:Name="PreviewHost" SizeChanged="OnPreviewHostSizeChanged">
+                        <!-- 没数据时的引导（不是空白一块让人以为程序坏了） -->
+                        <TextBlock Text="把工厂发来的 Excel / CSV 点「打开数据文件…」选进来&#10;AI 模式会先读表，只问要你拍板的事"
+                                   Visibility="{Binding HasData, Converter={StaticResource InvBoolVis}}"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center" TextAlignment="Center"
+                                   FontSize="16" Foreground="{StaticResource SubInkBrush}"/>
 
-                    <!-- 预览包进白卡（概念稿 .paper 的形状：白纸浮在桌面上，带边带影）。
-                         LabelPreviewControl 自己按真实毫米画纸，这里只给它一个"浮起来"的托，不碰画法 -->
-                    <Border Grid.Row="0" Background="{StaticResource CardBrush}" BorderBrush="{StaticResource LineBrush}"
-                            BorderThickness="1" CornerRadius="4" Effect="{StaticResource Shadow2}"
-                            Padding="26" HorizontalAlignment="Center" VerticalAlignment="Center"
-                            Visibility="{Binding HasLayout, Converter={StaticResource BoolVis}}">
-                        <render:LabelPreviewControl x:Name="LabelView"
-                                                    Layout="{Binding CurrentLayout}"
-                                                    Zoom="{Binding Zoom}"
-                                                    ShowGuides="{Binding ShowGuides}"/>
-                    </Border>
+                        <!-- 预览包进白卡（概念稿 .paper 的形状：白纸浮在桌面上，带边带影）。
+                             LabelPreviewControl 自己按真实毫米画纸，这里只给它一个"浮起来"的托，不碰画法 -->
+                        <Border Background="{StaticResource CardBrush}" BorderBrush="{StaticResource LineBrush}"
+                                BorderThickness="1" CornerRadius="4" Effect="{StaticResource Shadow2}"
+                                Padding="26" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                Visibility="{Binding HasLayout, Converter={StaticResource BoolVis}}">
+                            <render:LabelPreviewControl x:Name="LabelView"
+                                                        Layout="{Binding CurrentLayout}"
+                                                        Zoom="{Binding Zoom}"
+                                                        ShowGuides="{Binding ShowGuides}"/>
+                        </Border>
+                    </Grid>
 
                     <!-- 画布脚：翻页与缩放（都是现成命令，不新开路） -->
                     <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,0,0,12">
@@ -165,8 +174,12 @@
                         <Button Content="▶" Style="{StaticResource GhostButton}" MinWidth="36" Command="{Binding NextRecordCommand}"/>
                         <Button Content="⏭" Style="{StaticResource GhostButton}" MinWidth="36" Margin="6,0,0,0" Command="{Binding LastRecordCommand}"/>
                         <Button Content="示意预览" Style="{StaticResource GhostButton}" Margin="14,0,0,0" Command="{Binding SamplePreviewCommand}"/>
-                        <Button Content="－" Style="{StaticResource GhostButton}" MinWidth="36" Margin="14,0,0,0" Command="{Binding ZoomOutCommand}"/>
-                        <Button Content="＋" Style="{StaticResource GhostButton}" MinWidth="36" Margin="6,0,0,0" Command="{Binding ZoomInCommand}"/>
+                        <Button Content="－" Style="{StaticResource GhostButton}" MinWidth="36" Margin="14,0,0,0" Command="{Binding ZoomOutCommand}"
+                                  Click="OnManualZoomClick" ToolTip="手动缩小（自动显示全就此让位，点「适应」按回去）"/>
+                        <Button Content="＋" Style="{StaticResource GhostButton}" MinWidth="36" Margin="6,0,0,0" Command="{Binding ZoomInCommand}"
+                                  Click="OnManualZoomClick" ToolTip="手动放大（自动显示全就此让位，点「适应」按回去）"/>
+                        <Button x:Name="FitBtn" Content="适应" Style="{StaticResource GhostButton}" MinWidth="44" Margin="14,0,0,0"
+                                Click="OnFitClick" ToolTip="让这张纸完整落在框里（默认就开着；拖栏、换模板都跟着自动重算）"/>
                     </StackPanel>
                 </Grid>
             </Border>
@@ -184,7 +197,9 @@
                     </ControlTemplate>
                 </Thumb.Template>
             </Thumb>
-            <Border x:Name="RightPane" Grid.Column="4" Style="{StaticResource FloatCard}" Width="440" Margin="6,0,0,0" Padding="12,10">
+            <Border x:Name="RightPaneReveal" Grid.Column="4" Width="0" ClipToBounds="True">
+            <Border x:Name="RightPane" Style="{StaticResource FloatCard}" Width="440" Margin="6,0,0,0" Padding="12,10"
+                    HorizontalAlignment="Right">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
@@ -198,6 +213,7 @@
                     <!-- 内容 = MainWindow 的 AiChatPanel 本体（SimpleShellFlow.Park 搬进来）；壳窗只当宿主，不建第二份面板 -->
                     <ContentControl x:Name="Island" Grid.Row="1" MinHeight="320"/>
                 </Grid>
+            </Border>
             </Border>
         </Grid>
 

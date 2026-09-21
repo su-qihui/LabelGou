@@ -70,10 +70,12 @@ public static class SimpleShellFlow
         if (home is not null) home.Content = panel.Content;
     }
 
-    /// <summary>两根栏可拖宽的范围与默认档（DIP）。左栏是这张表（太窄看不了几列，太宽把画布挤没）；
-    /// 右栏下限 420 是第 93 棒实测出来的——再窄，面板的按钮排折成五行、把对话区挤到一个字都读不出来。</summary>
+    /// <summary>两根栏可拖宽的范围与默认档（DIP）。左栏是这张表（太窄看不了几列，太宽把画布挤没）。
+    /// 右栏下限 420 是第 93 棒在"岛只有 560 高"那一版量出来的（一窄按钮排就折成五行、把对话区挤没）；
+    /// 第 95 棒放到 300——右栏现在是顶到底一整根（全屏 ~820 高），折行吃的那点高度装得下。
+    /// 这个数**要目检才算数**：拖到 300 看 AI 的问题卡还在不在，不在就把实测值写回来。</summary>
     public const double LeftPaneMinWidth = 360, LeftPaneMaxWidth = 820, LeftPaneDefaultWidth = 560;
-    public const double RightPaneMinWidth = 420, RightPaneMaxWidth = 900, RightPaneDefaultWidth = 440;
+    public const double RightPaneMinWidth = 300, RightPaneMaxWidth = 900, RightPaneDefaultWidth = 440;
 
     /// <summary>拖到的宽度一律夹进范围；坏数（NaN/∞）退回默认那档，不许把 Infinity 写进状态文件（§五-183 同族）。</summary>
     public static double ClampLeftPaneWidth(double wanted)
@@ -82,9 +84,13 @@ public static class SimpleShellFlow
     public static double ClampRightPaneWidth(double wanted)
         => double.IsFinite(wanted) ? Math.Clamp(wanted, RightPaneMinWidth, RightPaneMaxWidth) : RightPaneDefaultWidth;
 
-    /// <summary>一根栏在版面上占多宽：收起时占 0，中间那格（预览）自己补位——用户 2026-09-21 要的
-    /// 「以中间为主导界面，左右随时关闭或开启」就是这一句。</summary>
-    public static double PaneSlotWidth(double width, bool open) => open ? width : 0;
+    /// <summary>弹入容器比栏本身多留的那点数（栏的外边距 + 卡片投影；裁边时别把它们切掉）。</summary>
+    public const double PaneRevealGutter = 12;
+
+    /// <summary>一根栏那一格现在占多宽：收起 = 占 0，中间那格（预览）自己补位——用户 2026-09-21 要的
+    /// 「以中间为主导界面，左右可以随时关闭或开启」就是这一句。开着时多留一份投影边。</summary>
+    public static double PaneRevealWidth(double paneWidth, bool open)
+        => open ? paneWidth + PaneRevealGutter : 0;
 
     /// <summary>
     /// 答完第 answeredIndex 条问题后，该把哪一条滚进视野（用户 2026-09-21 实测②：答完一条视图弹回顶部，

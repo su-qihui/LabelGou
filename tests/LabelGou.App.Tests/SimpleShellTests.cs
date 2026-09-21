@@ -58,7 +58,7 @@ public class SimpleShellTests
     // ===== 第 93/94 棒：栏宽夹取、收起占多少、答题后滚到下一条 =====
 
     [Theory]
-    [InlineData(100, 100, 360, 420)]    // 太小 → 各自的下限（左 360、右 420：右栏再窄 AI 的问题区就被挤没）
+    [InlineData(100, 100, 360, 300)]    // 太小 → 各自的下限（左 360、右 300：第 95 棒放的，右栏现在顶到底一整根）
     [InlineData(5000, 5000, 820, 900)]  // 太大 → 各自的上限（左 820、右 900）
     [InlineData(640, 640, 640, 640)]    // 区间内原样
     public void ClampPaneWidth_KeepsSizesInsideSaneBands(double left, double right, double wantLeft, double wantRight)
@@ -76,10 +76,11 @@ public class SimpleShellTests
     }
 
     [Theory]
-    [InlineData(560, true, 560)]   // 开着 = 占自己那份宽
+    [InlineData(560, true, 572)]   // 开着 = 栏宽 + 投影边（弹入容器裁边时别把卡片阴影切掉）
     [InlineData(560, false, 0)]    // 收起 = 占 0，中间那格（预览）自己补位——用户要的是"左右随时开关，中间主导"
-    public void PaneSlotWidth_CollapsedPaneTakesNoRoom(double width, bool open, double expected)
-        => Assert.Equal(expected, SimpleShellFlow.PaneSlotWidth(width, open));
+    [InlineData(300, true, 312)]
+    public void PaneRevealWidth_CollapsedPaneTakesNoRoom(double width, bool open, double expected)
+        => Assert.Equal(expected, SimpleShellFlow.PaneRevealWidth(width, open));
 
     [Theory]
     [InlineData(0, 3, 1)]    // 答完第 1 条 → 把第 2 条滚进视野
@@ -139,6 +140,8 @@ public class SimpleShellTests
             Assert.False(shell.LeftPaneOpen);              // 左栏默认收起——中间预览才是主角（用户 2026-09-21）
             Assert.True(shell.RightPaneOpen);              // 右栏 AI 默认开着（AI 模式第一步就要用它）
             Assert.False(shell.SwitchingToPro);            // 刚造出来的窗不许自认"正在回专业版"，否则关窗会把软件留着
+            Assert.True(shell.AutoFitPreview);             // 纸默认自动显示全（第 95 棒④：上一版没接这条线，纸被裁一半）
+            Assert.Equal(WindowState.Maximized, shell.WindowState);   // 第 95 棒②：起来就是全屏
             return 0;
         });
 

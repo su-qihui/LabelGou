@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using LabelGou.App.Services;
 using LabelGou.App.ViewModels;
 
@@ -27,6 +28,8 @@ public partial class SimpleMainWindow : Window
     // 按下那一刻的起点（当时的宽 + 指针 X）——拖拽全程照它算**总位移**，不吃 DragDelta 的累计量（第 93 棒那条教训）
     private (double W, double X) _leftGrab;
     private (double W, double X) _rightGrab;
+    // 中间那张纸自动显示全（用户 2026-09-21 ④）。默认开着；点 −/＋ 就交回他手上，点「适应」再要回来。
+    private bool _autoFit = true;
 
     /// <summary>指令岛的宿主：主窗把 AI 面板本体搬进这里（<see cref="SimpleShellFlow.Park"/>）。</summary>
     public ContentControl IslandHost => Island;
@@ -36,6 +39,9 @@ public partial class SimpleMainWindow : Window
 
     /// <summary>右栏（AI）开没开。</summary>
     public bool RightPaneOpen => _rightOpen;
+
+    /// <summary>中间预览是不是"自动显示全"（第 95 棒④）。手动 −/＋ 会把它关掉。</summary>
+    public bool AutoFitPreview => _autoFit;
 
     /// <summary>这扇窗是被「回专业版」关掉的，还是用户直接关窗：前者要把主窗掀回来，后者整个软件退出（用户 2026-09-21：关两次不算关完）。</summary>
     public bool SwitchingToPro { get; private set; }
@@ -126,32 +132,69 @@ public partial class SimpleMainWindow : Window
         }
     }
 
-    /// <summary>左栏开关：收起时占 0 宽（连竖柄一起藏），中间那格自己补位——用户 2026-09-21 要的就是
+    /// <summary>左栏开关：收起时占 0（连竖柄一起藏），中间那格自己补位——用户 2026-09-21 要的就是
     /// 「左右可以随时关闭或开启，中间为主导界面」。</summary>
     private void SetLeftPane(bool open)
     {
         _leftOpen = open;
-        ApplyPaneLayout();
+        ApplyPaneLayout(animate: true);
     }
 
     private void SetRightPane(bool open)
     {
         _rightOpen = open;
-        ApplyPaneLayout();
+        ApplyPaneLayout(animate: true);
     }
 
-    /// <summary>把两根栏的开关与宽度落到列宽上。占多宽这件事归 <see cref="SimpleShellFlow.PaneSlotWidth"/>（判据读得到），这里只画。</summary>
-    private void ApplyPaneLayout()
+    /// <summary>把两根栏的开关与宽度落到版面上。占多宽这件事归 <see cref="SimpleShellFlow.PaneRevealWidth"/>（判据读得到），这里只画。</summary>
+    private void ApplyPaneLayout(bool animate = false)
     {
         LeftPane.Width = _leftWidth;
         RightPane.Width = _rightWidth;
-        LeftPaneCol.Width = new GridLength(SimpleShellFlow.PaneSlotWidth(_leftWidth, _leftOpen));
-        RightPaneCol.Width = new GridLength(SimpleShellFlow.PaneSlotWidth(_rightWidth, _rightOpen));
-        LeftPane.Visibility = _leftOpen ? Visibility.Visible : Visibility.Collapsed;
-        LeftSplitThumb.Visibility = LeftPane.Visibility;
-        RightPane.Visibility = _rightOpen ? Visibility.Visible : Visibility.Collapsed;
-        RightSplitThumb.Visibility = RightPane.Visibility;
+        RevealTo(LeftPaneReveal, SimpleShellFlow.PaneRevealWidth(_leftWidth, _leftOpen), _leftOpen, animate);
+        RevealTo(RightPaneReveal, SimpleShellFlow.PaneRevealWidth(_rightWidth, _rightOpen), _rightOpen, animate);
+        // 竖柄跟着栏走：栏收起就没有"这一格的边"可拖了（想再开走顶栏那颗钮）
+        LeftSplitThumb.Visibility = _leftOpen ? Visibility.Visible : Visibility.Collapsed;
+        RightSplitThumb.Visibility = _rightOpen ? Visibility.Visible : Visibility.Collapsed;
     }
+
+    /// <summary>弹入/弹出一帧一帧走：过渡打在 Reveal 那层（两侧列宽是 Auto，跟着它走），
+    /// 栏本体钉在目标宽上被裁边——所以内容不重排，只是从屏幕外一点点推进来（用户 2026-09-21 ①：
+    /// 「应该是从屏幕外弹进画面的感觉」）。收起时等动画走完再藏，免得半路 Visibility 把它掐断。</summary>
+    private static void RevealTo(Border reveal, double target, bool open, bool animate)
+    {
+        if (!animate || !reveal.IsLoaded || Math.Abs(reveal.Width - target) < 0.5)
+        {
+            reveal.Width = target;
+            reveal.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
+            return;
+        }
+        if (open) reveal.Visibility = Visibility.Visible;
+        var anim = new DoubleAnimation(target, new Duration(TimeSpan.FromMilliseconds(180)))
+        {
+            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
+        };
+        anim.Completed += (_, _) => { if (!open) reveal.Visibility = Visibility.Collapsed; };
+        reveal.BeginAnimation(FrameworkElement.WidthProperty, anim);
+        reveal.Width = target;      // 本地值也落到目标：动画收手后不会弹回旧数
+    }
+
+    /// <summary>预览那一格尺寸变了（开关栏、拖竖柄、改窗口）→ 报视口宽 + 走专业版同一条自适应
+    /// （<see cref="MainViewModel.FitTo"/>，留 24 像素边）。壳窗上一版压根没接这条线，纸才会被裁一半。</summary>
+    private void OnPreviewHostSizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        _vm.SetPreviewViewport(PreviewHost.ActualWidth);
+        if (_autoFit) _vm.FitTo(PreviewHost.ActualWidth, PreviewHost.ActualHeight);
+    }
+
+    private void OnFitClick(object sender, RoutedEventArgs e)
+    {
+        _autoFit = true;
+        _vm.FitTo(PreviewHost.ActualWidth, PreviewHost.ActualHeight);
+    }
+
+    /// <summary>手动 −/＋ 就是"这一下我自己定"：自动显示全就此让位，点「适应」按回去。</summary>
+    private void OnManualZoomClick(object sender, RoutedEventArgs e) => _autoFit = false;
 
     /// <summary>① 步那张表的列在这里也是自动生成的——换绑口径必须与主窗同一份（§五-177）。</summary>
     private void TableGrid_AutoGeneratingColumn(object? sender, DataGridAutoGeneratingColumnEventArgs e)
