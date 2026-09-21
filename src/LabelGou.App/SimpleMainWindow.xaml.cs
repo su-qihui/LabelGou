@@ -30,6 +30,8 @@ public partial class SimpleMainWindow : Window
     private (double W, double X) _rightGrab;
     // 中间那张纸自动显示全（用户 2026-09-21 ④）。默认开着；点 −/＋ 就交回他手上，点「适应」再要回来。
     private bool _autoFit = true;
+    // 顶栏「首页」那颗钮按下去的状态（还没导数据时首页本来就在，不需要它）
+    private bool _homeToggled;
 
     /// <summary>指令岛的宿主：主窗把 AI 面板本体搬进这里（<see cref="SimpleShellFlow.Park"/>）。</summary>
     public ContentControl IslandHost => Island;
@@ -50,6 +52,9 @@ public partial class SimpleMainWindow : Window
     {
         _vm = vm ?? throw new ArgumentNullException(nameof(vm));
         InitializeComponent();
+        // 深浅色跟着系统（第 97 棒）：要深色就往资源共享里再压一份调色板。
+        // 放在 InitializeComponent 之后才有效——样式里的颜色一律走 DynamicResource，晚压进去也追得上。
+        SimpleTheme.ApplyInto(this);
         // 简洁版给短标题：主窗那句（含五步向导提示）不该原样搬来——壳窗没有五步摊开的样子
         Title = $"LabelGou 简洁版 · v{AppInfo.Version}";
         DataContext = _vm;
@@ -66,6 +71,11 @@ public partial class SimpleMainWindow : Window
         TableCloseBtn.Click += (_, _) => SetLeftPane(false);
         AiToggleBtn.Click += (_, _) => SetRightPane(SimpleShellFlow.TogglePane(_rightOpen));
         AiCloseBtn.Click += (_, _) => SetRightPane(false);
+        HomeBtn.Click += (_, _) =>
+        {
+            _homeToggled = !_homeToggled;
+            RefreshHome();
+        };
         LeftSplitThumb.DragStarted += (_, _) => _leftGrab = (LeftPane.Width, Mouse.GetPosition(Stage).X);
         LeftSplitThumb.DragDelta += (_, _) =>
         {
@@ -94,12 +104,55 @@ public partial class SimpleMainWindow : Window
         };
         Closing += (_, _) => _vm.SaveShellPanes(_leftWidth, _rightWidth, _leftOpen, _rightOpen);
         RefreshFlow();
+        RefreshHome();
         AppLog.Info("简洁版壳窗已构造（与专业版共享同一份 MainViewModel）");
     }
 
     private void OnVmPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName == nameof(MainViewModel.StepIndex)) RefreshFlow();
+        // 导完数据首页就该让位给预览（第 97 棒 A 案：预览才是工作台）
+        if (e.PropertyName == nameof(MainViewModel.HasData)) RefreshHome();
+    }
+
+    /// <summary>首页在不在中间那一格：判据归 <see cref="SimpleShellFlow.HomeShown"/>，这里只画。</summary>
+    private void RefreshHome()
+        => HomePanel.Visibility = SimpleShellFlow.HomeShown(_vm.HasData, _homeToggled)
+            ? Visibility.Visible : Visibility.Collapsed;
+
+    /// <summary>首页可见性（判据与测试都读这一处）。</summary>
+    public bool HomeVisible => HomePanel.Visibility == Visibility.Visible;
+
+    private void OnDropZoneClick(object sender, RoutedEventArgs e) => _vm.OpenFileCommand.Execute(null);
+
+    /// <summary>海报墙点一下＝换模板：走专业版同一颗 <c>SelectedTemplate</c>，不在壳窗里另开第二条选模板路。</summary>
+    private void OnPosterCardClick(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.Tag is not PosterCard card) return;
+        var option = _vm.TemplateOptions.FirstOrDefault(t => t.Id == card.Id);
+        if (option is null) return;
+        _vm.SelectedTemplate = option;
+        AppLog.Info($"首页海报墙换上模板：{card.Name}（{card.SizeText}）");
+    }
+
+    private void OnHomeDragOver(object sender, DragEventArgs e)
+    {
+        var ok = e.Data.GetDataPresent(DataFormats.FileDrop);
+        e.Effects = ok ? DragDropEffects.Copy : DragDropEffects.None;
+        e.Handled = true;
+        if (ok) DropZone.BorderBrush = (Brush)Resources["BrandBrush"]!;
+    }
+
+    private void OnHomeDragLeave(object sender, DragEventArgs e) => DropZone.BorderBrush = (Brush)Resources["LineBrush"]!;
+
+    /// <summary>扔进来一份表：交给 <see cref="MainViewModel.TryOpenFileAt"/>——与对话框完全同一条导入链。</summary>
+    private void OnHomeDrop(object sender, DragEventArgs e)
+    {
+        DropZone.BorderBrush = (Brush)Resources["LineBrush"]!;
+        if (e.Data.GetData(DataFormats.FileDrop) is not string[] { Length: > 0 } files) return;
+        if (!_vm.TryOpenFileAt(files[0])) return;
+        _homeToggled = false;
+        RefreshHome();
     }
 
     /// <summary>

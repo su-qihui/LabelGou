@@ -8,7 +8,8 @@
         MinWidth="1080" MinHeight="700"
         WindowState="Maximized"
         FontFamily="Segoe UI, Microsoft YaHei" FontSize="14"
-        WindowStartupLocation="CenterScreen">
+        WindowStartupLocation="CenterScreen"
+        Background="{DynamicResource PageBgBrush}">
     <!-- 简洁版壳窗（第 91 棒开这一刀，第 94 棒改三栏，第 95 棒补弹入与自适应）：左=这张表 / 中=预览（主导）/ 右=AI + 出纸全屏确认。
          设计真源 = labelgou-word\specs\2026-09-20-新一代界面设计思路.md 与同名概念稿 HTML。
          这里只做「呈现」：数据、命令、闸门全走专业版那份 MainViewModel（同一个实例），
@@ -31,7 +32,7 @@
         </Grid.RowDefinitions>
 
         <!-- ===== 细顶栏：这批是谁的货 + 活件流四节点 + 四颗钮（表格 / 打印 / 回专业版） ===== -->
-        <Border Grid.Row="0" Background="{StaticResource CardBrush}" BorderBrush="{StaticResource LineBrush}" BorderThickness="0,0,0,1" Padding="16,10">
+        <Border Grid.Row="0" Background="{DynamicResource CardBrush}" BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,0,0,1" Padding="16,10">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto"/>
@@ -40,29 +41,29 @@
                 </Grid.ColumnDefinitions>
                 <StackPanel VerticalAlignment="Center">
                     <TextBlock Text="{Binding SourcePath, FallbackValue=还没打开表}" Style="{StaticResource SubText}" MaxWidth="300" TextTrimming="CharacterEllipsis"/>
-                    <TextBlock Text="{Binding RecordInfoText}" FontWeight="Bold" FontSize="16" Foreground="{StaticResource InkBrush}" TextTrimming="CharacterEllipsis" MaxWidth="300"/>
+                    <TextBlock Text="{Binding RecordInfoText}" FontWeight="Bold" FontSize="16" Foreground="{DynamicResource InkBrush}" TextTrimming="CharacterEllipsis" MaxWidth="300"/>
                 </StackPanel>
 
                 <!-- 活件流：读表 → 拍板 → 排版 → 出纸。档位由 SimpleShellFlow 判（代码里刷颜色），这里只摆形状 -->
                 <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
                     <StackPanel x:Name="FlowNode0" Orientation="Horizontal">
-                        <Ellipse x:Name="FlowDot0" Width="10" Height="10" Fill="{StaticResource LineBrush}" VerticalAlignment="Center"/>
-                        <TextBlock x:Name="FlowLabel0" Text="读表" Margin="6,0,0,0" VerticalAlignment="Center" Foreground="{StaticResource SubInkBrush}"/>
+                        <Ellipse x:Name="FlowDot0" Width="10" Height="10" Fill="{DynamicResource LineBrush}" VerticalAlignment="Center"/>
+                        <TextBlock x:Name="FlowLabel0" Text="读表" Margin="6,0,0,0" VerticalAlignment="Center" Foreground="{DynamicResource SubInkBrush}"/>
                     </StackPanel>
-                    <Border Width="34" Height="2" Background="{StaticResource LineBrush}" Margin="10,0"/>
+                    <Border Width="34" Height="2" Background="{DynamicResource LineBrush}" Margin="10,0"/>
                     <StackPanel x:Name="FlowNode1" Orientation="Horizontal">
-                        <Ellipse x:Name="FlowDot1" Width="10" Height="10" Fill="{StaticResource LineBrush}" VerticalAlignment="Center"/>
-                        <TextBlock x:Name="FlowLabel1" Text="拍板" Margin="6,0,0,0" VerticalAlignment="Center" Foreground="{StaticResource SubInkBrush}"/>
+                        <Ellipse x:Name="FlowDot1" Width="10" Height="10" Fill="{DynamicResource LineBrush}" VerticalAlignment="Center"/>
+                        <TextBlock x:Name="FlowLabel1" Text="拍板" Margin="6,0,0,0" VerticalAlignment="Center" Foreground="{DynamicResource SubInkBrush}"/>
                     </StackPanel>
-                    <Border Width="34" Height="2" Background="{StaticResource LineBrush}" Margin="10,0"/>
+                    <Border Width="34" Height="2" Background="{DynamicResource LineBrush}" Margin="10,0"/>
                     <StackPanel x:Name="FlowNode2" Orientation="Horizontal">
-                        <Ellipse x:Name="FlowDot2" Width="10" Height="10" Fill="{StaticResource LineBrush}" VerticalAlignment="Center"/>
-                        <TextBlock x:Name="FlowLabel2" Text="排版" Margin="6,0,0,0" VerticalAlignment="Center" Foreground="{StaticResource SubInkBrush}"/>
+                        <Ellipse x:Name="FlowDot2" Width="10" Height="10" Fill="{DynamicResource LineBrush}" VerticalAlignment="Center"/>
+                        <TextBlock x:Name="FlowLabel2" Text="排版" Margin="6,0,0,0" VerticalAlignment="Center" Foreground="{DynamicResource SubInkBrush}"/>
                     </StackPanel>
-                    <Border Width="34" Height="2" Background="{StaticResource LineBrush}" Margin="10,0"/>
+                    <Border Width="34" Height="2" Background="{DynamicResource LineBrush}" Margin="10,0"/>
                     <StackPanel x:Name="FlowNode3" Orientation="Horizontal">
-                        <Ellipse x:Name="FlowDot3" Width="10" Height="10" Fill="{StaticResource LineBrush}" VerticalAlignment="Center"/>
-                        <TextBlock x:Name="FlowLabel3" Text="出纸" Margin="6,0,0,0" VerticalAlignment="Center" Foreground="{StaticResource SubInkBrush}"/>
+                        <Ellipse x:Name="FlowDot3" Width="10" Height="10" Fill="{DynamicResource LineBrush}" VerticalAlignment="Center"/>
+                        <TextBlock x:Name="FlowLabel3" Text="出纸" Margin="6,0,0,0" VerticalAlignment="Center" Foreground="{DynamicResource SubInkBrush}"/>
                     </StackPanel>
                 </StackPanel>
 
@@ -72,6 +73,8 @@
                             ToolTip="开关左栏：这张表读进来的原样（收起来时中间预览自己补位）"/>
                     <Button x:Name="AiToggleBtn" Content="AI" Style="{StaticResource GhostButton}" Margin="0,0,8,0"
                             ToolTip="开关右栏：AI 指令岛（同一块面板，收起来不丢会话）"/>
+                    <Button x:Name="HomeBtn" Content="首页" Style="{StaticResource GhostButton}" Margin="0,0,8,0"
+                            ToolTip="回首页：拖文件进来 + 模板海报墙（还没导数据时它本来就在中间）"/>
                     <Button x:Name="PrintAskBtn" Content="打印整版" Style="{StaticResource PrimaryButton}"/>
                     <Button x:Name="BackToProBtn" Content="回专业版" Style="{StaticResource GhostButton}" Margin="8,0,0,0"
                             ToolTip="回到一代全功能界面：同一份数据、同一个 AI 会话搬回去，两边随时可切"/>
@@ -109,7 +112,7 @@
                         <Button x:Name="TableCloseBtn" Content="收起 «" Style="{StaticResource GhostButton}" HorizontalAlignment="Right" VerticalAlignment="Top"
                                 ToolTip="关掉左栏（顶栏那颗「表格」也能开关同一根）"/>
                     </Grid>
-                    <Border Grid.Row="1" Margin="14,0,14,8" BorderBrush="{StaticResource LineBrush}" BorderThickness="1" CornerRadius="8">
+                    <Border Grid.Row="1" Margin="14,0,14,8" BorderBrush="{DynamicResource LineBrush}" BorderThickness="1" CornerRadius="8">
                         <DataGrid ItemsSource="{Binding PreviewTable}"
                                   AutoGenerateColumns="True"
                                   AutoGeneratingColumn="TableGrid_AutoGeneratingColumn"
@@ -129,7 +132,7 @@
                 <Thumb.Template>
                     <ControlTemplate TargetType="Thumb">
                         <Border Background="{TemplateBinding Background}" Width="18">
-                            <Rectangle Width="4" Height="48" RadiusX="2" RadiusY="2" Fill="{StaticResource SubInkBrush}"
+                            <Rectangle Width="4" Height="48" RadiusX="2" RadiusY="2" Fill="{DynamicResource SubInkBrush}"
                                        HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0.5"/>
                         </Border>
                     </ControlTemplate>
@@ -137,7 +140,7 @@
             </Thumb>
 
             <!-- 中间：预览是主角 -->
-            <Border Grid.Column="2" x:Name="CanvasCard" Style="{StaticResource Card}" Background="{StaticResource PageBgBrush}">
+            <Border Grid.Column="2" x:Name="CanvasCard" Style="{StaticResource Card}" Background="{DynamicResource PageBgBrush}">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="*"/>
@@ -151,11 +154,11 @@
                         <TextBlock Text="把工厂发来的 Excel / CSV 点「打开数据文件…」选进来&#10;AI 模式会先读表，只问要你拍板的事"
                                    Visibility="{Binding HasData, Converter={StaticResource InvBoolVis}}"
                                    HorizontalAlignment="Center" VerticalAlignment="Center" TextAlignment="Center"
-                                   FontSize="16" Foreground="{StaticResource SubInkBrush}"/>
+                                   FontSize="16" Foreground="{DynamicResource SubInkBrush}"/>
 
                         <!-- 预览包进白卡（概念稿 .paper 的形状：白纸浮在桌面上，带边带影）。
                              LabelPreviewControl 自己按真实毫米画纸，这里只给它一个"浮起来"的托，不碰画法 -->
-                        <Border Background="{StaticResource CardBrush}" BorderBrush="{StaticResource LineBrush}"
+                        <Border Background="{DynamicResource CardBrush}" BorderBrush="{DynamicResource LineBrush}"
                                 BorderThickness="1" CornerRadius="4" Effect="{StaticResource Shadow2}"
                                 Padding="26" HorizontalAlignment="Center" VerticalAlignment="Center"
                                 Visibility="{Binding HasLayout, Converter={StaticResource BoolVis}}">
@@ -170,7 +173,7 @@
                     <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,0,0,12">
                         <Button Content="⏮" Style="{StaticResource GhostButton}" MinWidth="36" Command="{Binding FirstRecordCommand}"/>
                         <Button Content="◀" Style="{StaticResource GhostButton}" MinWidth="36" Margin="6,0,0,0" Command="{Binding PrevRecordCommand}"/>
-                        <TextBlock Text="{Binding RecordInfoText}" VerticalAlignment="Center" Margin="12,0" FontWeight="SemiBold" Foreground="{StaticResource InkBrush}"/>
+                        <TextBlock Text="{Binding RecordInfoText}" VerticalAlignment="Center" Margin="12,0" FontWeight="SemiBold" Foreground="{DynamicResource InkBrush}"/>
                         <Button Content="▶" Style="{StaticResource GhostButton}" MinWidth="36" Command="{Binding NextRecordCommand}"/>
                         <Button Content="⏭" Style="{StaticResource GhostButton}" MinWidth="36" Margin="6,0,0,0" Command="{Binding LastRecordCommand}"/>
                         <Button Content="示意预览" Style="{StaticResource GhostButton}" Margin="14,0,0,0" Command="{Binding SamplePreviewCommand}"/>
@@ -181,6 +184,73 @@
                         <Button x:Name="FitBtn" Content="适应" Style="{StaticResource GhostButton}" MinWidth="44" Margin="14,0,0,0"
                                 Click="OnFitClick" ToolTip="让这张纸完整落在框里（默认就开着；拖栏、换模板都跟着自动重算）"/>
                     </StackPanel>
+
+                    <!-- ===== 首页（第 97 棒 A 案）：没导数据时中间这一屏就是它；导了数据靠顶栏「首页」请回来。
+                             概念稿屏① 四块里做了三块——拖入区 + 海报墙 + 画布当主角；「最近这批」任务卡这版不做
+                             （软件还没存过"这批打过什么"那份账，那是另一摊决定）。 ===== -->
+                    <ScrollViewer Grid.Row="0" Grid.RowSpan="2" x:Name="HomePanel" Padding="26,18"
+                                  Background="{DynamicResource PageBgBrush}"
+                                  VerticalScrollBarVisibility="Auto" Visibility="Collapsed"
+                                  AllowDrop="True" Drop="OnHomeDrop" DragOver="OnHomeDragOver" DragLeave="OnHomeDragLeave">
+                        <StackPanel MaxWidth="1080">
+                            <Border x:Name="DropZone" CornerRadius="14" BorderThickness="2" Cursor="Hand"
+                                    BorderBrush="{DynamicResource LineBrush}" Background="{DynamicResource CardBrush}"
+                                    Padding="26,26" MouseLeftButtonUp="OnDropZoneClick">
+                                <StackPanel HorizontalAlignment="Center">
+                                    <TextBlock Text="⇪" FontSize="34" HorizontalAlignment="Center" Foreground="{DynamicResource BrandBrush}"/>
+                                    <TextBlock Text="把工厂发来的表拖进来" FontSize="22" FontWeight="Bold"
+                                               Foreground="{DynamicResource InkBrush}" HorizontalAlignment="Center" Margin="0,4,0,0"/>
+                                    <TextBlock Style="{StaticResource SubText}" TextAlignment="Center" Margin="0,6,0,0"
+                                               Text="Excel / CSV 都行 · 点这一块也可以选文件 · AI 会自动读表，只问你该拍板的事"/>
+                                </StackPanel>
+                            </Border>
+
+                            <DockPanel Margin="2,22,2,8">
+                                <TextBlock Text="模板海报墙" FontSize="16" FontWeight="Bold" Foreground="{DynamicResource InkBrush}"/>
+                                <TextBlock Style="{StaticResource SubText}" TextAlignment="Right" Margin="12,0,0,0"
+                                           Text="每张卡就是这份模板排出来的真预览（与出纸同一画法）· 点一下即换上"/>
+                            </DockPanel>
+                            <ItemsControl ItemsSource="{Binding PosterCards}">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <WrapPanel/>
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Width="248" Margin="0,0,12,12" Padding="10" CornerRadius="12" Cursor="Hand"
+                                                Background="{DynamicResource CardBrush}" Tag="{Binding}"
+                                                MouseLeftButtonUp="OnPosterCardClick">
+                                            <Border.Style>
+                                                <Style TargetType="Border">
+                                                    <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}"/>
+                                                    <Setter Property="BorderThickness" Value="1"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                                                            <Setter Property="BorderBrush" Value="{DynamicResource BrandBrush}"/>
+                                                            <Setter Property="BorderThickness" Value="2"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Border.Style>
+                                            <StackPanel>
+                                                <!-- 纸在深浅两色下都保持白：纸就是纸，界面黑不代表打印出来黑 -->
+                                                <Border Height="132" Background="White" CornerRadius="6" ClipToBounds="True">
+                                                    <Viewbox Stretch="Uniform" Margin="4">
+                                                        <render:LabelPreviewControl Layout="{Binding Layout}" Zoom="1" ShowGuides="False"/>
+                                                    </Viewbox>
+                                                </Border>
+                                                <TextBlock Text="{Binding Name}" Margin="2,8,2,0" FontSize="13" FontWeight="SemiBold"
+                                                           Foreground="{DynamicResource InkBrush}" TextTrimming="CharacterEllipsis"/>
+                                                <TextBlock Text="{Binding BadgeText}" Margin="2,1,2,0" FontSize="11"
+                                                           Foreground="{DynamicResource SubInkBrush}"/>
+                                            </StackPanel>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </ScrollViewer>
                 </Grid>
             </Border>
 
@@ -191,7 +261,7 @@
                 <Thumb.Template>
                     <ControlTemplate TargetType="Thumb">
                         <Border Background="{TemplateBinding Background}" Width="18">
-                            <Rectangle Width="4" Height="48" RadiusX="2" RadiusY="2" Fill="{StaticResource SubInkBrush}"
+                            <Rectangle Width="4" Height="48" RadiusX="2" RadiusY="2" Fill="{DynamicResource SubInkBrush}"
                                        HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0.5"/>
                         </Border>
                     </ControlTemplate>
@@ -206,7 +276,7 @@
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
                     <Grid Grid.Row="0" Margin="2,0,0,6">
-                        <TextBlock Text="AI 指令岛" FontWeight="Bold" FontSize="14" Foreground="{StaticResource BrandBrush}"/>
+                        <TextBlock Text="AI 指令岛" FontWeight="Bold" FontSize="14" Foreground="{DynamicResource BrandBrush}"/>
                         <Button x:Name="AiCloseBtn" Content="收起 »" Style="{StaticResource GhostButton}" HorizontalAlignment="Right" VerticalAlignment="Top"
                                 ToolTip="关掉右栏（顶栏那颗「AI」也能开关同一根）"/>
                     </Grid>
@@ -218,7 +288,7 @@
         </Grid>
 
         <!-- ===== 底部状态条：一句话，取 VM 的 StatusMessage（谁最后写谁，口径同 §五-129） ===== -->
-        <Border Grid.Row="2" Background="{StaticResource CardBrush}" BorderBrush="{StaticResource LineBrush}" BorderThickness="0,1,0,0" Padding="16,6">
+        <Border Grid.Row="2" Background="{DynamicResource CardBrush}" BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,1,0,0" Padding="16,6">
             <TextBlock Text="{Binding StatusMessage}" Style="{StaticResource SubText}" TextTrimming="CharacterEllipsis"/>
         </Border>
 
@@ -247,7 +317,7 @@
             <Border Grid.Row="1" Style="{StaticResource FloatCard}" HorizontalAlignment="Center" Margin="0,0,0,26" Padding="16,12">
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                     <StackPanel Margin="0,0,16,0" MinWidth="190">
-                        <TextBlock Text="{Binding Export.SelectionText}" FontWeight="Bold" FontSize="14" Foreground="{StaticResource InkBrush}" TextWrapping="Wrap"/>
+                        <TextBlock Text="{Binding Export.SelectionText}" FontWeight="Bold" FontSize="14" Foreground="{DynamicResource InkBrush}" TextWrapping="Wrap"/>
                         <TextBlock Text="{Binding Export.FitText}" Style="{StaticResource SubText}" TextWrapping="Wrap"/>
                     </StackPanel>
                     <ComboBox ItemsSource="{Binding Export.Printers}" SelectedItem="{Binding Export.SelectedPrinter}"

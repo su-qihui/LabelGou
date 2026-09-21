@@ -93,6 +93,19 @@ public static class SimpleShellFlow
         => open ? paneWidth + PaneRevealGutter : 0;
 
     /// <summary>
+    /// 首页（拖入区 + 模板海报墙）该不该占中间那一格：还没导数据时它是主角；
+    /// 导了数据之后只有用户点顶栏那颗「首页」才请得回来（用户 2026-09-21 选的 A 案——
+    /// 预览才是工作台，首页是"还没开工时看的那一屏"）。
+    /// </summary>
+    public static bool HomeShown(bool hasData, bool toggled) => !hasData || toggled;
+
+    /// <summary>
+    /// 深色模式判定：注册表 <c>AppsUseLightTheme</c> 为 0 才黑；为 1 或<strong>读不到</strong>一律浅色
+    /// （读不到通常是系统版本太老或被组策略锁了，那种机器上宁可按他原来那身浅色开）。
+    /// </summary>
+    public static bool PreferDark(int? appsUseLightTheme) => appsUseLightTheme == 0;
+
+    /// <summary>
     /// 答完第 answeredIndex 条问题后，该把哪一条滚进视野（用户 2026-09-21 实测②：答完一条视图弹回顶部，
     /// 要往下滚回来才能选下一条）。还有下一条就指它（返回下标）；全答完返回 -1——那时进第二步，
     /// 新内容在对话区，照常滚对话区底部，这里不再抢方向盘。

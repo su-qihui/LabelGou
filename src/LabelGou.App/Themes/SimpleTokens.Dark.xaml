@@ -1,0 +1,25 @@
+<!-- 简洁版壳窗的深色调色板（第 97 棒：跟随系统的深浅色设置）。
+     只放**颜色**这一层——样式仍住在 SimpleTokens.xaml 里，那边的 Setter 全走 DynamicResource，
+     所以换这一份就能整窗换皮，不必把两百行样式抄第二份（抄了就是两处维护，早晚对不上）。
+     键名必须与浅色那份一一对上：少一个键，那个地方就退回浅色，界面上就是一块白补丁。 -->
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- 深色下品牌蓝要提亮一档，否则 #1D4ED8 压在 #171C24 上几乎看不出是强调色（概念稿那套 token 的深色对应值） -->
+    <Color x:Key="BrandColor">#5B8CFF</Color>
+    <SolidColorBrush x:Key="BrandBrush" Color="#5B8CFF"/>
+    <SolidColorBrush x:Key="BrandWeakBrush" Color="#1E2A44"/>
+    <SolidColorBrush x:Key="PageBgBrush" Color="#0F1319"/>
+    <SolidColorBrush x:Key="CardBrush" Color="#171C24"/>
+    <SolidColorBrush x:Key="InkBrush" Color="#E6EAF0"/>
+    <SolidColorBrush x:Key="SubInkBrush" Color="#9AA6B4"/>
+    <SolidColorBrush x:Key="LineBrush" Color="#2A323C"/>
+    <SolidColorBrush x:Key="OkBrush" Color="#34C77A"/>
+    <SolidColorBrush x:Key="WarnBrush" Color="#D89A3E"/>
+    <SolidColorBrush x:Key="DangerBrush" Color="#F0655B"/>
+
+    <!-- 表格里那两处字面色（列头浅灰、隔行浅灰）在浅色那份已改成吃键，深色在这里给对应值 -->
+    <SolidColorBrush x:Key="GridHeaderBrush" Color="#202733"/>
+    <SolidColorBrush x:Key="GridAltRowBrush" Color="#1B212A"/>
+
+</ResourceDictionary>

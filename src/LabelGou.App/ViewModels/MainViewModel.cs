@@ -55,6 +55,49 @@ public sealed class TemplateOption
     public string DisplayName => Template.BuiltIn ? $"{Template.Name}（{SizeText}）[内置]" : $"{Template.Name}（{SizeText}）";
 }
 
+/// <summary>
+/// 首页海报墙的一张卡（第 97 棒）：一份模板 + 拿内置样例排出来的那张纸。
+/// <para><strong>为什么卡里放的是真排版而不是示意图</strong>：概念稿那句「每张卡就是模板排出来的真预览」
+/// 是硬要求——画法唯一，卡上一个样、纸上另一个样就是第 73 棒要防的那件事。所以这里收的是
+/// <see cref="LayoutEngine.Build"/> 的产物，与单标签预览、出纸走同一个入口。</para>
+/// </summary>
+public sealed class PosterCard : INotifyPropertyChanged
+{
+    private bool _isSelected;
+
+    public PosterCard(LabelTemplate template, LabelLayout layout)
+    {
+        Template = template;
+        Layout = layout;
+    }
+
+    public LabelTemplate Template { get; }
+
+    public LabelLayout Layout { get; }
+
+    public string Id => Template.Id;
+
+    public string Name => Template.Name;
+
+    public string SizeText => $"{Template.WidthMm:0.#} × {Template.HeightMm:0.#} mm";
+
+    public string BadgeText => Template.BuiltIn ? $"{SizeText} · 内置" : SizeText;
+
+    /// <summary>是不是当前选中的那份模板（高亮那一圈边）。由 <see cref="MainViewModel"/> 统一刷，卡不自己记。</summary>
+    public bool IsSelected
+    {
+        get => _isSelected;
+        set
+        {
+            if (_isSelected == value) return;
+            _isSelected = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsSelected)));
+        }
+    }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+}
+
 /// <summary>已保存的映射方案下拉项。</summary>
 public sealed class ProfileOption
 {
@@ -252,6 +295,8 @@ public sealed partial class MainViewModel : ObservableObject, ILabelSource
         // 大小写口径接回上次选的。这里直接写字段不走 setter：那时预览与拼版都还没建，
         // 去重算一次只会拿到半成品（而且启动那一次不该产生写盘 IO）。
         _textCase = remembered.TextCase;
+        // 首页海报墙那些卡（第 97 棒）：等大小写口径接回来了再排——卡上那张纸要跟他下次真打时看到的一致。
+        RebuildPosterCards();
         // ① 步表格高度接回上次选的那档（没记过、或记的不是三档里的数，用默认）。同样直接写字段不走 setter。
         _previewTableHeight = RememberedPreviewTableHeight(remembered.PreviewTableHeight);
         // 运行模式（第 30 棒）：没记过就是 AI 模式（用户 2026-09-10 定的默认）。直接写字段，理由同上。
@@ -378,6 +423,34 @@ public sealed partial class MainViewModel : ObservableObject, ILabelSource
         SelectedTemplate = TemplateOptions.FirstOrDefault(t => t.Id == keepId)
             ?? TemplateOptions.FirstOrDefault(t => t.Id == BuiltInTemplates.IdRowsFour)
             ?? TemplateOptions.FirstOrDefault();
+        RebuildPosterCards();
+    }
+
+    /// <summary>首页海报墙那些卡（第 97 棒）。集合不换，只重算内容——绑 <c>ItemsSource</c> 的不用额外通知。</summary>
+    public ObservableCollection<PosterCard> PosterCards { get; } = new();
+
+    /// <summary>
+    /// 每张卡都拿同一份内置样例走一遍 <see cref="LayoutEngine.Build"/>：卡上那张纸和纸上印的那张
+    /// 出自同一个入口（画法唯一）。参考底图按<strong>出纸</strong>那一档关掉——卡要对的是"打出来长什么样"。
+    /// </summary>
+    private void RebuildPosterCards()
+    {
+        PosterCards.Clear();
+        var sample = SampleRecords.StandardSample();
+        foreach (var option in TemplateOptions)
+        {
+            var layout = LayoutEngine.Build(option.Template, sample,
+                new LayoutContext(1, 1, string.Empty, IncludeReference: false, TextCase: _textCase));
+            if (layout is not null) PosterCards.Add(new PosterCard(option.Template, layout));
+        }
+        RefreshPosterSelection();
+    }
+
+    /// <summary>选中那一张的高亮跟着 <see cref="SelectedTemplate"/> 走——状态只有一份，卡不自己记。</summary>
+    private void RefreshPosterSelection()
+    {
+        var picked = SelectedTemplate?.Id;
+        foreach (var card in PosterCards) card.IsSelected = card.Id == picked;
     }
 
     /// <summary>
@@ -872,6 +945,7 @@ public sealed partial class MainViewModel : ObservableObject, ILabelSource
                 RebuildIssueLines();
                 RebuildRowThumbs();       // 缩略一览里每张都来自这份模板，换了就得重画
                 RememberTemplateId(value?.Id);
+                RefreshPosterSelection();     // 首页海报墙那圈"选中"边框跟着换
                 Raise(nameof(TemplateSheetHint));
                 if (sheetNote.Length > 0) StatusMessage = sheetNote;
             }
@@ -1647,6 +1721,25 @@ public sealed partial class MainViewModel : ObservableObject, ILabelSource
         if (dialog.ShowDialog() != true) return;
 
         LoadSource(dialog.FileName, null);
+    }
+
+    /// <summary>
+    /// 首页拖入区那条路（第 97 棒）：按路径导入，走与「打开数据文件…」对话框<strong>完全同一条</strong>
+    /// <see cref="LoadSource"/> 链。
+    /// <para>为什么在 VM 开这个方法而不是让壳窗自己导：界面另起一条导入路就是 §五-122 那一族——
+    /// 两条链早晚对不上（一条记了原件路径、一条没记，下一次挑文件的初始目录与那份缓存副本就分叉）。</para>
+    /// </summary>
+    /// <returns>认下了这份文件没有（路径空、文件不在、扩展名不支持都算没认，界面什么都不用改）。</returns>
+    public bool TryOpenFileAt(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path) || !TableImporter.IsSupported(path))
+        {
+            // 拖进来一份认不了的，得说一句——不出声就像软件把东西吞了（第 21 阶段那条"有反馈"口径）
+            StatusMessage = "这份我认不了：要 Excel / CSV 那一类表格文件（xlsx、xlsm、csv、tsv、txt），而且得还在原来那个位置。";
+            return false;
+        }
+        LoadSource(path, null);
+        return true;
     }
 
     /// <summary>当前这张表是按哪份指令切的（界面与 AI 面板要能说清「这不是自动猜的那一份」）。</summary>

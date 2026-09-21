@@ -1,4 +1,6 @@
 using System;
+using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
@@ -106,6 +108,50 @@ public class SimpleShellTests
         Assert.False(p1.RightOpen);
     }
 
+    // ===== 第 97 棒：首页该不该在中间、深浅色判定、拖进来那份表走的是同一条导入链 =====
+
+    [Theory]
+    [InlineData(false, false, true)]    // 还没导数据：首页就是中间那一屏
+    [InlineData(true, false, false)]    // 导完了：让位给预览（预览才是工作台）
+    [InlineData(true, true, true)]      // 他点了顶栏「首页」：请得回来
+    public void HomeShown_LeadsBeforeDataAndComesBackOnDemand(bool hasData, bool toggled, bool expected)
+        => Assert.Equal(expected, SimpleShellFlow.HomeShown(hasData, toggled));
+
+    [Theory]
+    [InlineData(0, true)]      // AppsUseLightTheme = 0 → 深色
+    [InlineData(1, false)]     // = 1 → 浅色
+    [InlineData(null, false)]  // 读不到（老系统 / 组策略锁了）→ 宁可按浅色开
+    public void PreferDark_FollowsTheSystemAndFallsBackToLight(object? raw, bool expected)
+        => Assert.Equal(expected, SimpleShellFlow.PreferDark(raw is null ? null : Convert.ToInt32(raw)));
+
+    [Fact]
+    public void TryOpenFileAt_GoesThroughTheSameImportAsTheDialog()
+    {
+        var dir = TestEnvironment.NewTempDir("home-drop");
+        var csv = Path.Combine(dir, "样例.csv");
+        File.WriteAllText(csv, "货号 ITEM NO:,件数 CTN,数量 QTY\nolu830-35*144,5,144\n");
+        var vm = new MainViewModel(TestEnvironment.NewTempUiStateStore());
+
+        Assert.True(vm.TryOpenFileAt(csv));
+        Assert.True(vm.HasData);                       // 与对话框那条 OpenFileCommand 落的是同一份状态
+        Assert.False(vm.TryOpenFileAt(null));           // 空路径不吞状态
+        Assert.False(vm.TryOpenFileAt(Path.Combine(dir, "没有这份.xlsx")));
+        Assert.False(vm.TryOpenFileAt(Path.Combine(dir, "一张图.png")));   // 扩展名不支持也不许进导入链
+    }
+
+    [Fact]
+    public void PosterCards_OneCardPerTemplateAndThePickedOneIsMarked()
+    {
+        var vm = new MainViewModel(TestEnvironment.NewTempUiStateStore());
+        Assert.Equal(vm.TemplateOptions.Count, vm.PosterCards.Count);   // 一张模板一张卡，不藏不造
+        Assert.All(vm.PosterCards, c => Assert.NotNull(c.Layout));      // 卡里放的是真排出来的那张纸
+
+        Assert.Single(vm.PosterCards, c => c.IsSelected);
+        var other = vm.TemplateOptions.First(t => t.Id != vm.SelectedTemplate?.Id);
+        vm.SelectedTemplate = other;
+        Assert.Equal(other.Id, vm.PosterCards.First(c => c.IsSelected).Id);   // 高亮跟着那颗选择器走
+    }
+
     // ===== AI 面板摘挂：全程只有一个实例，两处宿主不同时指它 =====
 
     [Fact]
@@ -142,6 +188,7 @@ public class SimpleShellTests
             Assert.False(shell.SwitchingToPro);            // 刚造出来的窗不许自认"正在回专业版"，否则关窗会把软件留着
             Assert.True(shell.AutoFitPreview);             // 纸默认自动显示全（第 95 棒④：上一版没接这条线，纸被裁一半）
             Assert.Equal(WindowState.Maximized, shell.WindowState);   // 第 95 棒②：起来就是全屏
+            Assert.True(shell.HomeVisible);                // 第 97 棒：还没导数据，中间那一屏就是首页
             return 0;
         });
 
