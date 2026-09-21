@@ -3,7 +3,7 @@ using System.Windows.Controls;
 namespace LabelGou.App.Services;
 
 /// <summary>
-/// 简洁版壳窗的确定性判据（活件流节点态、表格抽屉开合、AI 面板摘挂）。
+/// 简洁版壳窗的确定性判据（活件流节点态、左右栏开合与占宽、AI 面板摘挂）。
 /// <para>为什么收在这里而不是写在窗口里：`SimpleMainWindow` 在测试进程里造不出来
 /// （和 ⑤ 步那条「判据只能问静态方法」同一个原因，见第 89 棒 `PreviewArrows`），
 /// 手势与视觉留在窗口，「该显示成什么样」的账在这里，能被单测直接读。</para>
@@ -46,8 +46,8 @@ public static class SimpleShellFlow
         return node < now ? NodeState.Done : node == now ? NodeState.Now : NodeState.Next;
     }
 
-    /// <summary>表格抽屉只有开与关两态：顶栏那颗「表格」与抽屉自己右上角的「收起」按的是同一个开关。</summary>
-    public static bool ToggleTableDrawer(bool isOpen) => !isOpen;
+    /// <summary>左右两根栏各只有开与关两态：顶栏那颗钮与栏里自己的「收起」按的是同一个开关。</summary>
+    public static bool TogglePane(bool isOpen) => !isOpen;
 
     /// <summary>
     /// 把 AI 面板从它现在的泊位摘下来挂进壳窗宿主（**同一个实例搬走**，绝不 new 第二块——
@@ -70,25 +70,21 @@ public static class SimpleShellFlow
         if (home is not null) home.Content = panel.Content;
     }
 
-    /// <summary>抽屉可拖宽的范围（DIP）：太窄看不了几列，太宽就把画布挤没了——让位之后画布至少还留得下一张纸。</summary>
-    public const double DrawerMinWidth = 360;
-    public const double DrawerMaxWidth = 820;
+    /// <summary>两根栏可拖宽的范围与默认档（DIP）。左栏是这张表（太窄看不了几列，太宽把画布挤没）；
+    /// 右栏下限 420 是第 93 棒实测出来的——再窄，面板的按钮排折成五行、把对话区挤到一个字都读不出来。</summary>
+    public const double LeftPaneMinWidth = 360, LeftPaneMaxWidth = 820, LeftPaneDefaultWidth = 560;
+    public const double RightPaneMinWidth = 420, RightPaneMaxWidth = 900, RightPaneDefaultWidth = 440;
 
-    /// <summary>抽屉拖到的宽度一律夹进范围；坏数（NaN/∞）退回默认那档，不许把 Infinity 写进状态文件（§五-183 同族）。</summary>
-    public static double ClampDrawerWidth(double wanted)
-        => double.IsFinite(wanted) ? Math.Clamp(wanted, DrawerMinWidth, DrawerMaxWidth) : 560;
+    /// <summary>拖到的宽度一律夹进范围；坏数（NaN/∞）退回默认那档，不许把 Infinity 写进状态文件（§五-183 同族）。</summary>
+    public static double ClampLeftPaneWidth(double wanted)
+        => double.IsFinite(wanted) ? Math.Clamp(wanted, LeftPaneMinWidth, LeftPaneMaxWidth) : LeftPaneDefaultWidth;
 
-    /// <summary>指令岛可拉伸的范围（DIP）。**下限不是拍脑袋**：第 93 棒实测把岛收到 320×380，
-    /// 面板里那块内容区（Star 行）被固定行挤到看不见——AI 问的三条题一个字都读不出来，
-    /// 那比"不能收缩"更糟。420 宽让按钮排只折两行，520 高让对话区还剩得下问题卡。
-    /// 上限不越过壳窗常见尺寸，免得拉到看不见角。</summary>
-    public const double IslandMinWidth = 420, IslandMaxWidth = 900;
-    public const double IslandMinHeight = 520, IslandMaxHeight = 820;
+    public static double ClampRightPaneWidth(double wanted)
+        => double.IsFinite(wanted) ? Math.Clamp(wanted, RightPaneMinWidth, RightPaneMaxWidth) : RightPaneDefaultWidth;
 
-    /// <summary>岛拉到的宽高各自夹住；坏数退回默认 440×560。</summary>
-    public static (double Width, double Height) ClampIslandSize(double wantedWidth, double wantedHeight)
-        => (double.IsFinite(wantedWidth) ? Math.Clamp(wantedWidth, IslandMinWidth, IslandMaxWidth) : 440,
-            double.IsFinite(wantedHeight) ? Math.Clamp(wantedHeight, IslandMinHeight, IslandMaxHeight) : 560);
+    /// <summary>一根栏在版面上占多宽：收起时占 0，中间那格（预览）自己补位——用户 2026-09-21 要的
+    /// 「以中间为主导界面，左右随时关闭或开启」就是这一句。</summary>
+    public static double PaneSlotWidth(double width, bool open) => open ? width : 0;
 
     /// <summary>
     /// 答完第 answeredIndex 条问题后，该把哪一条滚进视野（用户 2026-09-21 实测②：答完一条视图弹回顶部，

@@ -174,20 +174,21 @@ public partial class MainWindow : Window
     private SimpleMainWindow? _simpleShell;
 
     /// <summary>启动该开哪一版（第 93 棒，App.OnStartup 调用）：记住过 pro 就开专业版，其余一律简洁版。</summary>
-    internal void OpenAtStartup()
-    {
-        if (_viewModel.LoadLastShell() == "pro") Show();
-        else OpenSimpleShell();
-    }
+    /// <summary>
+    /// 启动开哪一扇：<strong>永远先开简洁版</strong>（用户 2026-09-21 第二次点这条，第 94 棒把"记住上次待在哪一版"
+    /// 那格记性整个删了——主入口不该摇摆；从简洁版回专业版只算当场这一次）。
+    /// </summary>
+    internal void OpenAtStartup() => OpenSimpleShell();
 
     /// <summary>
     /// 「视图 → 简洁版工作台」（第 91 棒 · 阶段一第一刀）：开新一代壳窗，本窗隐藏待命。
     /// <para><strong>只有一份状态、只有一份 AI 面板</strong>：壳窗吃同一个 <see cref="MainViewModel"/>；
-    /// AI 面板本体从泊位**搬**进指令岛（<see cref="Services.SimpleShellFlow.Park"/>），
+    /// AI 面板本体从泊位**搬**进右栏（<see cref="Services.SimpleShellFlow.Park"/>），
     /// 绝不 new 第二块——两块同时发请求就是双份模型钱（本文件构造里钉着的规矩）。</para>
     /// <para>复核闸门临时改挂壳窗：主窗此刻是藏着的，问人的框得盖在**看得见**的那扇窗上，
     /// 不然 MessageBox 顶着一个隐藏 owner，操作员盯着屏幕等一个不弹出来的框。回专业版原样换回。</para>
-    /// <para>第 93 棒：开/回各记一次 <c>LastShell</c>——下次启动从用户上次实际待着的那版开（默认简洁）。</para>
+    /// <para>第 94 棒：壳窗关掉分两种——点「回专业版」才把本窗掀出来；<strong>直接关窗就是整个软件退出</strong>
+    /// （用户 2026-09-21：「关掉简约界面还要再关专业界面」不算关完）。</para>
     /// </summary>
     internal void OpenSimpleShell()
     {
@@ -202,12 +203,11 @@ public partial class MainWindow : Window
         if (_aiPanel is { } ap)
         {
             Services.SimpleShellFlow.Park(ap, _simpleShell.IslandHost);
-            AiPanel.ShowDragGrip = false;      // 指令岛里没有拖拽控制器，握把收起来
+            AiPanel.ShowDragGrip = false;      // 右栏里没有拖拽控制器，握把收起来
         }
         var gateWas = _viewModel.ConfirmGate;
         _viewModel.ConfirmGate = text => MessageBox.Show(_simpleShell, text, "LabelGou 打印前复核",
             MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes;
-        _viewModel.SaveLastShell("simple");
         var shell = _simpleShell;   // 回调里先清字段再用它会当场踩空，引用先抄一份
         shell.Closed += (_, _) =>
         {
@@ -218,7 +218,12 @@ public partial class MainWindow : Window
                 Services.SimpleShellFlow.TakeBack(p, shell.IslandHost);
                 AiPanel.ShowDragGrip = true;
             }
-            _viewModel.SaveLastShell("pro");
+            if (!shell.SwitchingToPro)
+            {
+                Services.AppLog.Info("简洁版壳窗被直接关掉：整个软件退出，不再要求关第二扇");
+                Application.Current.Shutdown();
+                return;
+            }
             Show();
             Services.AppLog.Info("从简洁版回到专业版：AI 面板搬回原泊位，复核闸门改挂主窗");
         };

@@ -68,7 +68,9 @@
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                     <Button Content="打开数据文件…" Style="{StaticResource GhostButton}" Command="{Binding OpenFileCommand}" Margin="0,0,8,0"/>
                     <Button x:Name="TableToggleBtn" Content="表格" Style="{StaticResource GhostButton}" Margin="0,0,8,0"
-                            ToolTip="点开这张表读进来的原样（左滑出）；抽屉右上角「收起」关掉"/>
+                            ToolTip="开关左栏：这张表读进来的原样（收起来时中间预览自己补位）"/>
+                    <Button x:Name="AiToggleBtn" Content="AI" Style="{StaticResource GhostButton}" Margin="0,0,8,0"
+                            ToolTip="开关右栏：AI 指令岛（同一块面板，收起来不丢会话）"/>
                     <Button x:Name="PrintAskBtn" Content="打印整版" Style="{StaticResource PrimaryButton}"/>
                     <Button x:Name="BackToProBtn" Content="回专业版" Style="{StaticResource GhostButton}" Margin="8,0,0,0"
                             ToolTip="回到一代全功能界面：同一份数据、同一个 AI 会话搬回去，两边随时可切"/>
@@ -76,9 +78,61 @@
             </Grid>
         </Border>
 
-        <!-- ===== 工作台画布：预览是主角 ===== -->
+        <!-- ===== 三栏工作台（第 94 棒，用户指着 Qoder 界面说的）：左=这张表 / 中=预览（主导）/ 右=AI。
+                 左右两根栏随时开关，收起来占 0 宽、中间那格自己补位；两根竖柄拖宽。 ===== -->
         <Grid Grid.Row="1" x:Name="Stage" Margin="16">
-            <Border x:Name="CanvasCard" Style="{StaticResource Card}" Background="{StaticResource PageBgBrush}">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition x:Name="LeftPaneCol" Width="0"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition x:Name="RightPaneCol" Width="0"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- 左栏：这张表读进来的原样（第 91 棒它是浮层抽屉，三栏骨架下改成正儿八经一根栏） -->
+            <Border x:Name="LeftPane" Grid.Column="0" Style="{StaticResource FloatCard}" Width="560" Margin="0,0,6,0">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <Grid Grid.Row="0" Margin="14,12,12,8">
+                        <StackPanel>
+                            <TextBlock Text="这张表（软件读进来的原样）" FontWeight="Bold" FontSize="16"/>
+                            <TextBlock Text="行号＝Excel 行号；要改数据回表里改，这里只是镜子" Style="{StaticResource SubText}"/>
+                        </StackPanel>
+                        <Button x:Name="TableCloseBtn" Content="收起 «" Style="{StaticResource GhostButton}" HorizontalAlignment="Right" VerticalAlignment="Top"
+                                ToolTip="关掉左栏（顶栏那颗「表格」也能开关同一根）"/>
+                    </Grid>
+                    <Border Grid.Row="1" Margin="14,0,14,8" BorderBrush="{StaticResource LineBrush}" BorderThickness="1" CornerRadius="8">
+                        <DataGrid ItemsSource="{Binding PreviewTable}"
+                                  AutoGenerateColumns="True"
+                                  AutoGeneratingColumn="TableGrid_AutoGeneratingColumn"
+                                  IsReadOnly="True" CanUserAddRows="False" CanUserDeleteRows="False"
+                                  HeadersVisibility="Column" GridLinesVisibility="All" SelectionUnit="Cell"
+                                  FontSize="12.5" RowHeaderWidth="0" BorderThickness="0"/>
+                    </Border>
+                    <TextBlock Grid.Row="2" Margin="14,0,14,12" Style="{StaticResource SubText}"
+                               Text="合计行/被剔行按 ① 步的口径来；这里看到的就是引擎拿到的。"/>
+                </Grid>
+            </Border>
+            <!-- 左栏与中间之间那根竖柄：18 DIP 跨着边线（第 93 棒教训：贴着边的 9 DIP 隐形柄等于没有） -->
+            <Thumb x:Name="LeftSplitThumb" Grid.Column="1" Width="18" Cursor="SizeWE" HorizontalAlignment="Left"
+                   Background="Transparent" BorderThickness="0"
+                   ToolTip="按住左右拖：改左栏宽度（中间跟着让位）">
+                <Thumb.Template>
+                    <ControlTemplate TargetType="Thumb">
+                        <Border Background="{TemplateBinding Background}" Width="18">
+                            <Rectangle Width="4" Height="48" RadiusX="2" RadiusY="2" Fill="{StaticResource SubInkBrush}"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0.5"/>
+                        </Border>
+                    </ControlTemplate>
+                </Thumb.Template>
+            </Thumb>
+
+            <!-- 中间：预览是主角 -->
+            <Border Grid.Column="2" x:Name="CanvasCard" Style="{StaticResource Card}" Background="{StaticResource PageBgBrush}">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="*"/>
@@ -117,83 +171,34 @@
                 </Grid>
             </Border>
 
-            <!-- ===== 表格抽屉：右上角「表格」点开、抽屉自己的右上角「收起」关（用户 2026-09-20 点名的交互） ===== -->
-            <Border x:Name="TableDrawer" Style="{StaticResource FloatCard}" Width="560"
-                    HorizontalAlignment="Left" Margin="0,4" Visibility="Collapsed">
-                <Border.RenderTransform>
-                    <TranslateTransform x:Name="DrawerShift" X="-620"/>
-                </Border.RenderTransform>
-                <Grid>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="*"/>
-                        <RowDefinition Height="Auto"/>
-                    </Grid.RowDefinitions>
-                    <Grid Grid.Row="0" Margin="14,12,12,8">
-                        <StackPanel>
-                            <TextBlock Text="这张表（软件读进来的原样）" FontWeight="Bold" FontSize="16"/>
-                            <TextBlock Text="行号＝Excel 行号；要改数据回表里改，这里只是镜子" Style="{StaticResource SubText}"/>
-                        </StackPanel>
-                        <Button x:Name="TableCloseBtn" Content="收起 «" Style="{StaticResource GhostButton}" HorizontalAlignment="Right" VerticalAlignment="Top"/>
-                    </Grid>
-                    <Border Grid.Row="1" Margin="14,0,14,8" BorderBrush="{StaticResource LineBrush}" BorderThickness="1" CornerRadius="8">
-                        <DataGrid ItemsSource="{Binding PreviewTable}"
-                                  AutoGenerateColumns="True"
-                                  AutoGeneratingColumn="TableGrid_AutoGeneratingColumn"
-                                  IsReadOnly="True" CanUserAddRows="False" CanUserDeleteRows="False"
-                                  HeadersVisibility="Column" GridLinesVisibility="All" SelectionUnit="Cell"
-                                  FontSize="12.5" RowHeaderWidth="0" BorderThickness="0"/>
-                    </Border>
-                    <TextBlock Grid.Row="2" Margin="14,0,14,12" Style="{StaticResource SubText}"
-                               Text="合计行/被剔行按 ① 步的口径来；这里看到的就是引擎拿到的。"/>
-                    <!-- 抽屉右缘拖宽柄（第 93 棒④，用户：「可以拉伸表格的缩小长度」）：住在抽屉自己的网格里，跟着滑进滑出。
-                         宽 18 且**跨着边线**（右边探出卡片 9）：第一版做成贴着边内的 9 宽，实测鼠标怎么戳都戳不中——
-                         一根手指宽的隐形柄对用鼠标的人是抓不住的（第 93 棒目检撞出来的）。 -->
-                    <Thumb x:Name="DrawerResizeThumb" Grid.RowSpan="3" Width="18" Height="220" Cursor="SizeWE"
-                           HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,-9,0"
-                           Background="Transparent" BorderThickness="0"
-                           ToolTip="按住左右拖：改这张表抽屉的宽度（画布跟着让位）">
-                        <Thumb.Template>
-                            <ControlTemplate TargetType="Thumb">
-                                <Border Background="{TemplateBinding Background}" Width="18" Height="220">
-                                    <Rectangle Width="4" Height="48" RadiusX="2" RadiusY="2" Fill="{StaticResource SubInkBrush}"
-                                               HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0.5"/>
-                                </Border>
-                            </ControlTemplate>
-                        </Thumb.Template>
-                    </Thumb>
-                </Grid>
-            </Border>
-
-            <!-- ===== 指令岛：AI 面板本体住在里面（从主窗泊位搬来，全程只有一个实例） ===== -->
-            <Border x:Name="IslandCard" Style="{StaticResource FloatCard}" Width="440" Height="560"
-                    HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,4,4" Padding="12,10">
-                <Grid>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="*"/>
-                    </Grid.RowDefinitions>
-                    <TextBlock Grid.Row="0" Text="AI 指令岛" FontWeight="Bold" FontSize="14" Foreground="{StaticResource BrandBrush}" Margin="2,0,0,6"/>
-                    <!-- 内容 = MainWindow 的 AiChatPanel 本体（SimpleShellFlow.Park 搬进来）；壳窗只当宿主，不建第二份面板 -->
-                    <ContentControl x:Name="Island" Grid.Row="1" MinHeight="320"/>
-                </Grid>
-            </Border>
-            <!-- 右下角拉伸柄（第 93 棒①，用户：「AI 界面不能拉长或者收缩」）：与岛卡平级、同钉右下角——
-                 卡片怎么拉，角永远压着这颗柄（Border 只许一个孩子，所以柄不能住在卡里）。
-                 32×32 且角对齐到舞台角（比卡片再外扩 4）：小柄抓不中这条教训同抽屉柄。 -->
-            <Thumb x:Name="IslandResizeThumb" Width="32" Height="32" Cursor="SizeNWSE"
-                   HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,0,0"
+            <!-- ===== 右栏：AI 指令岛（第 94 棒：从浮在右下角那张卡改成顶到底一根栏） ===== -->
+            <Thumb x:Name="RightSplitThumb" Grid.Column="3" Width="18" Cursor="SizeWE" HorizontalAlignment="Right"
                    Background="Transparent" BorderThickness="0"
-                   ToolTip="按住斜着拖：拉长/收缩 AI 指令岛（松手记住，下次开还在）">
+                   ToolTip="按住左右拖：改右栏 AI 的宽度（中间跟着让位）">
                 <Thumb.Template>
                     <ControlTemplate TargetType="Thumb">
-                        <Border Background="{TemplateBinding Background}" Width="32" Height="32">
-                            <Path Data="M 32 32 L 13 32 L 32 13 Z" Fill="{StaticResource SubInkBrush}"
-                                  HorizontalAlignment="Right" VerticalAlignment="Bottom" Opacity="0.7"/>
+                        <Border Background="{TemplateBinding Background}" Width="18">
+                            <Rectangle Width="4" Height="48" RadiusX="2" RadiusY="2" Fill="{StaticResource SubInkBrush}"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0.5"/>
                         </Border>
                     </ControlTemplate>
                 </Thumb.Template>
             </Thumb>
+            <Border x:Name="RightPane" Grid.Column="4" Style="{StaticResource FloatCard}" Width="440" Margin="6,0,0,0" Padding="12,10">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <Grid Grid.Row="0" Margin="2,0,0,6">
+                        <TextBlock Text="AI 指令岛" FontWeight="Bold" FontSize="14" Foreground="{StaticResource BrandBrush}"/>
+                        <Button x:Name="AiCloseBtn" Content="收起 »" Style="{StaticResource GhostButton}" HorizontalAlignment="Right" VerticalAlignment="Top"
+                                ToolTip="关掉右栏（顶栏那颗「AI」也能开关同一根）"/>
+                    </Grid>
+                    <!-- 内容 = MainWindow 的 AiChatPanel 本体（SimpleShellFlow.Park 搬进来）；壳窗只当宿主，不建第二份面板 -->
+                    <ContentControl x:Name="Island" Grid.Row="1" MinHeight="320"/>
+                </Grid>
+            </Border>
         </Grid>
 
         <!-- ===== 底部状态条：一句话，取 VM 的 StatusMessage（谁最后写谁，口径同 §五-129） ===== -->

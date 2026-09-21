@@ -29,7 +29,7 @@ public partial class App : Application
 
         base.OnStartup(e);
 
-        // 第 93 棒：开哪一版由 UiState.LastShell 说（空 = 简洁版，用户 2026-09-21 定的默认入口）。
+        // 第 94 棒钉死：起来永远先开简洁版（用户 2026-09-21 第二次点这条，"记住上次在哪版"那格记性已删——主入口不摇摆）。
         // 主窗始终先造好（壳窗与它共享同一份 MainViewModel，「回专业版」就是把它现形），
         // 没上屏的窗不许当 MessageBox 的 owner（§五-113 那族），所以遗留提示递 null owner。
         var main = new MainWindow();

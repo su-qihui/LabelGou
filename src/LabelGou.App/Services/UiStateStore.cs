@@ -82,21 +82,20 @@ public sealed class UiState
     public string RunMode { get; set; } = "";
 
     /// <summary>
-    /// 上次用的是哪一版界面：<c>"simple"</c> / <c>"pro"</c>；**空 = 没记过 = 简洁版**（第 93 棒，
-    /// 用户 2026-09-21：「将新版界面设为主入口 打开软件自动为简约版界面」——又一格有意改默认，
-    /// 与第 19 棒 <c>AiDockSite</c> 同族）。他点过「回专业版」就记 pro，下次从那头开，选过的事不抹。
+    /// 简洁版壳窗左右两根栏的宽度（第 94 棒：三栏骨架，中间预览为主导）。
+    /// <para><strong>0 = 没记过 = 默认</strong>（左 560、右 440），旧状态文件缺这两格行为零变化。</para>
     /// </summary>
-    public string LastShell { get; set; } = "";
+    public double LeftPaneWidth { get; set; }
+
+    public double RightPaneWidth { get; set; }
 
     /// <summary>
-    /// 简洁版壳窗的两处尺寸（第 93 棒①④：岛可拉伸、抽屉可拖宽）。
-    /// <para><strong>0 = 没记过 = 默认</strong>（岛 440×560、抽屉 560），旧状态文件缺这三格行为零变化。</para>
+    /// 两根栏上次开没开。<strong>null = 没记过 = 左关右开</strong>（用户 2026-09-21 指着 Qoder 界面说的口径：
+    /// 以中间预览为主，左右随时开关——默认收起左栏，中间才留得住 ~840 像素看纸）。
     /// </summary>
-    public double IslandWidth { get; set; }
+    public bool? LeftPaneOpen { get; set; }
 
-    public double IslandHeight { get; set; }
-
-    public double DrawerWidth { get; set; }
+    public bool? RightPaneOpen { get; set; }
 }
 
 /// <summary>

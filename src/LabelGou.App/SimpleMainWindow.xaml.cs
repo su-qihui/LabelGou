@@ -3,34 +3,42 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
-using System.Windows.Media.Animation;
 using LabelGou.App.Services;
 using LabelGou.App.ViewModels;
 
 namespace LabelGou.App;
 
 /// <summary>
-/// 简洁版壳窗（第 91 棒 · 阶段一第一刀）：预览当主角的工作台 + 表格抽屉 + 指令岛 + 出纸全屏确认。
+/// 简洁版壳窗（第 91 棒开这一刀，第 94 棒改成三栏）：<strong>左=这张表 / 中=预览（主导）/ 右=AI 指令岛</strong>，
+/// 外加出纸全屏确认。左右两根栏随时开关、能拖宽，收起来中间自己补位（用户 2026-09-21 指着 Qoder 界面定的口径）。
 /// <para><strong>它和主窗共享同一个 <see cref="MainViewModel"/> 实例</strong>（构造时递进来），
-/// 所以两代界面之间没有"同步"这回事——只有一份状态。开关动作由主窗的
-/// 「视图 → 简洁版工作台」发起，回专业版就是关掉本窗（面板搬回去、主窗现形）。</para>
+/// 所以两代界面之间没有"同步"这回事——只有一份状态。开关动作由主窗的「视图 → 简洁版工作台」发起；
+/// 点「回专业版」才是关掉本窗把主窗掀回来，直接关窗 = 整个软件退出（<see cref="SwitchingToPro"/> 分这两种）。</para>
 /// <para>本窗不许长出第二条业务路：打印/导出/翻页/缩放全是 VM 现成命令；
-/// 抽屉里那张表与 ① 步共用 <see cref="PreviewGridColumns"/>（列名带斜杠也不许整列变空，§五-177）。</para>
+/// 左栏那张表与 ① 步共用 <see cref="PreviewGridColumns"/>（列名带斜杠也不许整列变空，§五-177）。</para>
 /// </summary>
 public partial class SimpleMainWindow : Window
 {
     private readonly MainViewModel _vm;
-    private bool _drawerOpen;
-    private double _drawerWidth = 560;
-    // 按下那一刻的起点（岛：宽/高/指针 X/Y；抽屉：宽/指针 X）——拖拽全程照它算总位移
-    private (double W, double H, double X, double Y) _islandGrab;
-    private (double W, double X) _drawerGrab;
+    private bool _leftOpen;
+    private bool _rightOpen = true;
+    private double _leftWidth = SimpleShellFlow.LeftPaneDefaultWidth;
+    private double _rightWidth = SimpleShellFlow.RightPaneDefaultWidth;
+    // 按下那一刻的起点（当时的宽 + 指针 X）——拖拽全程照它算**总位移**，不吃 DragDelta 的累计量（第 93 棒那条教训）
+    private (double W, double X) _leftGrab;
+    private (double W, double X) _rightGrab;
 
     /// <summary>指令岛的宿主：主窗把 AI 面板本体搬进这里（<see cref="SimpleShellFlow.Park"/>）。</summary>
     public ContentControl IslandHost => Island;
 
-    /// <summary>抽屉当前开没开（判据与主窗都读这一处，不另存第二份）。</summary>
-    public bool DrawerOpen => _drawerOpen;
+    /// <summary>左栏（这张表）开没开。判据与测试都读这一处，不另存第二份。</summary>
+    public bool LeftPaneOpen => _leftOpen;
+
+    /// <summary>右栏（AI）开没开。</summary>
+    public bool RightPaneOpen => _rightOpen;
+
+    /// <summary>这扇窗是被「回专业版」关掉的，还是用户直接关窗：前者要把主窗掀回来，后者整个软件退出（用户 2026-09-21：关两次不算关完）。</summary>
+    public bool SwitchingToPro { get; private set; }
 
     public SimpleMainWindow(MainViewModel vm)
     {
@@ -39,54 +47,47 @@ public partial class SimpleMainWindow : Window
         // 简洁版给短标题：主窗那句（含五步向导提示）不该原样搬来——壳窗没有五步摊开的样子
         Title = $"LabelGou 简洁版 · v{AppInfo.Version}";
         DataContext = _vm;
-        // 岛与抽屉上次拉到多大（0 = 没记过 = 默认档）；拖拽夹取全走 SimpleShellFlow 的纯函数
-        var (islandW, islandH, drawerW) = _vm.LoadShellGeometry();
-        var (w0, h0) = SimpleShellFlow.ClampIslandSize(islandW > 0 ? islandW : 440, islandH > 0 ? islandH : 560);
-        IslandCard.Width = w0;
-        IslandCard.Height = h0;
-        _drawerWidth = SimpleShellFlow.ClampDrawerWidth(drawerW > 0 ? drawerW : 560);
-        TableDrawer.Width = _drawerWidth;
+        // 两根栏上次多宽、开没开（0 / null = 没记过 = 默认档：左关右开，中间才留得住看纸的地方）
+        var (leftW, rightW, leftOpen, rightOpen) = _vm.LoadShellPanes();
+        _leftWidth = SimpleShellFlow.ClampLeftPaneWidth(leftW > 0 ? leftW : SimpleShellFlow.LeftPaneDefaultWidth);
+        _rightWidth = SimpleShellFlow.ClampRightPaneWidth(rightW > 0 ? rightW : SimpleShellFlow.RightPaneDefaultWidth);
+        _leftOpen = leftOpen ?? false;
+        _rightOpen = rightOpen ?? true;
+        ApplyPaneLayout();
         // 整版控件靠回调取标签版面（Func 没法在 XAML 里绑）——与主窗同一句接线，不开第二套取数
         ShellSheetView.LayoutProvider = index => _vm.Sheet.LayoutFor(index);
-        TableToggleBtn.Click += (_, _) => SetDrawer(SimpleShellFlow.ToggleTableDrawer(_drawerOpen));
-        TableCloseBtn.Click += (_, _) => SetDrawer(false);
-        // 两颗拉伸柄都按「相对按下那一刻的位移」算尺寸，不吃 DragDelta 递来的增量：
-        // WPF 的 Thumb 故意不刷新它内部的起点（滚动条那一类柄自己会跟着动，刷新就乱），
-        // 于是 HorizontalChange 是"从按下到现在"的**累计**量——逐次加到当前宽度上就是二次方放大。
-        // 第 93 棒实测：岛挪 30 像素从 612 直接顶到 900 上限（约十倍），抽屉那侧因柄跟着卡片走才侥幸 1:1。
-        IslandResizeThumb.DragStarted += (_, _) =>
+        TableToggleBtn.Click += (_, _) => SetLeftPane(SimpleShellFlow.TogglePane(_leftOpen));
+        TableCloseBtn.Click += (_, _) => SetLeftPane(false);
+        AiToggleBtn.Click += (_, _) => SetRightPane(SimpleShellFlow.TogglePane(_rightOpen));
+        AiCloseBtn.Click += (_, _) => SetRightPane(false);
+        LeftSplitThumb.DragStarted += (_, _) => _leftGrab = (LeftPane.Width, Mouse.GetPosition(Stage).X);
+        LeftSplitThumb.DragDelta += (_, _) =>
         {
-            var p = Mouse.GetPosition(Stage);
-            _islandGrab = (IslandCard.Width, IslandCard.Height, p.X, p.Y);
+            _leftWidth = SimpleShellFlow.ClampLeftPaneWidth(_leftGrab.W + (Mouse.GetPosition(Stage).X - _leftGrab.X));
+            ApplyPaneLayout();
         };
-        IslandResizeThumb.DragDelta += (_, _) =>
+        RightSplitThumb.DragStarted += (_, _) => _rightGrab = (RightPane.Width, Mouse.GetPosition(Stage).X);
+        RightSplitThumb.DragDelta += (_, _) =>
         {
-            var p = Mouse.GetPosition(Stage);
-            var (w, h) = SimpleShellFlow.ClampIslandSize(_islandGrab.W + (_islandGrab.X - p.X),
-                                                         _islandGrab.H + (_islandGrab.Y - p.Y));
-            IslandCard.Width = w;
-            IslandCard.Height = h;
-        };
-        DrawerResizeThumb.DragStarted += (_, _) => _drawerGrab = (TableDrawer.Width, Mouse.GetPosition(Stage).X);
-        DrawerResizeThumb.DragDelta += (_, _) =>
-        {
-            // 抽屉往右拖变宽；按下那一刻的宽度 + 指针走过的水平位移，同样不累加增量
-            _drawerWidth = SimpleShellFlow.ClampDrawerWidth(_drawerGrab.W + (Mouse.GetPosition(Stage).X - _drawerGrab.X));
-            TableDrawer.Width = _drawerWidth;
-            ApplyCanvasYield();   // 开着拖也要让位跟着变（用户④：画布不许被抽屉压住）
+            // 右栏钉在右边：往右拖是**变窄**，所以位移取反
+            _rightWidth = SimpleShellFlow.ClampRightPaneWidth(_rightGrab.W - (Mouse.GetPosition(Stage).X - _rightGrab.X));
+            ApplyPaneLayout();
         };
         PrintAskBtn.Click += (_, _) => PrintOverlay.Visibility = Visibility.Visible;
         PrintBackBtn.Click += (_, _) => PrintOverlay.Visibility = Visibility.Collapsed;
-        BackToProBtn.Click += (_, _) => Close();
+        BackToProBtn.Click += (_, _) =>
+        {
+            SwitchingToPro = true;
+            Close();
+        };
         _vm.PropertyChanged += OnVmPropertyChanged;
         Loaded += (_, _) =>
         {
             // 直达简洁版的用户第一次开「打印整版」，打印机下拉不能是空的——主窗那句预热在这条路上不会跑，这里补一次
             Dispatcher.BeginInvoke(new Action(_vm.Export.WarmUpPrinters), System.Windows.Threading.DispatcherPriority.Background);
         };
-        Closing += (_, _) => _vm.SaveShellGeometry(IslandCard.Width, IslandCard.Height, _drawerWidth);
+        Closing += (_, _) => _vm.SaveShellPanes(_leftWidth, _rightWidth, _leftOpen, _rightOpen);
         RefreshFlow();
-        SetDrawer(false, animate: false);
         AppLog.Info("简洁版壳窗已构造（与专业版共享同一份 MainViewModel）");
     }
 
@@ -125,31 +126,32 @@ public partial class SimpleMainWindow : Window
         }
     }
 
-    /// <summary>开/关表格抽屉：滑入 180ms（概念稿那条"上浮 200ms"同族，克制不炫）。关到位才藏，免得半路 Visibility 掐断动画。
-    /// 开着的每一刻画布都让出抽屉那一块宽（用户④：「打开表格时将排版缩小」——不许压住排版）。</summary>
-    private void SetDrawer(bool open, bool animate = true)
+    /// <summary>左栏开关：收起时占 0 宽（连竖柄一起藏），中间那格自己补位——用户 2026-09-21 要的就是
+    /// 「左右可以随时关闭或开启，中间为主导界面」。</summary>
+    private void SetLeftPane(bool open)
     {
-        _drawerOpen = open;
-        ApplyCanvasYield();
-        var target = open ? 0d : -(_drawerWidth + 60);
-        if (!animate || !TableDrawer.IsLoaded)
-        {
-            DrawerShift.X = target;
-            TableDrawer.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
-            return;
-        }
-        if (open) TableDrawer.Visibility = Visibility.Visible;
-        var anim = new DoubleAnimation(target, new Duration(TimeSpan.FromMilliseconds(180)))
-        {
-            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
-        };
-        anim.Completed += (_, _) => { if (!open) TableDrawer.Visibility = Visibility.Collapsed; };
-        DrawerShift.BeginAnimation(TranslateTransform.XProperty, anim);
+        _leftOpen = open;
+        ApplyPaneLayout();
     }
 
-    /// <summary>画布让位：抽屉开着时，画布卡左边空出抽屉宽 + 12 的缝，纸在剩余区域里重新居中；关了复原。</summary>
-    private void ApplyCanvasYield()
-        => CanvasCard.Margin = _drawerOpen ? new Thickness(_drawerWidth + 12, 0, 0, 0) : new Thickness(0);
+    private void SetRightPane(bool open)
+    {
+        _rightOpen = open;
+        ApplyPaneLayout();
+    }
+
+    /// <summary>把两根栏的开关与宽度落到列宽上。占多宽这件事归 <see cref="SimpleShellFlow.PaneSlotWidth"/>（判据读得到），这里只画。</summary>
+    private void ApplyPaneLayout()
+    {
+        LeftPane.Width = _leftWidth;
+        RightPane.Width = _rightWidth;
+        LeftPaneCol.Width = new GridLength(SimpleShellFlow.PaneSlotWidth(_leftWidth, _leftOpen));
+        RightPaneCol.Width = new GridLength(SimpleShellFlow.PaneSlotWidth(_rightWidth, _rightOpen));
+        LeftPane.Visibility = _leftOpen ? Visibility.Visible : Visibility.Collapsed;
+        LeftSplitThumb.Visibility = LeftPane.Visibility;
+        RightPane.Visibility = _rightOpen ? Visibility.Visible : Visibility.Collapsed;
+        RightSplitThumb.Visibility = RightPane.Visibility;
+    }
 
     /// <summary>① 步那张表的列在这里也是自动生成的——换绑口径必须与主窗同一份（§五-177）。</summary>
     private void TableGrid_AutoGeneratingColumn(object? sender, DataGridAutoGeneratingColumnEventArgs e)

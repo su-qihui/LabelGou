@@ -12,7 +12,7 @@ namespace LabelGou.App.Tests;
 /// <summary>
 /// 简洁版壳窗（第 91 棒 · 阶段一第一刀）的判据。
 /// <para>窗口在测试进程里造不出完整交互（§五-112 那族），所以判据分两层：
-/// 确定性判据全走 <see cref="SimpleShellFlow"/> 静态方法（活件流档位、抽屉开关、面板摘挂），
+/// 确定性判据全走 <see cref="SimpleShellFlow"/> 静态方法（活件流档位、左右栏开关与占宽、面板摘挂），
 /// 壳窗本体只钉「XAML 加载得动 + 初始态诚实」这一条——它已经是本仓最贵的一课（第 88 棒的崩溃回归同款形状）。</para>
 /// </summary>
 public class SimpleShellTests
@@ -46,36 +46,40 @@ public class SimpleShellTests
     public void StateOf_RejectsNodeNumberThatDoesNotExist()
         => Assert.Throws<ArgumentOutOfRangeException>(() => SimpleShellFlow.StateOf(0, 4));
 
-    // ===== 表格抽屉：顶栏「表格」与抽屉右上角「收起」按的是同一个开关 =====
+    // ===== 左右两根栏：顶栏那颗钮与栏里自己的「收起」按的是同一个开关 =====
 
     [Fact]
-    public void ToggleTableDrawer_RoundTripsToTheSameState()
+    public void TogglePane_RoundTripsToTheSameState()
     {
-        Assert.True(SimpleShellFlow.ToggleTableDrawer(false));
-        Assert.False(SimpleShellFlow.ToggleTableDrawer(true));
+        Assert.True(SimpleShellFlow.TogglePane(false));
+        Assert.False(SimpleShellFlow.TogglePane(true));
     }
 
-    // ===== 第 93 棒：可拖几何的夹取 + 答题后滚到下一条 =====
+    // ===== 第 93/94 棒：栏宽夹取、收起占多少、答题后滚到下一条 =====
 
     [Theory]
-    [InlineData(100, 100, 420, 520, 360)]    // 太小 → 各自的下限（岛 420×520：实测再收就把问题区挤没了、抽屉 360）
-    [InlineData(5000, 5000, 900, 820, 820)]  // 太大 → 各自的上限（岛 900×820、抽屉 820）
-    [InlineData(640, 600, 640, 600, 640)]    // 区间内原样
-    public void ClampGeometry_KeepsSizesInsideSaneBands(double w, double h, double wantIw, double wantIh, double wantDrawer)
+    [InlineData(100, 100, 360, 420)]    // 太小 → 各自的下限（左 360、右 420：右栏再窄 AI 的问题区就被挤没）
+    [InlineData(5000, 5000, 820, 900)]  // 太大 → 各自的上限（左 820、右 900）
+    [InlineData(640, 640, 640, 640)]    // 区间内原样
+    public void ClampPaneWidth_KeepsSizesInsideSaneBands(double left, double right, double wantLeft, double wantRight)
     {
-        var (cw, ch) = SimpleShellFlow.ClampIslandSize(w, h);
-        Assert.Equal(wantIw, cw);
-        Assert.Equal(wantIh, ch);
-        Assert.Equal(wantDrawer, SimpleShellFlow.ClampDrawerWidth(w));
+        Assert.Equal(wantLeft, SimpleShellFlow.ClampLeftPaneWidth(left));
+        Assert.Equal(wantRight, SimpleShellFlow.ClampRightPaneWidth(right));
     }
 
     [Fact]
-    public void ClampGeometry_RejectsBadNumbersInsteadOfStoringThem()
+    public void ClampPaneWidth_RejectsBadNumbersInsteadOfStoringThem()
     {
         // NaN/∞ 拖不进状态文件（§五-183 同族）：坏数一律退回默认档
-        Assert.Equal((440, 560), SimpleShellFlow.ClampIslandSize(double.NaN, double.PositiveInfinity));
-        Assert.Equal(560, SimpleShellFlow.ClampDrawerWidth(double.NaN));
+        Assert.Equal(560, SimpleShellFlow.ClampLeftPaneWidth(double.NaN));
+        Assert.Equal(440, SimpleShellFlow.ClampRightPaneWidth(double.PositiveInfinity));
     }
+
+    [Theory]
+    [InlineData(560, true, 560)]   // 开着 = 占自己那份宽
+    [InlineData(560, false, 0)]    // 收起 = 占 0，中间那格（预览）自己补位——用户要的是"左右随时开关，中间主导"
+    public void PaneSlotWidth_CollapsedPaneTakesNoRoom(double width, bool open, double expected)
+        => Assert.Equal(expected, SimpleShellFlow.PaneSlotWidth(width, open));
 
     [Theory]
     [InlineData(0, 3, 1)]    // 答完第 1 条 → 把第 2 条滚进视野
@@ -85,17 +89,20 @@ public class SimpleShellTests
         => Assert.Equal(expected, SimpleShellFlow.NextQuestionIndex(answered, count));
 
     [Fact]
-    public void LastShellAndGeometry_RoundTripThroughTheStateFile()
+    public void ShellPanes_RoundTripThroughTheStateFile()
     {
         var store = TestEnvironment.NewTempUiStateStore();
         var vm = OnSta(() => new MainViewModel(store));
-        // 旧状态文件缺这几格 = 没记过：LastShell 空（启动退回默认简洁版）、几何 0
-        Assert.Equal("", vm.LoadLastShell());
-        var g0 = vm.LoadShellGeometry();
-        Assert.Equal((0d, 0d, 0d), g0);
-        OnSta(() => { vm.SaveLastShell("pro"); vm.SaveShellGeometry(500, 620, 700); return 0; });
-        Assert.Equal("pro", vm.LoadLastShell());
-        Assert.Equal((500d, 620d, 700d), vm.LoadShellGeometry());
+        // 旧状态文件缺这几格 = 没记过：宽度 0（壳窗退回默认档）、开关 null（左关右开）
+        var p0 = vm.LoadShellPanes();
+        Assert.Equal((0d, 0d), (p0.LeftWidth, p0.RightWidth));
+        Assert.Null(p0.LeftOpen);
+        Assert.Null(p0.RightOpen);
+        OnSta(() => { vm.SaveShellPanes(500, 620, true, false); return 0; });
+        var p1 = vm.LoadShellPanes();
+        Assert.Equal((500d, 620d), (p1.LeftWidth, p1.RightWidth));
+        Assert.True(p1.LeftOpen);
+        Assert.False(p1.RightOpen);
     }
 
     // ===== AI 面板摘挂：全程只有一个实例，两处宿主不同时指它 =====
@@ -122,14 +129,16 @@ public class SimpleShellTests
     // ===== 壳窗本体：XAML 加载得动 + 初始态诚实（不 Show，§五-112/113 那族坑绕开） =====
 
     [Fact]
-    public void TheShellWindowConstructsWithAnEmptyIslandAndAClosedDrawer()
+    public void TheShellWindowConstructsWithAnEmptyRightPaneAndTheLeftPaneClosed()
         => OnSta(() =>
         {
             var vm = new MainViewModel(TestEnvironment.NewTempUiStateStore());
             var shell = new SimpleMainWindow(vm);
-            Assert.NotNull(shell.IslandHost);              // 岛在，等主窗把面板搬进来
+            Assert.NotNull(shell.IslandHost);              // 右栏宿主在，等主窗把面板搬进来
             Assert.Null(shell.IslandHost.Content);         // 没搬之前不许凭空长出一块面板
-            Assert.False(shell.DrawerOpen);                // 抽屉默认关着——看表是瞬时动作，不常驻
+            Assert.False(shell.LeftPaneOpen);              // 左栏默认收起——中间预览才是主角（用户 2026-09-21）
+            Assert.True(shell.RightPaneOpen);              // 右栏 AI 默认开着（AI 模式第一步就要用它）
+            Assert.False(shell.SwitchingToPro);            // 刚造出来的窗不许自认"正在回专业版"，否则关窗会把软件留着
             return 0;
         });
 
