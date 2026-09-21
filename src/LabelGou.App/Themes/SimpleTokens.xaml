@@ -1,0 +1,203 @@
+<!-- 简洁版（新一代界面）的 design tokens：概念稿 specs\2026-09-20-新一代界面概念稿.html §四 的 WPF 落点。
+     只被 SimpleMainWindow 合并使用——专业版（App.xaml / MainWindow）一格不动，两代并存互不污染。 -->
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- 颜色：品牌蓝唯一强调色，其余走灰阶；语义色取一代现有值（警示红/提醒橙/成功绿），不另发明 -->
+    <Color x:Key="BrandColor">#1D4ED8</Color>
+    <SolidColorBrush x:Key="BrandBrush" Color="#1D4ED8"/>
+    <SolidColorBrush x:Key="BrandWeakBrush" Color="#EEF3FE"/>
+    <SolidColorBrush x:Key="PageBgBrush" Color="#F7F8FA"/>
+    <SolidColorBrush x:Key="CardBrush" Color="#FFFFFF"/>
+    <SolidColorBrush x:Key="InkBrush" Color="#1F2933"/>
+    <SolidColorBrush x:Key="SubInkBrush" Color="#6B7280"/>
+    <SolidColorBrush x:Key="LineBrush" Color="#E5E9EF"/>
+    <SolidColorBrush x:Key="OkBrush" Color="#16A34A"/>
+    <SolidColorBrush x:Key="WarnBrush" Color="#B45309"/>
+    <SolidColorBrush x:Key="DangerBrush" Color="#B3261E"/>
+
+    <!-- 两级阴影：贴面一层、浮层一层。冻结的 Effect 实例不能跨线程共用，所以做成 Freezable 资源没问题——
+         WPF 资源字典里的 Effect 会被多控件共用，跨 STA 线程的坑（§五-127）在这里的解法是：
+         壳窗只活在主 UI 线程；测试进程里也不会有第二条 STA 同时开两个壳窗。 -->
+    <DropShadowEffect x:Key="Shadow1" BlurRadius="6" ShadowDepth="1" Opacity="0.08" Color="#101828"/>
+    <DropShadowEffect x:Key="Shadow2" BlurRadius="30" ShadowDepth="10" Opacity="0.14" Color="#101828"/>
+
+    <!-- 白卡：圆角 10、细边、贴面阴影 -->
+    <Style x:Key="Card" TargetType="Border">
+        <Setter Property="Background" Value="{StaticResource CardBrush}"/>
+        <Setter Property="BorderBrush" Value="{StaticResource LineBrush}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="CornerRadius" Value="10"/>
+        <Setter Property="Effect" Value="{StaticResource Shadow1}"/>
+    </Style>
+
+    <!-- 浮层卡（指令岛、出纸确认的动作条）：圆角 14、悬得更远 -->
+    <Style x:Key="FloatCard" TargetType="Border" BasedOn="{StaticResource Card}">
+        <Setter Property="CornerRadius" Value="14"/>
+        <Setter Property="Effect" Value="{StaticResource Shadow2}"/>
+        <Setter Property="BorderThickness" Value="0"/>
+    </Style>
+
+    <!-- 次操作：白底细边圆角钮 -->
+    <Style x:Key="GhostButton" TargetType="Button">
+        <Setter Property="Background" Value="{StaticResource CardBrush}"/>
+        <Setter Property="BorderBrush" Value="{StaticResource LineBrush}"/>
+        <Setter Property="Foreground" Value="{StaticResource InkBrush}"/>
+        <Setter Property="FontSize" Value="13"/>
+        <Setter Property="Padding" Value="14,7"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1"
+                            CornerRadius="10" Padding="{TemplateBinding Padding}">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Bd" Property="Background" Value="{StaticResource BrandWeakBrush}"/>
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter TargetName="Bd" Property="Opacity" Value="0.75"/>
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter TargetName="Bd" Property="Opacity" Value="0.45"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- 主操作：每屏一颗，品牌蓝实心 -->
+    <Style x:Key="PrimaryButton" TargetType="Button" BasedOn="{StaticResource GhostButton}">
+        <Setter Property="Background" Value="{StaticResource BrandBrush}"/>
+        <Setter Property="BorderBrush" Value="{StaticResource BrandBrush}"/>
+        <Setter Property="Foreground" Value="White"/>
+        <Setter Property="FontWeight" Value="Bold"/>
+        <Setter Property="Padding" Value="18,8"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1"
+                            CornerRadius="10" Padding="{TemplateBinding Padding}">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Bd" Property="Opacity" Value="0.88"/>
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter TargetName="Bd" Property="Opacity" Value="0.72"/>
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter TargetName="Bd" Property="Opacity" Value="0.45"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- 字号阶梯：22 屏标题 / 16 卡标题 / 14 正文 / 12 辅助（概念稿 §四；正文默认 14，比一代的 12.5 大一档） -->
+    <Style x:Key="ScreenTitle" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="22"/>
+        <Setter Property="FontWeight" Value="Bold"/>
+        <Setter Property="Foreground" Value="{StaticResource InkBrush}"/>
+    </Style>
+    <Style x:Key="BodyText" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="14"/>
+        <Setter Property="Foreground" Value="{StaticResource InkBrush}"/>
+    </Style>
+    <Style x:Key="SubText" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="12"/>
+        <Setter Property="Foreground" Value="{StaticResource SubInkBrush}"/>
+        <Setter Property="TextWrapping" Value="Wrap"/>
+    </Style>
+
+    <!-- ===== 隐式控件样式（第 92 棒）：壳窗里没点名样式的控件一律穿这身 =====
+         为什么有效且不污染专业版：这份字典只合并进 SimpleMainWindow 的窗级资源——
+         资源查找沿可视树走，指令岛里那份 AiChatPanel（纯代码建、全吃默认样式）搬进壳窗后
+         自动被换装，而专业版各窗拿不到这些隐式键，一格不变。面板代码零改动。 -->
+    <Style TargetType="Button" BasedOn="{StaticResource GhostButton}"/>
+
+    <Style TargetType="TextBox">
+        <Setter Property="MinHeight" Value="30"/>
+        <Setter Property="Padding" Value="7,4"/>
+        <Setter Property="Background" Value="{StaticResource CardBrush}"/>
+        <Setter Property="BorderBrush" Value="{StaticResource LineBrush}"/>
+        <Setter Property="Foreground" Value="{StaticResource InkBrush}"/>
+        <Setter Property="FontSize" Value="13"/>
+        <Setter Property="VerticalContentAlignment" Value="Center"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="TextBox">
+                    <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="1" CornerRadius="8">
+                        <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsKeyboardFocused" Value="True">
+                            <Setter Property="BorderBrush" Value="{StaticResource BrandBrush}"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style TargetType="ComboBox">
+        <Setter Property="MinHeight" Value="30"/>
+        <Setter Property="Padding" Value="8,4"/>
+        <Setter Property="Background" Value="{StaticResource CardBrush}"/>
+        <Setter Property="BorderBrush" Value="{StaticResource LineBrush}"/>
+        <Setter Property="Foreground" Value="{StaticResource InkBrush}"/>
+        <Setter Property="FontSize" Value="13"/>
+        <Setter Property="VerticalContentAlignment" Value="Center"/>
+    </Style>
+
+    <Style TargetType="CheckBox">
+        <Setter Property="Foreground" Value="{StaticResource InkBrush}"/>
+        <Setter Property="FontSize" Value="13"/>
+        <Setter Property="VerticalContentAlignment" Value="Center"/>
+    </Style>
+
+    <Style x:Key="ShellGridColumnHeader" TargetType="DataGridColumnHeader">
+        <Setter Property="Background" Value="#F3F5F8"/>
+        <Setter Property="Foreground" Value="{StaticResource SubInkBrush}"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="Padding" Value="7,5"/>
+        <Setter Property="BorderBrush" Value="{StaticResource LineBrush}"/>
+        <Setter Property="BorderThickness" Value="0,0,1,1"/>
+    </Style>
+    <Style x:Key="ShellGridCell" TargetType="DataGridCell">
+        <Setter Property="Padding" Value="6,3"/>
+        <Setter Property="BorderThickness" Value="0"/>
+        <Setter Property="Foreground" Value="{StaticResource InkBrush}"/>
+        <Style.Triggers>
+            <Trigger Property="IsSelected" Value="True">
+                <Setter Property="Background" Value="{StaticResource BrandWeakBrush}"/>
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
+    <!-- 抽屉里那张表：白底细线、列头浅灰——概念稿 .grid-t 的形状（默认 DataGrid 是 2003 灰）。
+         列头与单元格必须显式点名：DataGrid 默认模板自带主题列头样式，隐式键进不去（2026-09-21 实机截图抓到） -->
+    <Style TargetType="DataGrid">
+        <Setter Property="Background" Value="{StaticResource CardBrush}"/>
+        <Setter Property="RowBackground" Value="{StaticResource CardBrush}"/>
+        <Setter Property="AlternatingRowBackground" Value="#FAFBFC"/>
+        <Setter Property="BorderBrush" Value="{StaticResource LineBrush}"/>
+        <Setter Property="GridLinesVisibility" Value="All"/>
+        <Setter Property="HorizontalGridLinesBrush" Value="{StaticResource LineBrush}"/>
+        <Setter Property="VerticalGridLinesBrush" Value="{StaticResource LineBrush}"/>
+        <Setter Property="RowHeaderWidth" Value="0"/>
+        <Setter Property="HeadersVisibility" Value="Column"/>
+        <Setter Property="FontSize" Value="12.5"/>
+        <Setter Property="ColumnHeaderStyle" Value="{StaticResource ShellGridColumnHeader}"/>
+        <Setter Property="CellStyle" Value="{StaticResource ShellGridCell}"/>
+    </Style>
+
+</ResourceDictionary>

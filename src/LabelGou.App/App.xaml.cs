@@ -30,12 +30,20 @@ public partial class App : Application
 
         // 第 84 棒：上次要是被强杀/断电，OnExit 根本没跑，这台打印机的默认还留在被改过的状态——先补还，再告诉他
         var leftover = PrinterDefaultsGuard.RecoverLeftoversAtStartup();
+
+        base.OnStartup(e);
+
+        // 第 93 棒：开哪一版由 UiState.LastShell 说（空 = 简洁版，用户 2026-09-21 定的默认入口）。
+        // 主窗始终先造好（壳窗与它共享同一份 MainViewModel，「回专业版」就是把它现形），
+        // 没上屏的窗不许当 MessageBox 的 owner（§五-113 那族），所以遗留提示递 null owner。
+        var main = new MainWindow();
+        MainWindow = main;
+        main.OpenAtStartup();
         if (leftover is not null)
         {
-            Dispatcher.BeginInvoke(new Action(() => MessageBox.Show(this.MainWindow, leftover, "LabelGou",
+            Dispatcher.BeginInvoke(new Action(() => MessageBox.Show(null, leftover, "LabelGou",
                 MessageBoxButton.OK, MessageBoxImage.Information)), DispatcherPriority.ApplicationIdle);
         }
-        base.OnStartup(e);
     }
 
     protected override void OnExit(ExitEventArgs e)

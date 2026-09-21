@@ -319,6 +319,12 @@ public sealed class AiChatPanel : UserControl
     /// </summary>
     public Border DragGrip { get; private set; } = null!;
 
+    /// <summary>
+    /// 握把那一行的显/隐（第 91 棒）：简洁版指令岛里没有 <see cref="PanelDragController"/>，
+    /// 握把留着只会让人按住拖出个寂寞——搬进岛里时收起，回主窗再放出来。默认（主窗）照旧显示。
+    /// </summary>
+    public bool ShowDragGrip { set => DragGrip.Visibility = value ? Visibility.Visible : Visibility.Collapsed; }
+
     /// <summary>握把那一行：一个拖拽把手该有的样子（≡ 图标 + 一句怎么用 + 十字移动光标）。</summary>
     private static Border BuildDragGrip()
     {
@@ -594,6 +600,13 @@ public sealed class AiChatPanel : UserControl
         _transcript.AppendText(text + Environment.NewLine);
         ScrollTranscriptToEnd();
     }
+
+    /// <summary>
+    /// 只往对话区记一行、**不动滚动**（第 93 棒②，用户 2026-09-21：「选择后会自动弹到顶部，往下滚动回来才能选择」）。
+    /// <para>真凶就是 <see cref="AppendRaw"/> 尾那句滚到对话区底：答题时追加的「还剩 N 条」把视图从**下方问题区**
+    /// 拽回上面的对话区底部——相对人眼就是"弹到顶部"。答题这条路改走这里，滚动交给"把下一条问题滚进视野"。</para>
+    /// </summary>
+    private void AppendQuiet(string text) => _transcript.AppendText(text + Environment.NewLine);
 
     /// <summary>把最后一行换掉（只给 <see cref="AppendNotice"/> 用：同一句只占一行，次数就地更新）。</summary>
     private void ReplaceLastLine(string line)
@@ -1411,8 +1424,9 @@ public sealed class AiChatPanel : UserControl
             actions.Children.Add(yes);
             actions.Children.Add(answer);
             block.Children.Add(actions);
-            no.Click += (_, _) => AnswerQuestion(proposal, q, false, answer, no, yes);
-            yes.Click += (_, _) => AnswerQuestion(proposal, q, true, answer, no, yes);
+            var index = i;   // 答题后要把「下一条」滚进视野（第 93 棒②），闭包捕获的是自己这一条的号
+            no.Click += (_, _) => AnswerQuestion(proposal, q, false, answer, no, yes, index);
+            yes.Click += (_, _) => AnswerQuestion(proposal, q, true, answer, no, yes, index);
             _questions.Children.Add(block);
         }
     }
@@ -1536,7 +1550,7 @@ public sealed class AiChatPanel : UserControl
     /// 那些是既成事实，带着他的答复去要版式就够。以前这里是重发整份提案，
     /// 于是一次请求把十来个耦合输出全重摇一遍（第 1 版有 JP、第 2 版丢了、第 3 版空白就是这么来的）。</para>
     /// </summary>
-    private void AnswerQuestion(AiSheetProposal proposal, AiSheetQuestion q, bool yes, TextBlock answer, Button no, Button yesButton)
+    private void AnswerQuestion(AiSheetProposal proposal, AiSheetQuestion q, bool yes, TextBlock answer, Button no, Button yesButton, int index)
     {
         no.IsEnabled = false;
         yesButton.IsEnabled = false;
@@ -1553,7 +1567,8 @@ public sealed class AiChatPanel : UserControl
         // 带 _lastColumns：qty-column 答「是」而那一列读表时没落进 Readout，要靠列画像把它真对回表里那一列再设上去。
         var notesBefore = read.Notes.Count;
         _readProposal = read.WithAnswer(q, yes, _lastColumns);
-        foreach (var note in _readProposal.Notes.Skip(notesBefore)) Append("　· " + note);
+        // 第 93 棒②：答题这几行只记账不抢滚动——人正盯着下面的问题区，视图不许被拽回对话区底
+        foreach (var note in _readProposal.Notes.Skip(notesBefore)) AppendQuiet("　· " + note);
 
         // 第 35 棒：他的决定要**真的回到模型手里**。第 40 棒起有两条路都带着它：
         // ① 提案自己身上的 Answers（第二步提示词里那节「老板已经拍过板了」，也是 MergeLayout 补落货号那条的依据）；
@@ -1565,7 +1580,9 @@ public sealed class AiChatPanel : UserControl
 
         if (proposal.Questions.Count == 0 || _questionsAnswered < proposal.Questions.Count)
         {
-            Append($"还剩 {proposal.Questions.Count - _questionsAnswered} 条要你拍板，答完它才去排版。");
+            AppendQuiet($"还剩 {proposal.Questions.Count - _questionsAnswered} 条要你拍板，答完它才去排版。");
+            var next = SimpleShellFlow.NextQuestionIndex(index, proposal.Questions.Count);
+            if (next >= 0 && _questions.Children[next] is FrameworkElement nextBlock) nextBlock.BringIntoView();
             return;
         }
         if (_autoReruns >= MaxAutoReruns)

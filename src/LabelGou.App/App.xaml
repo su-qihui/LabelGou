@@ -1,7 +1,8 @@
 <Application x:Class="LabelGou.App.App"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             StartupUri="MainWindow.xaml">
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- 第 93 棒：StartupUri 摘了。开哪一版界面要按 UiState.LastShell 决定（默认简洁版），
+         而 StartupUri 只会写死开主窗——改由 OnStartup 亲手开窗（setter 不接受 null 那条老坑的正规解法就是压根不设它）。 -->
     <Application.Resources>
 
         <!-- 全局样式：打印店操作员用的就是"看得清、点得动"的控件，不做花活 -->
