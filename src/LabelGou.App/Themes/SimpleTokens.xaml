@@ -117,4 +117,87 @@
         <Setter Property="TextWrapping" Value="Wrap"/>
     </Style>
 
+    <!-- ===== 隐式控件样式（第 92 棒）：壳窗里没点名样式的控件一律穿这身 =====
+         为什么有效且不污染专业版：这份字典只合并进 SimpleMainWindow 的窗级资源——
+         资源查找沿可视树走，指令岛里那份 AiChatPanel（纯代码建、全吃默认样式）搬进壳窗后
+         自动被换装，而专业版各窗拿不到这些隐式键，一格不变。面板代码零改动。 -->
+    <Style TargetType="Button" BasedOn="{StaticResource GhostButton}"/>
+
+    <Style TargetType="TextBox">
+        <Setter Property="MinHeight" Value="30"/>
+        <Setter Property="Padding" Value="7,4"/>
+        <Setter Property="Background" Value="{StaticResource CardBrush}"/>
+        <Setter Property="BorderBrush" Value="{StaticResource LineBrush}"/>
+        <Setter Property="Foreground" Value="{StaticResource InkBrush}"/>
+        <Setter Property="FontSize" Value="13"/>
+        <Setter Property="VerticalContentAlignment" Value="Center"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="TextBox">
+                    <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="1" CornerRadius="8">
+                        <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsKeyboardFocused" Value="True">
+                            <Setter Property="BorderBrush" Value="{StaticResource BrandBrush}"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style TargetType="ComboBox">
+        <Setter Property="MinHeight" Value="30"/>
+        <Setter Property="Padding" Value="8,4"/>
+        <Setter Property="Background" Value="{StaticResource CardBrush}"/>
+        <Setter Property="BorderBrush" Value="{StaticResource LineBrush}"/>
+        <Setter Property="Foreground" Value="{StaticResource InkBrush}"/>
+        <Setter Property="FontSize" Value="13"/>
+        <Setter Property="VerticalContentAlignment" Value="Center"/>
+    </Style>
+
+    <Style TargetType="CheckBox">
+        <Setter Property="Foreground" Value="{StaticResource InkBrush}"/>
+        <Setter Property="FontSize" Value="13"/>
+        <Setter Property="VerticalContentAlignment" Value="Center"/>
+    </Style>
+
+    <Style x:Key="ShellGridColumnHeader" TargetType="DataGridColumnHeader">
+        <Setter Property="Background" Value="#F3F5F8"/>
+        <Setter Property="Foreground" Value="{StaticResource SubInkBrush}"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="Padding" Value="7,5"/>
+        <Setter Property="BorderBrush" Value="{StaticResource LineBrush}"/>
+        <Setter Property="BorderThickness" Value="0,0,1,1"/>
+    </Style>
+    <Style x:Key="ShellGridCell" TargetType="DataGridCell">
+        <Setter Property="Padding" Value="6,3"/>
+        <Setter Property="BorderThickness" Value="0"/>
+        <Setter Property="Foreground" Value="{StaticResource InkBrush}"/>
+        <Style.Triggers>
+            <Trigger Property="IsSelected" Value="True">
+                <Setter Property="Background" Value="{StaticResource BrandWeakBrush}"/>
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
+    <!-- 抽屉里那张表：白底细线、列头浅灰——概念稿 .grid-t 的形状（默认 DataGrid 是 2003 灰）。
+         列头与单元格必须显式点名：DataGrid 默认模板自带主题列头样式，隐式键进不去（2026-09-21 实机截图抓到） -->
+    <Style TargetType="DataGrid">
+        <Setter Property="Background" Value="{StaticResource CardBrush}"/>
+        <Setter Property="RowBackground" Value="{StaticResource CardBrush}"/>
+        <Setter Property="AlternatingRowBackground" Value="#FAFBFC"/>
+        <Setter Property="BorderBrush" Value="{StaticResource LineBrush}"/>
+        <Setter Property="GridLinesVisibility" Value="All"/>
+        <Setter Property="HorizontalGridLinesBrush" Value="{StaticResource LineBrush}"/>
+        <Setter Property="VerticalGridLinesBrush" Value="{StaticResource LineBrush}"/>
+        <Setter Property="RowHeaderWidth" Value="0"/>
+        <Setter Property="HeadersVisibility" Value="Column"/>
+        <Setter Property="FontSize" Value="12.5"/>
+        <Setter Property="ColumnHeaderStyle" Value="{StaticResource ShellGridColumnHeader}"/>
+        <Setter Property="CellStyle" Value="{StaticResource ShellGridCell}"/>
+    </Style>
+
 </ResourceDictionary>

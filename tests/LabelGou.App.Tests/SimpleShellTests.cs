@@ -89,4 +89,27 @@ public class SimpleShellTests
             Assert.False(shell.DrawerOpen);                // 抽屉默认关着——看表是瞬时动作，不常驻
             return 0;
         });
+
+    /// <summary>
+    /// 第 92 棒：岛内面板与抽屉表格的换装靠**窗级隐式样式**（字典只合并进壳窗，专业版拿不到）。
+    /// 这条钉的是"隐式键真的挂在壳窗资源上、并且岛里的裸控件命中的就是它"——
+    /// 写了没挂上，界面上就是用户那句「部分地方仍是旧界面的 UI」。
+    /// </summary>
+    [Fact]
+    public void TheShellWindowCarriesImplicitControlStylesThatRestyleTheHostedPanel()
+        => OnSta(() =>
+        {
+            var vm = new MainViewModel(TestEnvironment.NewTempUiStateStore());
+            var shell = new SimpleMainWindow(vm);
+            foreach (var kind in new[] { typeof(System.Windows.Controls.Button), typeof(System.Windows.Controls.TextBox),
+                                         typeof(System.Windows.Controls.ComboBox), typeof(System.Windows.Controls.DataGrid) })
+                Assert.NotNull(shell.TryFindResource(kind));   // 隐式键 = 控件类型本身，四类都得在
+
+            // 正向证据：岛里放一颗裸按钮，样式解析必须命中壳窗那份隐式样式（不是主题默认那身灰）
+            var probe = new System.Windows.Controls.Button();
+            shell.IslandHost.Content = probe;
+            Assert.Same(shell.FindResource(typeof(System.Windows.Controls.Button)), probe.Style);
+            shell.IslandHost.Content = null;
+            return 0;
+        });
 }

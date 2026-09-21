@@ -91,14 +91,17 @@
                                HorizontalAlignment="Center" VerticalAlignment="Center" TextAlignment="Center"
                                FontSize="16" Foreground="{StaticResource SubInkBrush}"/>
 
-                    <ContentControl Grid.Row="0" Visibility="{Binding HasLayout, Converter={StaticResource BoolVis}}">
+                    <!-- 预览包进白卡（概念稿 .paper 的形状：白纸浮在桌面上，带边带影）。
+                         LabelPreviewControl 自己按真实毫米画纸，这里只给它一个"浮起来"的托，不碰画法 -->
+                    <Border Grid.Row="0" Background="{StaticResource CardBrush}" BorderBrush="{StaticResource LineBrush}"
+                            BorderThickness="1" CornerRadius="4" Effect="{StaticResource Shadow2}"
+                            Padding="26" HorizontalAlignment="Center" VerticalAlignment="Center"
+                            Visibility="{Binding HasLayout, Converter={StaticResource BoolVis}}">
                         <render:LabelPreviewControl x:Name="LabelView"
                                                     Layout="{Binding CurrentLayout}"
                                                     Zoom="{Binding Zoom}"
-                                                    ShowGuides="{Binding ShowGuides}"
-                                                    HorizontalAlignment="Center" VerticalAlignment="Center"
-                                                    Margin="24"/>
-                    </ContentControl>
+                                                    ShowGuides="{Binding ShowGuides}"/>
+                    </Border>
 
                     <!-- 画布脚：翻页与缩放（都是现成命令，不新开路） -->
                     <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,0,0,12">

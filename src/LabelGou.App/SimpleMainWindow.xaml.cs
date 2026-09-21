@@ -31,7 +31,8 @@ public partial class SimpleMainWindow : Window
     {
         _vm = vm ?? throw new ArgumentNullException(nameof(vm));
         InitializeComponent();
-        Title = AppInfo.WindowTitle + " · 简洁版";
+        // 简洁版给短标题：主窗那句（含五步向导提示）不该原样搬来——壳窗没有五步摊开的样子
+        Title = $"LabelGou 简洁版 · v{AppInfo.Version}";
         DataContext = _vm;
         // 整版控件靠回调取标签版面（Func 没法在 XAML 里绑）——与主窗同一句接线，不开第二套取数
         ShellSheetView.LayoutProvider = index => _vm.Sheet.LayoutFor(index);
