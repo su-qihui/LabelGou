@@ -73,7 +73,7 @@ public class SimpleShellTests
     [Fact]
     public void ClampPaneWidth_RejectsBadNumbersInsteadOfStoringThem()
     {
-        // NaN/∞ 拖不进状态文件（§五-183 同族）：坏数一律退回默认档
+        // NaN/∞ 拖不进状态文件（§五-183）：坏数一律退回默认档
         Assert.Equal(560, SimpleShellFlow.ClampLeftPaneWidth(double.NaN));
         Assert.Equal(440, SimpleShellFlow.ClampRightPaneWidth(double.PositiveInfinity));
     }

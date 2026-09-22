@@ -4,6 +4,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
+using System.Windows.Media.Imaging;
 using LabelGou.App.Services;
 using LabelGou.App.ViewModels;
 
@@ -138,11 +139,59 @@ public partial class SimpleMainWindow : Window
     public void SetDarkMode(bool dark)
     {
         _dark = dark;
+        // 先拍旧那一身，再换皮——顺序反了拍到的就是新皮，淡出时看不出任何过渡
+        var before = CaptureLook();
         SimpleTheme.ApplyInto(this, dark);
         _vm.SaveDarkMode(dark);
         RefreshThemeButton();
         // 活件流那四颗点的颜色是代码里现取 brush 涂上去的（不是 DynamicResource）——不重涂会留着旧那一身
         RefreshFlow();
+        PlayDissolve(before);
+    }
+
+    /// <summary>换肤溶解走多长（跟栏弹入同一档手感：180ms，快得看得见、慢到不挡事）。</summary>
+    private const int ThemeFadeMs = 180;
+
+    /// <summary>把画面现在这一身拍成一张图。拍不到（还没 Show、DPI 拿不到、显存抽风）就返回 null——
+    /// 那时换皮照旧生效，只是少了那一下溶解，不该为此把功能扣住。</summary>
+    private ImageSource? CaptureLook()
+    {
+        var w = RootGrid.ActualWidth;
+        var h = RootGrid.ActualHeight;
+        if (!RootGrid.IsLoaded || w < 1 || h < 1) return null;
+        try
+        {
+            var scale = VisualTreeHelper.GetDpi(RootGrid).PixelsPerDip;
+            var frame = new RenderTargetBitmap((int)Math.Ceiling(w * scale), (int)Math.Ceiling(h * scale),
+                                               96 * scale, 96 * scale, PixelFormats.Pbgra32);
+            frame.Render(RootGrid);
+            frame.Freeze();
+            return frame;
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warning($"换肤过渡拍不到画面，这一身直接切过去：{ex.GetType().Name}: {ex.Message}");
+            return null;
+        }
+    }
+
+    private void PlayDissolve(ImageSource? snapshot)
+    {
+        if (snapshot is null) return;
+        ThemeFade.Source = snapshot;
+        ThemeFade.Opacity = 1;
+        ThemeFade.Visibility = Visibility.Visible;
+        var anim = new DoubleAnimation(0d, new Duration(TimeSpan.FromMilliseconds(ThemeFadeMs)))
+        {
+            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
+        };
+        anim.Completed += (_, _) =>
+        {
+            ThemeFade.Visibility = Visibility.Collapsed;
+            ThemeFade.BeginAnimation(UIElement.OpacityProperty, null);   // 动画收手，别把 Opacity 一直锁在 0
+            ThemeFade.Source = null;                                     // 这张图是整窗大小，别留在内存里
+        };
+        ThemeFade.BeginAnimation(UIElement.OpacityProperty, anim);
     }
 
     /// <summary>钮上的图案说的是"现在在哪一身"，不是"点过去会变成什么"（用户 2026-09-22 的语序）。</summary>

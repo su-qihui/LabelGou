@@ -24,7 +24,7 @@
         </ResourceDictionary>
     </Window.Resources>
 
-    <Grid>
+    <Grid x:Name="RootGrid">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
@@ -337,5 +337,9 @@
                 </StackPanel>
             </Border>
         </Grid>
+        <!-- ===== 换肤那一下的交叉溶解（第 98 棒①，用户：「添加点击深浅色过渡动效」）：旧那一身先拍成一张图盖在最上面，
+                 新皮在它底下换好，再把这张图淡出——看到的是溶解过去，不是硬切一下。平时收着且不接点击。 ===== -->
+        <Image Grid.RowSpan="3" x:Name="ThemeFade" Stretch="Fill" IsHitTestVisible="False"
+               Visibility="Collapsed" Opacity="0"/>
     </Grid>
 </Window>

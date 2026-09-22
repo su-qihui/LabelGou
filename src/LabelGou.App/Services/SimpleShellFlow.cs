@@ -77,7 +77,7 @@ public static class SimpleShellFlow
     public const double LeftPaneMinWidth = 360, LeftPaneMaxWidth = 820, LeftPaneDefaultWidth = 560;
     public const double RightPaneMinWidth = 300, RightPaneMaxWidth = 900, RightPaneDefaultWidth = 440;
 
-    /// <summary>拖到的宽度一律夹进范围；坏数（NaN/∞）退回默认那档，不许把 Infinity 写进状态文件（§五-183 同族）。</summary>
+    /// <summary>拖到的宽度一律夹进范围；坏数（NaN/∞）退回默认那档，不许把 Infinity 写进状态文件（§五-183）。</summary>
     public static double ClampLeftPaneWidth(double wanted)
         => double.IsFinite(wanted) ? Math.Clamp(wanted, LeftPaneMinWidth, LeftPaneMaxWidth) : LeftPaneDefaultWidth;
 
