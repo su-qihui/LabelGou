@@ -100,10 +100,12 @@ public static class SimpleShellFlow
     public static bool HomeShown(bool hasData, bool toggled) => !hasData || toggled;
 
     /// <summary>
-    /// 深色模式判定：注册表 <c>AppsUseLightTheme</c> 为 0 才黑；为 1 或<strong>读不到</strong>一律浅色
-    /// （读不到通常是系统版本太老或被组策略锁了，那种机器上宁可按他原来那身浅色开）。
+    /// 深浅色只有一处来源：用户自己点的那一颗。<c>null</c> = 状态文件没记过 = <strong>浅色</strong>。
+    /// <para>第 98 棒（用户 2026-09-22：「不要把系统深浅模式变成默认了，左上角添加一个太阳--浅色模式，
+    /// 点击变成月亮-[深]色模式」）：上一版这里吃注册表 <c>AppsUseLightTheme</c>，机器设了深色软件就跟着黑。
+    /// 现在注册表从判据里彻底退出——他那台机器是深色，软件起来却是他指定的浅色，这才是"我说了算"。</para>
     /// </summary>
-    public static bool PreferDark(int? appsUseLightTheme) => appsUseLightTheme == 0;
+    public static bool DarkModeRequested(bool? storedDarkMode) => storedDarkMode ?? false;
 
     /// <summary>
     /// 答完第 answeredIndex 条问题后，该把哪一条滚进视野（用户 2026-09-21 实测②：答完一条视图弹回顶部，

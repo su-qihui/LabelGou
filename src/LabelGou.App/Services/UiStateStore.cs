@@ -96,6 +96,15 @@ public sealed class UiState
     public bool? LeftPaneOpen { get; set; }
 
     public bool? RightPaneOpen { get; set; }
+
+    /// <summary>
+    /// 简洁版是不是穿深那一身（第 98 棒：用户「不要把系统深浅模式变成默认了，左上角添加一个太阳--浅色模式，
+    /// 点击变成月亮-[深]色模式」）。
+    /// <para><strong>null = 没记过 = 浅色</strong>：系统设的深浅不再插手，这一格只记他自己点的那一颗。
+    /// 他那台机器设的是深色，所以这一格默认不是"旧文件零变化"，是一次<strong>他点名要的改默认</strong>（同上面
+    /// <see cref="RunMode"/> 那一格的处理法）。</para>
+    /// </summary>
+    public bool? DarkMode { get; set; }
 }
 
 /// <summary>

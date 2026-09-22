@@ -31,7 +31,7 @@
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <!-- ===== 细顶栏：这批是谁的货 + 活件流四节点 + 四颗钮（表格 / 打印 / 回专业版） ===== -->
+        <!-- ===== 细顶栏：左上角深浅色钮 + 这批是谁的货 + 活件流四节点 + 几颗钮（打开 / 表格 / AI / 首页 / 打印 / 回专业版） ===== -->
         <Border Grid.Row="0" Background="{DynamicResource CardBrush}" BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,0,0,1" Padding="16,10">
             <Grid>
                 <Grid.ColumnDefinitions>
@@ -39,9 +39,17 @@
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
-                <StackPanel VerticalAlignment="Center">
-                    <TextBlock Text="{Binding SourcePath, FallbackValue=还没打开表}" Style="{StaticResource SubText}" MaxWidth="300" TextTrimming="CharacterEllipsis"/>
-                    <TextBlock Text="{Binding RecordInfoText}" FontWeight="Bold" FontSize="16" Foreground="{DynamicResource InkBrush}" TextTrimming="CharacterEllipsis" MaxWidth="300"/>
+                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                    <!-- 左上角那颗深浅色钮（第 98 棒，用户：「左上角添加一个太阳，浅色模式；点击变成月亮，深色模式」）。
+                         图案说的是"你现在在哪一身"，不是"点过去会变成什么"。字形走 Segoe UI Symbol：☀(U+2600)/☾(U+263E)
+                         在正文那身字体里不保证有，别换回继承的 FontFamily。 -->
+                    <Button x:Name="ThemeToggleBtn" Content="&#x2600;" FontFamily="Segoe UI Symbol" FontSize="15"
+                            MinWidth="38" Style="{StaticResource GhostButton}" Margin="0,0,10,0"
+                            ToolTip="切换简洁版的深浅色（默认浅色，不再跟随系统设置）"/>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="{Binding SourcePath, FallbackValue=还没打开表}" Style="{StaticResource SubText}" MaxWidth="300" TextTrimming="CharacterEllipsis"/>
+                        <TextBlock Text="{Binding RecordInfoText}" FontWeight="Bold" FontSize="16" Foreground="{DynamicResource InkBrush}" TextTrimming="CharacterEllipsis" MaxWidth="300"/>
+                    </StackPanel>
                 </StackPanel>
 
                 <!-- 活件流：读表 → 拍板 → 排版 → 出纸。档位由 SimpleShellFlow 判（代码里刷颜色），这里只摆形状 -->

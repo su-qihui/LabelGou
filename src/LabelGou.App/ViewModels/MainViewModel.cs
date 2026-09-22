@@ -1098,6 +1098,18 @@ public sealed partial class MainViewModel : ObservableObject, ILabelSource
         _uiState.Save(state);
     }
 
+    /// <summary>简洁版那一身深浅色（第 98 棒）。没记过就是浅色——系统设的深浅不再当默认。</summary>
+    internal bool LoadDarkMode() => SimpleShellFlow.DarkModeRequested(_uiState.Load().DarkMode);
+
+    /// <summary>点完当场落盘，不等关窗：换皮是"我选了就要一直这样"，不是"这次看看"。</summary>
+    internal void SaveDarkMode(bool dark)
+    {
+        var state = _uiState.Load();
+        if (state.DarkMode == dark) return;
+        state.DarkMode = dark;
+        _uiState.Save(state);
+    }
+
     // ───────────────────────── 运行模式（第 30 棒） ─────────────────────────
 
     private RunMode _mode = RunMode.Ai;

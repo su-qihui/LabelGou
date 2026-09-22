@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
 using LabelGou.App.Export;
 using LabelGou.App.Services;
 using LabelGou.App.ViewModels;
@@ -108,6 +109,18 @@ public class SimpleShellTests
         Assert.False(p1.RightOpen);
     }
 
+    [Fact]
+    public void DarkMode_RoundTripsThroughTheStateFile()
+    {
+        var store = TestEnvironment.NewTempUiStateStore();
+        var vm = new MainViewModel(store);
+        Assert.False(vm.LoadDarkMode());                              // 旧状态文件缺这一格 = 没记过 = 浅色
+        vm.SaveDarkMode(true);
+        Assert.True(new MainViewModel(store).LoadDarkMode());          // 点完当场落盘，不是等关窗才记
+        vm.SaveDarkMode(false);
+        Assert.False(new MainViewModel(store).LoadDarkMode());
+    }
+
     // ===== 第 97 棒：首页该不该在中间、深浅色判定、拖进来那份表走的是同一条导入链 =====
 
     [Theory]
@@ -118,11 +131,11 @@ public class SimpleShellTests
         => Assert.Equal(expected, SimpleShellFlow.HomeShown(hasData, toggled));
 
     [Theory]
-    [InlineData(0, true)]      // AppsUseLightTheme = 0 → 深色
-    [InlineData(1, false)]     // = 1 → 浅色
-    [InlineData(null, false)]  // 读不到（老系统 / 组策略锁了）→ 宁可按浅色开
-    public void PreferDark_FollowsTheSystemAndFallsBackToLight(object? raw, bool expected)
-        => Assert.Equal(expected, SimpleShellFlow.PreferDark(raw is null ? null : Convert.ToInt32(raw)));
+    [InlineData(null, false)]   // 没记过 → 浅色（第 98 棒：他那台机器系统设的是深色，也不跟）
+    [InlineData(false, false)]  // 他自己点过"浅色"
+    [InlineData(true, true)]    // 他自己点过"深色"——深浅色的唯一来源就是这一颗钮
+    public void DarkModeRequested_OnlyTheButtonHePressedDecides(bool? stored, bool expected)
+        => Assert.Equal(expected, SimpleShellFlow.DarkModeRequested(stored));
 
     [Fact]
     public void TryOpenFileAt_GoesThroughTheSameImportAsTheDialog()
@@ -191,6 +204,31 @@ public class SimpleShellTests
             Assert.True(shell.HomeVisible);                // 第 97 棒：还没导数据，中间那一屏就是首页
             return 0;
         });
+
+    /// <summary>
+    /// 第 98 棒：左上角那颗钮点下去要<strong>当场</strong>换皮，再点要回得来。上一版只会加不会减
+    /// （所以那条代价写的是"改了深浅下次启动才生效"），他这次把系统默认撤了、钮给了他，加减就都得会。
+    /// <para>读的是资源查找拿到的颜色，不碰布局尺寸——§五-182 那族假绿就是拿没 Show 的窗量尺寸量出来的。</para>
+    /// </summary>
+    [Fact]
+    public void TheThemeButtonSwapsThePaletteBothWaysAndRemembersIt()
+        => OnSta(() =>
+        {
+            var store = TestEnvironment.NewTempUiStateStore();
+            var vm = new MainViewModel(store);
+            var shell = new SimpleMainWindow(vm);
+            Assert.False(shell.DarkMode);                                              // 没记过 = 浅色（这台机器系统设的深色不算数）
+            Assert.Equal(Color.FromRgb(0xF7, 0xF8, 0xFA), PageBackground(shell));
+            shell.SetDarkMode(true);
+            Assert.Equal(Color.FromRgb(0x0F, 0x13, 0x19), PageBackground(shell));       // 深那份压进来，样式吃 DynamicResource 才追得上
+            Assert.True(vm.LoadDarkMode());                                             // 当场落盘，不等关窗
+            shell.SetDarkMode(false);
+            Assert.Equal(Color.FromRgb(0xF7, 0xF8, 0xFA), PageBackground(shell));       // 摘不干净就是留着半张黑皮
+            return 0;
+        });
+
+    private static Color PageBackground(Window shell)
+        => ((SolidColorBrush)shell.FindResource("PageBgBrush")!).Color;
 
     /// <summary>
     /// 第 92 棒：岛内面板与抽屉表格的换装靠**窗级隐式样式**（字典只合并进壳窗，专业版拿不到）。

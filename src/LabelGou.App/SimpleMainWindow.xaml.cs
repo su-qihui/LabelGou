@@ -32,6 +32,11 @@ public partial class SimpleMainWindow : Window
     private bool _autoFit = true;
     // 顶栏「首页」那颗钮按下去的状态（还没导数据时首页本来就在，不需要它）
     private bool _homeToggled;
+    // 这一身深浅色（第 98 棒）：唯一来源是他点的那一颗，没记过就是浅色——系统的深浅设置不再插手。
+    // ☀/☾ 写成转义：这两个字形跟中文混排时肉眼分不出 U+263D 还是 U+263E，转义不会骗人。
+    private bool _dark;
+    private const string SunGlyph = "\u2600";     // ☀ = 浅色
+    private const string MoonGlyph = "\u263E";    // ☾ = 深色
 
     /// <summary>指令岛的宿主：主窗把 AI 面板本体搬进这里（<see cref="SimpleShellFlow.Park"/>）。</summary>
     public ContentControl IslandHost => Island;
@@ -52,9 +57,11 @@ public partial class SimpleMainWindow : Window
     {
         _vm = vm ?? throw new ArgumentNullException(nameof(vm));
         InitializeComponent();
-        // 深浅色跟着系统（第 97 棒）：要深色就往资源共享里再压一份调色板。
+        // 深浅色只认他点过的那一颗（第 98 棒：系统设置不再当默认，没记过就是浅色）。
         // 放在 InitializeComponent 之后才有效——样式里的颜色一律走 DynamicResource，晚压进去也追得上。
-        SimpleTheme.ApplyInto(this);
+        _dark = _vm.LoadDarkMode();
+        SimpleTheme.ApplyInto(this, _dark);
+        RefreshThemeButton();
         // 简洁版给短标题：主窗那句（含五步向导提示）不该原样搬来——壳窗没有五步摊开的样子
         Title = $"LabelGou 简洁版 · v{AppInfo.Version}";
         DataContext = _vm;
@@ -76,6 +83,7 @@ public partial class SimpleMainWindow : Window
             _homeToggled = !_homeToggled;
             RefreshHome();
         };
+        ThemeToggleBtn.Click += (_, _) => SetDarkMode(!_dark);
         LeftSplitThumb.DragStarted += (_, _) => _leftGrab = (LeftPane.Width, Mouse.GetPosition(Stage).X);
         LeftSplitThumb.DragDelta += (_, _) =>
         {
@@ -122,6 +130,27 @@ public partial class SimpleMainWindow : Window
 
     /// <summary>首页可见性（判据与测试都读这一处）。</summary>
     public bool HomeVisible => HomePanel.Visibility == Visibility.Visible;
+
+    /// <summary>这一身深浅色（判据与测试都读这一处，状态只存这一份）。</summary>
+    public bool DarkMode => _dark;
+
+    /// <summary>换到那一身：当场加/摘深色调色板 + 落盘（不等关窗）。点钮和启动时恢复走的是同一条路。</summary>
+    public void SetDarkMode(bool dark)
+    {
+        _dark = dark;
+        SimpleTheme.ApplyInto(this, dark);
+        _vm.SaveDarkMode(dark);
+        RefreshThemeButton();
+        // 活件流那四颗点的颜色是代码里现取 brush 涂上去的（不是 DynamicResource）——不重涂会留着旧那一身
+        RefreshFlow();
+    }
+
+    /// <summary>钮上的图案说的是"现在在哪一身"，不是"点过去会变成什么"（用户 2026-09-22 的语序）。</summary>
+    private void RefreshThemeButton()
+    {
+        ThemeToggleBtn.Content = _dark ? MoonGlyph : SunGlyph;
+        ThemeToggleBtn.ToolTip = _dark ? "当前深色 · 点一下换回浅色" : "当前浅色 · 点一下换深色";
+    }
 
     private void OnDropZoneClick(object sender, RoutedEventArgs e) => _vm.OpenFileCommand.Execute(null);
 

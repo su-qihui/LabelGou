@@ -1,6 +1,6 @@
-<!-- 简洁版壳窗的深色调色板（第 97 棒：跟随系统的深浅色设置）。
+<!-- 简洁版壳窗的深色调色板（第 97 棒做的，第 98 棒起由顶栏左上角那颗钮点出来——不再跟随系统设置）。
      只放**颜色**这一层——样式仍住在 SimpleTokens.xaml 里，那边的 Setter 全走 DynamicResource，
-     所以换这一份就能整窗换皮，不必把两百行样式抄第二份（抄了就是两处维护，早晚对不上）。
+     所以整份压进壳窗资源共享就换皮、整份摘掉就换回来，不必抄两百行样式（抄了就是两处维护，早晚对不上）。
      键名必须与浅色那份一一对上：少一个键，那个地方就退回浅色，界面上就是一块白补丁。 -->
 <ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
