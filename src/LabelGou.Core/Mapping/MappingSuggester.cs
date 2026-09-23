@@ -206,6 +206,9 @@ public static class RecordMapper
         var issues = new List<MappingIssue>();
         var bound = profile.BoundColumns();
         var total = data.RowCount;
+        // 哪些名字已经被表头占了（第 99 棒：列号别名只补空缺，不跟表头抢——一个键在一张表里不许有两个意思）
+        var namedByHeader = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        for (var c = 0; c < data.ColumnCount; c++) namedByHeader.Add(data.Headers[c] ?? string.Empty);
 
         for (var r = 0; r < data.RowCount; r++)
         {
@@ -261,7 +264,13 @@ public static class RecordMapper
                 // 值用**同一个 MarkValue**：字段级处理（货号切 * 尾巴、大小写、待核标记）照样生效，
                 // 不会因为换了取法就把用户定过的规则绕过去。
                 if (mapping.ColumnIndex >= 0 && mapping.ColumnIndex < data.ColumnCount)
+                {
                     builder.SetCustom("col:" + data.Headers[mapping.ColumnIndex], value);
+                    // 第 99 棒：同一列还能按 Excel 列号取（{{col:B}}），**递同一个 MarkValue**——
+                    // 货号切 * 尾巴、大小写、待核标记那套处理不许因为换个取法就被绕过去（第 36 棒那台白纸的教训）。
+                    var letter = HeaderRowDetector.ColumnLetter(mapping.ColumnIndex);
+                    if (!namedByHeader.Contains(letter)) builder.SetCustom("col:" + letter, value);
+                }
             }
 
             // 未映射的列也留下，模板里可用 {{col:列标题}} 引用（唛头常有客户自定义行）
@@ -271,6 +280,9 @@ public static class RecordMapper
                 var raw = data.GetCell(r, c);
                 if (string.IsNullOrWhiteSpace(raw)) continue;
                 builder.SetCustom("col:" + data.Headers[c], raw);
+                // 同上：这一列也能用 {{col:C}} 取到（老板手动改版时不必去记表头那串带换行的字）
+                var letter = HeaderRowDetector.ColumnLetter(c);
+                if (!namedByHeader.Contains(letter)) builder.SetCustom("col:" + letter, raw);
             }
 
             // 整批固定值：表里没这一列、但整批都要印同一个值（厂商表的客户名 BOLAROM 就属于这种）。

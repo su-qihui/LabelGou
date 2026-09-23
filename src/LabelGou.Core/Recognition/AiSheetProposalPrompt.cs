@@ -191,7 +191,8 @@ public static class AiSheetProposalPrompt
         sb.Append("             { \"content\": \"Item no：{{col:货号ITEM NO:}}\" },\n");
         sb.Append("             { \"content\": \"QTY：{{col:每箱数量}} pcs\" } ],\n");
         sb.Append("              // 模板逐行：只写**印什么字**，顺序照标签上从上到下。\n");
-        sb.Append("              // {{字段}} 用下面清单里的键；要某一列原样就写 {{col:表头原样}}\n");
+        sb.Append("              // {{字段}} 用下面清单里的键：能绑上清单的一律用 {{字段}}，清单里真没有那一列才写 {{col:表头原样}}\n");
+        sb.Append("              // {{col:…}} 里只准抄表头原样，不要写 A/B/C 这种列号（列号是老板手动改版时的写法，你这条路不认）\n");
         sb.Append("  \"sheetSpec\": \"一页一枚（纸面跟标签走）\", // 只能从下面纸规清单里原样选一个名字\n");
         sb.Append("  \"columns\": 2,                        // 每行几枚（0 或省略 = 由纸宽自动算）\n");
         sb.Append("  \"paperRows\": 2,                      // 每页几行（0 或省略 = 由纸高自动算）\n");
