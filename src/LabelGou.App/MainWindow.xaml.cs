@@ -199,7 +199,7 @@ public partial class MainWindow : Window
         }
         // 面板飘着时先收回泊位：浮动窗持有内容，摘法不一样
         _aiPanel?.Dock();
-        _simpleShell = new SimpleMainWindow(_viewModel);
+        _simpleShell = new SimpleMainWindow(_viewModel, EditSelectedTemplate);
         if (_aiPanel is { } ap)
         {
             Services.SimpleShellFlow.Park(ap, _simpleShell.IslandHost);
@@ -456,7 +456,12 @@ public partial class MainWindow : Window
     /// 打开编辑器。同时只允许开一个：两个编辑器改同一份模板库只会互相覆盖，
     /// 对打印店操作员来说“另一个窗口还开着”这种坑必须用程序拦住而不是靠记性。
     /// </summary>
-    private void OpenTemplateEditor(LabelTemplate working, bool asBuiltInCopy, string? savedFileName = null)
+    /// <param name="owner">
+    /// 这扇编辑器挂在谁下面（第 100 棒）：null = 专业版主窗（照旧）；简洁版壳窗开它就递壳窗，
+    /// 于是编辑器跟着壳窗最小化、也压在壳窗上面。**深浅色跟着主人那一身**（壳窗是深色它就深色）。
+    /// 守卫仍只有 <see cref="_editorWindow"/> 这一处——两代界面共用，不各长一份。
+    /// </param>
+    private void OpenTemplateEditor(LabelTemplate working, bool asBuiltInCopy, string? savedFileName = null, Window? owner = null)
     {
         if (_editorWindow is not null)
         {
@@ -470,7 +475,8 @@ public partial class MainWindow : Window
             // 画布照"会印出来的那条标签"画（含本行箱数这类推算量）——递表里第一行会让 Ctns 那行整条不显示（第 65 棒③）。
             PreviewRecord = _viewModel.EditorPreviewRecord,
         };
-        var window = new TemplateEditorWindow(vm) { Owner = this };
+        var window = new TemplateEditorWindow(vm) { Owner = owner ?? this };
+        Services.SimpleTheme.ApplyInto(window, owner is not null && Services.SimpleTheme.IsDarkApplied(owner));
         window.Saved += saved => _viewModel.ReloadTemplates(saved.Id);
         window.SavedAsCopy += saved => _viewModel.ReloadTemplates(saved.Id);
         window.Closed += (_, _) => _editorWindow = null;
@@ -482,12 +488,19 @@ public partial class MainWindow : Window
     private void OnNewTemplateClick(object sender, RoutedEventArgs e)
         => OpenTemplateEditor(TemplateFactory.Blank("我的唛头模板"), asBuiltInCopy: false);
 
-    private void OnEditTemplateClick(object sender, RoutedEventArgs e)
+    /// <summary>③ 步那颗「编辑模板…」：内置模板先自动存副本再编，用户模板改的就是它自己。</summary>
+    private void OnEditTemplateClick(object sender, RoutedEventArgs e) => EditSelectedTemplate();
+
+    /// <summary>
+    /// 「编辑当前选中的那份模板」这件事的**唯一一份**实现（专业版 ③ 步与简洁版壳窗都走它，第 100 棒抽出来的）。
+    /// <para>没选中模板时那句提示也在这里：壳窗照抄一遍就会有两套文案（§五-129 那一族）。</para>
+    /// </summary>
+    private void EditSelectedTemplate(Window? owner = null)
     {
         var option = _viewModel.SelectedTemplate;
         if (option is null)
         {
-            MessageBox.Show(this, "还没有选中模板，先在③ 里选一个。", "模板编辑",
+            MessageBox.Show(owner ?? this, "还没有选中模板，先在③ 里选一个。", "模板编辑",
                 MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
@@ -497,12 +510,13 @@ public partial class MainWindow : Window
         {
             // 内置模板只读：自动先存一份副本再编，不要求用户理解“另存为”
             var copy = TemplateFactory.CopyOf(template, template.Name + "（自定义）");
-            OpenTemplateEditor(copy, asBuiltInCopy: true);
+            OpenTemplateEditor(copy, asBuiltInCopy: true, owner: owner);
             return;
         }
 
         var stale = _viewModel.Templates.FindFileFor(template.Id);
-        OpenTemplateEditor(template.CloneTemplate(), asBuiltInCopy: false, savedFileName: stale is null ? null : Path.GetFileName(stale));
+        OpenTemplateEditor(template.CloneTemplate(), asBuiltInCopy: false,
+            savedFileName: stale is null ? null : Path.GetFileName(stale), owner: owner);
     }
 
     /// <summary>

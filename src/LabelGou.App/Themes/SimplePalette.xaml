@@ -1,0 +1,26 @@
+<!-- 简洁版（新一代界面）的**调色板**：只有颜色，没有样式。
+     拆成两份是第 100 棒的事：模板编辑器是密集表单，它要穿新版那身颜色，但不能连壳窗那套
+     隐式控件样式一起吃（`MinHeight=30` 那一档会把它的属性表行高全撑开）。所以它只合并这一份，
+     壳窗合并 SimpleTokens.xaml（那份再把这里并进来）。
+     深色对应值在 SimpleTokens.Dark.xaml，键名一一对上；样式与界面里的颜色引用一律走 DynamicResource，
+     晚压进来的那份才追得上（第 97 棒）。 -->
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- 颜色：品牌蓝唯一强调色，其余走灰阶；语义色取一代现有值（警示红/提醒橙/成功绿），不另发明 -->
+    <Color x:Key="BrandColor">#1D4ED8</Color>
+    <SolidColorBrush x:Key="BrandBrush" Color="#1D4ED8"/>
+    <SolidColorBrush x:Key="BrandWeakBrush" Color="#EEF3FE"/>
+    <SolidColorBrush x:Key="PageBgBrush" Color="#F7F8FA"/>
+    <SolidColorBrush x:Key="CardBrush" Color="#FFFFFF"/>
+    <SolidColorBrush x:Key="InkBrush" Color="#1F2933"/>
+    <SolidColorBrush x:Key="SubInkBrush" Color="#6B7280"/>
+    <SolidColorBrush x:Key="LineBrush" Color="#E5E9EF"/>
+    <SolidColorBrush x:Key="OkBrush" Color="#16A34A"/>
+    <SolidColorBrush x:Key="WarnBrush" Color="#B45309"/>
+    <SolidColorBrush x:Key="DangerBrush" Color="#B3261E"/>
+    <!-- 表格里那两处原本写死在样式里的浅色（列头、隔行）：第 97 棒起也走键，深色那份才有地方改 -->
+    <SolidColorBrush x:Key="GridHeaderBrush" Color="#F3F5F8"/>
+    <SolidColorBrush x:Key="GridAltRowBrush" Color="#FAFBFC"/>
+
+</ResourceDictionary>

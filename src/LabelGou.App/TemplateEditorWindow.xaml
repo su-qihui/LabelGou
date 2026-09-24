@@ -10,41 +10,57 @@
         WindowStartupLocation="CenterOwner"
         UseLayoutRounding="True"
         FontFamily="Microsoft YaHei"
-        Background="#F4F5F7">
+        Background="{DynamicResource PageBgBrush}">
     <Window.Resources>
-        <BooleanToVisibilityConverter x:Key="BoolVis" />
-        <local:InverseBooleanToVisibilityConverter x:Key="BoolVisInv"
-                                                   xmlns:local="clr-namespace:LabelGou.App.Mvvm" />
-        <!--
-            StepTitle / Hint 在本窗口再定一份：App.xaml 的资源只有 Application.Current 存在时才能解析，
-            而独立窗口必须能在没有 Application 的环境里被加载（单测就是这么加载它的）。
-        -->
-        <Style TargetType="TextBlock" x:Key="StepTitle">
-            <Setter Property="FontWeight" Value="Bold" />
-            <Setter Property="FontSize" Value="13" />
-            <Setter Property="Foreground" Value="#1A3A5C" />
-        </Style>
-        <Style TargetType="TextBlock" x:Key="Hint">
-            <Setter Property="Foreground" Value="#666666" />
-            <Setter Property="TextWrapping" Value="Wrap" />
-            <Setter Property="FontSize" Value="11" />
-        </Style>
-        <Style TargetType="TextBlock" x:Key="Caption">
-            <Setter Property="Foreground" Value="#555555" />
-            <Setter Property="VerticalAlignment" Value="Center" />
-            <Setter Property="Margin" Value="0,0,4,0" />
-        </Style>
-        <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
-            <Setter Property="MinWidth" Value="56" />
-        </Style>
+        <ResourceDictionary>
+            <!--  第 100 棒：编辑器穿新版那身**颜色**（他拍的是 A 案——独立窗，但界面要跟上简洁版）。
+                  只合并 SimplePalette.xaml 那一份，不合并 SimpleTokens.xaml：后者带一批隐式控件样式
+                  （TextBox/ComboBox 的 MinHeight=30、圆角模板…），这扇窗是 18 行密集属性表，吃了会把行高全撑开。
+                  深色由代码按"主人穿哪身"压进来（SimpleTheme.ApplyInto），所以这里全部走 DynamicResource。  -->
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="Themes/SimplePalette.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+            <BooleanToVisibilityConverter x:Key="BoolVis" />
+            <local:InverseBooleanToVisibilityConverter x:Key="BoolVisInv"
+                                                       xmlns:local="clr-namespace:LabelGou.App.Mvvm" />
+            <!--
+                StepTitle / Hint 在本窗口再定一份：App.xaml 的资源只有 Application.Current 存在时才能解析，
+                而独立窗口必须能在没有 Application 的环境里被加载（单测就是这么加载它的）。
+            -->
+            <!--  默认字色走 token：深色下这批标签/属性名不能是主题黑（本地值与下面三个具名样式仍优先）。  -->
+            <Style TargetType="TextBlock">
+                <Setter Property="Foreground" Value="{DynamicResource InkBrush}" />
+            </Style>
+            <Style TargetType="CheckBox">
+                <Setter Property="Foreground" Value="{DynamicResource InkBrush}" />
+            </Style>
+            <Style TargetType="TextBlock" x:Key="StepTitle">
+                <Setter Property="FontWeight" Value="Bold" />
+                <Setter Property="FontSize" Value="13" />
+                <Setter Property="Foreground" Value="{DynamicResource InkBrush}" />
+            </Style>
+            <Style TargetType="TextBlock" x:Key="Hint">
+                <Setter Property="Foreground" Value="{DynamicResource SubInkBrush}" />
+                <Setter Property="TextWrapping" Value="Wrap" />
+                <Setter Property="FontSize" Value="11" />
+            </Style>
+            <Style TargetType="TextBlock" x:Key="Caption">
+                <Setter Property="Foreground" Value="{DynamicResource SubInkBrush}" />
+                <Setter Property="VerticalAlignment" Value="Center" />
+                <Setter Property="Margin" Value="0,0,4,0" />
+            </Style>
+            <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                <Setter Property="MinWidth" Value="56" />
+            </Style>
+        </ResourceDictionary>
     </Window.Resources>
 
     <DockPanel>
         <!--  顶栏（第 54 棒照 CorelDRAW 的property docker 排法）：全是"数值与命令"——模板名、标签尺寸、对齐、吸附、撤销重做、保存。
               加元素的工具不在这里——它们在左侧竖栏（CDR 的工具箱在左边）。  -->
-        <Border DockPanel.Dock="Top" Background="White" BorderBrush="#DDDDDD" BorderThickness="0,0,0,1" Padding="10,8">
+        <Border DockPanel.Dock="Top" Background="{DynamicResource CardBrush}" BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,0,0,1" Padding="10,8">
             <WrapPanel>
-                <TextBlock Text="{Binding ScopeNote}" Style="{StaticResource Hint}" FontWeight="Bold" Foreground="#8A5A00"
+                <TextBlock Text="{Binding ScopeNote}" Style="{StaticResource Hint}" FontWeight="Bold" Foreground="{DynamicResource WarnBrush}"
                            Visibility="{Binding IsSnapshotMode, Converter={StaticResource BoolVis}}" Margin="0,0,12,0" />
                 <TextBlock Text="模板名：" Style="{StaticResource Caption}" />
                 <TextBox Width="170" Text="{Binding Name, UpdateSourceTrigger=LostFocus}" IsEnabled="{Binding SizeFieldsEditable}" />
@@ -114,22 +130,22 @@
         </Border>
 
         <!-- 状态栏 -->
-        <Border DockPanel.Dock="Bottom" Background="White" BorderBrush="#DDDDDD" BorderThickness="0,1,0,0" Padding="10,5">
+        <Border DockPanel.Dock="Bottom" Background="{DynamicResource CardBrush}" BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,1,0,0" Padding="10,5">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
-                <TextBlock Text="{Binding StatusText}" Foreground="#333333" TextTrimming="CharacterEllipsis" />
-                <TextBlock Grid.Column="1" Foreground="#C62828" ToolTip="有错误时保存会被拒绝">
+                <TextBlock Text="{Binding StatusText}" Foreground="{DynamicResource InkBrush}" TextTrimming="CharacterEllipsis" />
+                <TextBlock Grid.Column="1" Foreground="{DynamicResource OkBrush}" ToolTip="有错误时保存会被拒绝">
                     <TextBlock.Style>
                         <Style TargetType="TextBlock">
                             <Setter Property="Text" Value="校验通过，可以保存" />
-                            <Setter Property="Foreground" Value="#2E7D32" />
+                            <Setter Property="Foreground" Value="{DynamicResource OkBrush}" />
                             <Style.Triggers>
                                 <DataTrigger Binding="{Binding HasError}" Value="True">
                                     <Setter Property="Text" Value="有错误没解决，保存会被拒绝（看右侧清单）" />
-                                    <Setter Property="Foreground" Value="#C62828" />
+                                    <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
                                 </DataTrigger>
                             </Style.Triggers>
                         </Style>
@@ -175,7 +191,7 @@
                                       ToolTip="多边形工具（CorelDRAW 原文「绘制多边形」）：同一种拖法，落下来是正多边形，首点朝上；默认五边，边数在属性面板改。按住 Ctrl＝外接盒保持正方。Esc 取消。" />
                         <Button Content="条码" Command="{Binding AddBarcodeCommand}" Margin="2,2"
                                 ToolTip="放一只 Code128 占位条码（123456789）用来摆位置——尺寸照 CorelDRAW 条码向导那四格算，不是拉满一条。&#10;模板里已有条码时，这颗直接选中它来调整，不放第二只。" />
-                        <Separator Margin="2,6" Background="#DDDDDD" />
+                        <Separator Margin="2,6" Background="{DynamicResource LineBrush}" />
                         <Button Content="图片" Command="{Binding AddImageCommand}" Margin="2,2" ToolTip="加 Logo 或条码图，会复制到模板目录" />
                         <Button Content="粘贴" Command="{Binding PasteCommand}" Margin="2,2" ToolTip="把刚复制的东西放到标签上（Ctrl+V）：剪贴板里是图片就落成模板自带的一张 PNG（跟着模板走），是文字就加一条文本元素。&#10;截图工具、看图器、Word、Excel 里复制的东西都走这一路。" />
                         <Button Content="复制" Command="{Binding DuplicateCommand}" Margin="2,2" ToolTip="复制选中元素（偏移 2mm）" />
@@ -185,7 +201,7 @@
             </GroupBox>
 
             <!-- 中：画布 -->
-            <Border Grid.Column="1" Background="White" BorderBrush="#DDDDDD" BorderThickness="1" CornerRadius="2">
+            <Border Grid.Column="1" Background="{DynamicResource PageBgBrush}" BorderBrush="{DynamicResource LineBrush}" BorderThickness="1" CornerRadius="2">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="*" />
@@ -229,7 +245,7 @@
                                 <DataTemplate>
                                     <StackPanel>
                                         <TextBlock Text="{Binding Display}" TextTrimming="CharacterEllipsis" />
-                                        <TextBlock Text="{Binding GeometryText}" FontSize="10" Foreground="#888888" />
+                                        <TextBlock Text="{Binding GeometryText}" FontSize="10" Foreground="{DynamicResource SubInkBrush}" />
                                     </StackPanel>
                                 </DataTemplate>
                             </ListBox.ItemTemplate>

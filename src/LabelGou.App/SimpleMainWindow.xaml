@@ -31,7 +31,7 @@
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <!-- ===== 细顶栏：左上角深浅色钮 + 这批是谁的货 + 活件流四节点 + 几颗钮（打开 / 表格 / AI / 首页 / 打印 / 回专业版） ===== -->
+        <!-- ===== 细顶栏：左上角深浅色钮 + 这批是谁的货 + 活件流四节点 + 几颗钮（打开 / 表格 / AI / 首页 / 编辑模板 / 打印 / 回专业版） ===== -->
         <Border Grid.Row="0" Background="{DynamicResource CardBrush}" BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,0,0,1" Padding="16,10">
             <Grid>
                 <Grid.ColumnDefinitions>
@@ -83,6 +83,8 @@
                             ToolTip="开关右栏：AI 指令岛（同一块面板，收起来不丢会话）"/>
                     <Button x:Name="HomeBtn" Content="首页" Style="{StaticResource GhostButton}" Margin="0,0,8,0"
                             ToolTip="回首页：拖文件进来 + 模板海报墙（还没导数据时它本来就在中间）"/>
+                    <Button x:Name="EditTemplateBtn" Content="编辑模板…" Style="{StaticResource GhostButton}" Margin="0,0,8,0"
+                            ToolTip="打开模板编辑器改眼前这份模板（第 100 棒，A 案：仍是独立一扇窗，穿新版这身皮）。内置模板会先自动存一份副本再编，不动原版。"/>
                     <Button x:Name="PrintAskBtn" Content="打印整版" Style="{StaticResource PrimaryButton}"/>
                     <Button x:Name="BackToProBtn" Content="回专业版" Style="{StaticResource GhostButton}" Margin="8,0,0,0"
                             ToolTip="回到一代全功能界面：同一份数据、同一个 AI 会话搬回去，两边随时可切"/>

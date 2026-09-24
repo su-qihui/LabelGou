@@ -8,6 +8,8 @@ using System.Windows.Media;
 using LabelGou.App.Export;
 using LabelGou.App.Services;
 using LabelGou.App.ViewModels;
+using LabelGou.Core.Editing;
+using LabelGou.Core.Templates;
 using Xunit;
 
 namespace LabelGou.App.Tests;
@@ -202,6 +204,10 @@ public class SimpleShellTests
             Assert.True(shell.AutoFitPreview);             // 纸默认自动显示全（第 95 棒④：上一版没接这条线，纸被裁一半）
             Assert.Equal(WindowState.Maximized, shell.WindowState);   // 第 95 棒②：起来就是全屏
             Assert.True(shell.HomeVisible);                // 第 97 棒：还没导数据，中间那一屏就是首页
+            Assert.False(shell.CanEditTemplate);           // 没递入口时那颗「编辑模板…」是灰的，不是点了没反应
+            var opened = 0;
+            var wired = new SimpleMainWindow(vm, _ => opened++);
+            Assert.True(wired.CanEditTemplate);            // 第 100 棒（A 案）：专业版把那份唯一实现递给壳窗
             return 0;
         });
 
@@ -229,6 +235,27 @@ public class SimpleShellTests
 
     private static Color PageBackground(Window shell)
         => ((SolidColorBrush)shell.FindResource("PageBgBrush")!).Color;
+
+    /// <summary>
+    /// 第 100 棒（A 案）：模板编辑器穿新版那身**颜色**，但**不吃**壳窗那批隐式控件样式——
+    /// 它是 18 行密集属性表，壳窗那档 <c>TextBox MinHeight=30</c> 一进来行高就全撑开了。
+    /// <para>这条同时钉住拆字典后的真风险：编辑器仍必须能在<strong>没有 Application 的进程</strong>里加载
+    /// （它自己第 18 行那条注释的能力），并且拿到的就是简洁版那份 token 色。</para>
+    /// </summary>
+    [Fact]
+    public void TheEditorWearsTheNewPaletteWithoutEatingTheShellControlStyles()
+        => OnSta(() =>
+        {
+            var store = new TemplateStore(Path.Combine(Path.GetTempPath(),
+                "labelgou-skin-" + Guid.NewGuid().ToString("N")[..6]));
+            var editor = new TemplateEditorWindow(new TemplateEditorViewModel(TemplateFactory.Blank("换皮测试"), store));
+
+            Assert.Equal(Color.FromRgb(0x1F, 0x29, 0x33), ((SolidColorBrush)editor.FindResource("InkBrush")!).Color);
+            // 反向断言钉拓扑：窗级资源里不许有壳窗那批隐式控件样式（App.xaml 在不在都成立，不靠环境侥幸）
+            Assert.False(editor.Resources.Contains(typeof(TextBox)));
+            Assert.False(editor.Resources.Contains(typeof(System.Windows.Controls.DataGrid)));
+            return 0;
+        });
 
     /// <summary>
     /// 第 92 棒：岛内面板与抽屉表格的换装靠**窗级隐式样式**（字典只合并进壳窗，专业版拿不到）。

@@ -22,6 +22,9 @@ namespace LabelGou.App;
 public partial class SimpleMainWindow : Window
 {
     private readonly MainViewModel _vm;
+    // 「编辑模板…」这件事归专业版那份唯一的实现（第 100 棒，A 案）：壳窗只递一句"主人是我"，
+    // 守卫、内置模板存副本、保存后 ReloadTemplates 全在 MainWindow 那一处，不在这里抄第二份。
+    private readonly Action<Window>? _editTemplate;
     private bool _leftOpen;
     private bool _rightOpen = true;
     private double _leftWidth = SimpleShellFlow.LeftPaneDefaultWidth;
@@ -54,9 +57,10 @@ public partial class SimpleMainWindow : Window
     /// <summary>这扇窗是被「回专业版」关掉的，还是用户直接关窗：前者要把主窗掀回来，后者整个软件退出（用户 2026-09-21：关两次不算关完）。</summary>
     public bool SwitchingToPro { get; private set; }
 
-    public SimpleMainWindow(MainViewModel vm)
+    public SimpleMainWindow(MainViewModel vm, Action<Window>? editTemplate = null)
     {
         _vm = vm ?? throw new ArgumentNullException(nameof(vm));
+        _editTemplate = editTemplate;
         InitializeComponent();
         // 深浅色只认他点过的那一颗（第 98 棒：系统设置不再当默认，没记过就是浅色）。
         // 放在 InitializeComponent 之后才有效——样式里的颜色一律走 DynamicResource，晚压进去也追得上。
@@ -85,6 +89,8 @@ public partial class SimpleMainWindow : Window
             RefreshHome();
         };
         ThemeToggleBtn.Click += (_, _) => SetDarkMode(!_dark);
+        EditTemplateBtn.Click += (_, _) => _editTemplate?.Invoke(this);
+        EditTemplateBtn.IsEnabled = _editTemplate is not null;   // 没人接就别摆一颗点了没反应的钮（§五-80 那一族）
         LeftSplitThumb.DragStarted += (_, _) => _leftGrab = (LeftPane.Width, Mouse.GetPosition(Stage).X);
         LeftSplitThumb.DragDelta += (_, _) =>
         {
@@ -128,6 +134,9 @@ public partial class SimpleMainWindow : Window
     private void RefreshHome()
         => HomePanel.Visibility = SimpleShellFlow.HomeShown(_vm.HasData, _homeToggled)
             ? Visibility.Visible : Visibility.Collapsed;
+
+    /// <summary>顶栏那颗「编辑模板…」有没有人接（第 100 棒）。没人接就是颗假旋钮——判据读这一处。</summary>
+    public bool CanEditTemplate => _editTemplate is not null;
 
     /// <summary>首页可见性（判据与测试都读这一处）。</summary>
     public bool HomeVisible => HomePanel.Visibility == Visibility.Visible;

@@ -1,25 +1,14 @@
-<!-- 简洁版（新一代界面）的 design tokens：概念稿 specs\2026-09-20-新一代界面概念稿.html §四 的 WPF 落点。
-     只被 SimpleMainWindow 合并使用——专业版（App.xaml / MainWindow）一格不动，两代并存互不污染。
-     深色那份在 SimpleTokens.Dark.xaml，只放颜色；样式里的颜色一律走 DynamicResource，
-     所以壳窗换一份调色板就整窗换皮，不必把下面这些样式抄第二份（第 97 棒）。 -->
+<!-- 简洁版（新一代界面）的样式：概念稿 specs\2026-09-20-新一代界面概念稿.html §四 的 WPF 落点。
+     颜色住在 SimplePalette.xaml（这里合并它），深色对应值在 SimpleTokens.Dark.xaml，只放颜色；
+     样式里的颜色一律走 DynamicResource，所以换一份调色板就整窗换皮，不必把下面这些样式抄第二份（第 97 棒）。
+     只被 SimpleMainWindow 合并使用——专业版（App.xaml / MainWindow）一格不动，两代并存互不污染；
+     模板编辑器那种"要颜色但不要这批隐式样式"的窗，只合并调色板那一份（第 100 棒）。 -->
 <ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
-    <!-- 颜色：品牌蓝唯一强调色，其余走灰阶；语义色取一代现有值（警示红/提醒橙/成功绿），不另发明 -->
-    <Color x:Key="BrandColor">#1D4ED8</Color>
-    <SolidColorBrush x:Key="BrandBrush" Color="#1D4ED8"/>
-    <SolidColorBrush x:Key="BrandWeakBrush" Color="#EEF3FE"/>
-    <SolidColorBrush x:Key="PageBgBrush" Color="#F7F8FA"/>
-    <SolidColorBrush x:Key="CardBrush" Color="#FFFFFF"/>
-    <SolidColorBrush x:Key="InkBrush" Color="#1F2933"/>
-    <SolidColorBrush x:Key="SubInkBrush" Color="#6B7280"/>
-    <SolidColorBrush x:Key="LineBrush" Color="#E5E9EF"/>
-    <SolidColorBrush x:Key="OkBrush" Color="#16A34A"/>
-    <SolidColorBrush x:Key="WarnBrush" Color="#B45309"/>
-    <SolidColorBrush x:Key="DangerBrush" Color="#B3261E"/>
-    <!-- 表格里那两处原本写死在样式里的浅色（列头、隔行）：第 97 棒起也走键，深色那份才有地方改 -->
-    <SolidColorBrush x:Key="GridHeaderBrush" Color="#F3F5F8"/>
-    <SolidColorBrush x:Key="GridAltRowBrush" Color="#FAFBFC"/>
+    <ResourceDictionary.MergedDictionaries>
+        <ResourceDictionary Source="SimplePalette.xaml"/>
+    </ResourceDictionary.MergedDictionaries>
 
     <!-- 两级阴影：贴面一层、浮层一层。冻结的 Effect 实例不能跨线程共用，所以做成 Freezable 资源没问题——
          WPF 资源字典里的 Effect 会被多控件共用，跨 STA 线程的坑（§五-127）在这里的解法是：
