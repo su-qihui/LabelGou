@@ -285,9 +285,44 @@ public sealed class ImpositionViewModel : ObservableObject
         return SheetFollowNote;
     }
 
+    /// <summary>
+    /// 表里写着怎么开纸，就照它改纸规（第 101 棒，用户 2026-09-24：「②调整为看到就修改」）。
+    /// <para>调用时机在「纸规跟着模板走」**之后**：那一刻软件刚按单枚尺寸推断完一档，而表里那句
+    /// 「一开四」是厂方对这一批货的明确说法，比尺寸推断更近，所以它覆盖前者。</para>
+    /// <para><strong>但它不写进模板↔纸规那份绑定</strong>（走 <see cref="_applyingTemplateSheet"/> 那道旗）：
+    /// 那份记录是他自己为这份模板挑过的长期选择，一批表里的一句指令不该去改它。</para>
+    /// </summary>
+    public string ApplySheetFromTable(LabelGou.Core.Data.TabularData data)
+    {
+        var found = Services.SheetSpecHints.DetectInTable(data);
+        if (found is null) return string.Empty;
+
+        if (!found.MatchesSpec)
+        {
+            // 认到了写法却没有那一档：不猜一张纸出来，只把这句话回显给他（他要就自己去 ④ 步新建）。
+            SheetFollowNote = $"表里那句「{found.Evidence}」写的是尺寸，可软件没有这一档纸规——纸规没动，" +
+                              "要就在 ④ 步自己挑一张或新建一档。";
+            return SheetFollowNote;
+        }
+
+        var hit = SheetOptions.FirstOrDefault(o => o.Spec.Id == found.SpecId);
+        if (hit is null || ReferenceEquals(hit, SelectedSheetOption)) return string.Empty;
+
+        _applyingTemplateSheet = true;
+        try
+        {
+            SelectedSheetOption = hit;
+        }
+        finally
+        {
+            _applyingTemplateSheet = false;
+        }
+        SheetFollowNote = $"表里写着「{found.Evidence}」，纸规已照它改成「{hit.Spec.Name}」；不对就在 ④ 步换回来。";
+        return SheetFollowNote;
+    }
+
     /// <summary>与 MainViewModel.TemplateSheetHint 同一口径：0.6 mm 以内就是同一张刀模。</summary>
     private static bool Nearly(double a, double b) => Math.Abs(a - b) < 0.6;
-
     /// <summary>这份模板绑过的那张纸（纸规被删了、或没记过 → null，退回下一条判据）。</summary>
     private SheetOption? BoundSheetOption(string templateId)
     {

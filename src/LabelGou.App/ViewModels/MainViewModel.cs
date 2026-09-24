@@ -2213,6 +2213,11 @@ public sealed partial class MainViewModel : ObservableObject, ILabelSource
             RebuildFieldRows();
             ApplyMapping();
             PickTemplateFittingData();
+            // 第 101 棒：表里写着怎么开纸，就照它改纸规（用户 2026-09-24「②调整为看到就修改」）。
+            // 排在选模板之后——那一刻纸规刚按单枚尺寸推断完，而表里那句厂方指令更贴近这一批货，覆盖它；
+            // 改成了什么走 ④ 步那行 SheetFollowNote 回显（不静默），日志再落一句。
+            var sheetHint = Sheet.ApplySheetFromTable(data);
+            if (sheetHint.Length > 0) AppLog.Info(sheetHint);
             AdvanceAfterImport();
             if (_mode == RunMode.Ai && newTable)
             {
