@@ -71,6 +71,35 @@ public class SheetSpecHintTests
         Assert.Equal(BuiltInSheetSpecs.IdCut4_280x200, SheetSpecHints.DetectInTable(noteAboveHeader)!.SpecId);
     }
 
+    /// <summary>
+    /// 厂里真给的表形状（仓库里那份按真件逐列复刻的样例 CSV，D 列列头就写着「一开四」）。
+    /// <para>这一条是这一棒唯一"拿真数据说话"的证据：其余 <see cref="SheetSpecHintTests"/> 的形状
+    /// 都是照用户描述造的。真 <c>.xlsx</c> 在仓库外（14MB 不进仓），2026-09-24 用只读脚本扫过
+    /// <c>labelgou-CL</c> 那 6 家，写法分别是「一开四」×3、「张数/一开二」×1、「开二」×1（数据区）、
+    /// 以及 TOP 那份<strong>一个字都没写</strong>——全在这张词表的覆盖内。</para>
+    /// </summary>
+    [Fact]
+    public void 真厂商样例的列头那格认得出开法()
+    {
+        var data = TableImporter.Import(LocateSample("样例-金沐一开四.csv"));
+
+        var found = SheetSpecHints.DetectInTable(data)!;
+        Assert.Equal(BuiltInSheetSpecs.IdCut4_280x200, found.SpecId);
+        Assert.Equal("一开四", found.Evidence);
+    }
+
+    private static string LocateSample(string fileName)
+    {
+        var dir = new System.IO.DirectoryInfo(System.AppContext.BaseDirectory);
+        while (dir is not null)
+        {
+            var candidate = System.IO.Path.Combine(dir.FullName, "samples", fileName);
+            if (System.IO.File.Exists(candidate)) return candidate;
+            dir = dir.Parent;
+        }
+        throw new InvalidOperationException($"找不到样例文件 {fileName}（样例只放仓库里那份复刻 CSV）");
+    }
+
     private static TabularData Table(string[] headers, IReadOnlyList<IReadOnlyList<string>> preamble,
         IReadOnlyList<IReadOnlyList<string>> rows)
         => new("样例.xlsx", "Sheet1", headers, rows, 0, preamble: preamble);
