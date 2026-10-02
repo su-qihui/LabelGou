@@ -44,6 +44,12 @@ public sealed class PrintRequest
     /// <summary>整版超出可打印区时，用户已在确认框里点过「照样打」：按 1:1 送出，不缩放、不再拦。</summary>
     public bool PrintAnywayAtOneToOne { get; init; }
 
+    /// <summary>
+    /// 这一批是<strong>样张</strong>（一张表都没导，内容是示意的，第 104 棒）。
+    /// 它只改一件事：送出去的打印任务名字带上"样张"——打印机面板与队列里留下的那条记录要能一眼认出不是真货。
+    /// </summary>
+    public bool Sample { get; init; }
+
     public void CollectIssues(IList<string> issues)
     {
         if (PageIndexes is null || PageIndexes.Count == 0) issues.Add("没有选中任何一页可打印。");
@@ -310,9 +316,10 @@ public static class PrintService
                     token.ThrowIfCancellationRequested();
                     var visual = PageRasterizer.BuildPrintVisual(
                         request.Plan, index + 1, request.Source.AsProvider(), request.IncludeTrimMarks, scale);
-                    var label = request.Copies > 1
-                        ? $"LabelGou 整版 第 {index + 1} 页（第 {copy}/{request.Copies} 份）"
-                        : $"LabelGou 整版 第 {index + 1} 页";
+                    var label = (request.Sample ? "LabelGou 样张 " : "LabelGou ")
+                        + (request.Copies > 1
+                            ? $"整版 第 {index + 1} 页（第 {copy}/{request.Copies} 份）"
+                            : $"整版 第 {index + 1} 页");
                     _dialog.PrintVisual(visual, label);
                     done++;
                     progress?.Report($"已送打 {done}/{total} 页…");

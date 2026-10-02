@@ -673,6 +673,8 @@ public sealed class ExportViewModel : ObservableObject
             ScaleToFitPrintableArea = ScaleToFitPrintableArea,
             ConfirmBeforePrint = ConfirmBeforePrint,
             PrintAnywayAtOneToOne = printAnyway,
+            // 第 104 棒：没导表打的是样张，任务名要带上这两个字（打印机面板与队列里留下的记录得能认出来）
+            Sample = _owner.Sheet.IsSampleSheet,
         };
 
         if (SelectedPrinter is { LikelyPromptsForFile: true } && !ConfirmBeforePrint)

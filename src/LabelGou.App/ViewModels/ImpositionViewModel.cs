@@ -792,7 +792,9 @@ public sealed class ImpositionViewModel : ObservableObject
 
     public ObservableCollection<string> NumberingIssues { get; } = new();
 
-    public string PlanText => Plan is null ? "尚未生成整版方案" : Plan.Describe();
+    /// <summary>④ 步与出纸确认顶上那一行。样张模式必须打头写明「样张」（第 104 棒的红线）。</summary>
+    public string PlanText => Plan is null ? "尚未生成整版方案"
+        : IsSampleSheet ? "【样张】" + Plan.Describe() : Plan.Describe();
 
     public string PageText => Plan is null || Plan.PageCount == 0
         ? "第 0 / 0 页"
@@ -832,6 +834,21 @@ public sealed class ImpositionViewModel : ObservableObject
     }
 
     /// <summary>只重算拼版（纸规/模板变了，但标签数没变时用）。</summary>
+    /// <summary>
+    /// 这张纸要排几枚（第 104 棒「无表格也能改、改完能打」）：有真标签照真标签；
+    /// <strong>一张表都没导但有模板</strong>时给 1 枚样张 —— 于是它走的是同一条拼版与出纸路，不另开第二条。
+    /// 没模板仍给 0：那种情况连纸都无从画，硬塞一枚就是凭空造版。
+    /// </summary>
+    public static int LabelsIntoPlan(int labelCount, bool hasTemplate)
+        => labelCount > 0 ? labelCount : hasTemplate ? 1 : 0;
+
+    /// <summary>
+    /// 现在这一版是不是<strong>样张</strong>（没导表、只有示意样例那一枚）。
+    /// <para>这条标记是这一棒的红线：屏幕上、④ 步那行提示、送打任务名、日志四处都要带着它——
+    /// 打出去的纸绝不能长得像"这批货的纸"（三道闸里"不猜"与"可退"就靠这个撑着）。</para>
+    /// </summary>
+    public bool IsSampleSheet { get; private set; }
+
     public void RebuildPlan()
     {
         var spec = Working;
@@ -839,6 +856,7 @@ public sealed class ImpositionViewModel : ObservableObject
         if (spec is null || template is null)
         {
             Plan = null;
+            IsSampleSheet = false;
             SheetIssues.Clear();
             if (template is null) SheetIssues.Add("还没选模板，先回第 ③ 步。");
             return;
@@ -846,9 +864,13 @@ public sealed class ImpositionViewModel : ObservableObject
 
         // 「一页只排同一枚」开不开只看纸规那个开关：开着就是一枚唛头独占一页、页内铺满全同份数，
         // 所以不再需要把分组键递给引擎（上一棒递的 SourceRowIndex 已无意义，那正是用户拿红框否掉的旧语义）。
-        var plan = ImpositionEngine.Build(spec, template.WidthMm, template.HeightMm, _labels.Count);
+        var labels = LabelsIntoPlan(_labels.Count, hasTemplate: true);
+        IsSampleSheet = labels > 0 && _labels.Count == 0;   // 没一张表、只有示意样例那一枚
+        var plan = ImpositionEngine.Build(spec, template.WidthMm, template.HeightMm, labels);
         Plan = plan;
         SheetIssues.Clear();
+        if (IsSampleSheet)
+            SheetIssues.Add("⚠ 现在没有表格数据：这一版是【样张】（内容是示意的，不是这批货）。导表进来就自动换成真的。");
         foreach (var issue in plan.Issues)
         {
             SheetIssues.Add($"{Icon(issue.Severity)} {issue.Message}");
@@ -860,6 +882,7 @@ public sealed class ImpositionViewModel : ObservableObject
         }
         PageIndex = Math.Min(PageIndex, Math.Max(1, plan.PageCount));
         Raise(nameof(PageText));
+        Raise(nameof(PlanText));
         // Build 会就地改写 Working 的纸宽/纸高（FollowsLabel 的那次展开），而 SheetSpec 不带变更通知，
         // 绑定不会自己回读：不 Raise 一下，界面上还留着用户刚填的旧数，看着就是「改了没反应」。
         Raise(nameof(Working));

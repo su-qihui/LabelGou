@@ -297,7 +297,15 @@ public sealed class PageContentSource
     /// </summary>
     public LabelLayout? BuildAt(int labelIndex, InkPlate plate = InkPlate.None)
     {
-        if (labelIndex < 1 || labelIndex > _records.Count) return null;
+        if (labelIndex < 1 || labelIndex > _records.Count)
+        {
+            // 第 104 棒「无表格也能打样张」：一张表都没导时，第 1 枚用<strong>示意样例</strong>顶上，
+            // 于是预览、出纸确认与五出口仍是同一条画法（屏幕上一支、纸上一支就是 §五-149 那一族）。
+            // 只认第 1 枚：样张模式就一枚，多出来的格子该是 null（让引擎自己报"放不下"）。
+            if (_records.Count > 0 || labelIndex != 1) return null;
+            return LayoutEngine.Build(_template, SampleRecords.StandardSample(),
+                new LayoutContext(1, 1, SourceName, TextCase: _textCase, Plate: plate));
+        }
         var record = _records[labelIndex - 1];
         var context = new LayoutContext(labelIndex, Math.Max(1, _records.Count), SourceName,
             TextCase: _textCase, Plate: plate);
