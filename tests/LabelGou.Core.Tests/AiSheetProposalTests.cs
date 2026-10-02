@@ -310,7 +310,7 @@ public class AiSheetProposalTests
         // 行号口径（与人看 Excel 一致）与硬边界照旧写死。
         Assert.Contains("原表行号、从 1 起", text, StringComparison.Ordinal);
         Assert.Contains("1~13", text, StringComparison.Ordinal);
-        Assert.Contains("只输出一个 JSON 对象", AiSheetProposalPrompt.SystemText, StringComparison.Ordinal);
+        Assert.Contains("只输出一个 JSON 对象", AiSheetProposalPrompt.DefaultSystem, StringComparison.Ordinal);
 
         // 第 40 棒的核心：这一步**不许给排版**（用户的红线「这层先不要对预览纸张进行调整」）。
         Assert.Contains("这一步不要给排版方案", text, StringComparison.Ordinal);

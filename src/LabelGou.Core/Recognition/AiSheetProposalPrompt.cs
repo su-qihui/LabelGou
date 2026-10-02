@@ -17,15 +17,103 @@ namespace LabelGou.Core.Recognition;
 /// <see cref="BuildLayout"/>（带着答复专管排版）。</para>
 /// <para><strong>光靠提示词拦不住</strong>：<see cref="AiSheetProposal.Parse"/> 在读表阶段会直接把
 /// rows 与纸规字段丢掉，模型不听话也落不了地。这里是交代分工，那里是执行分工。</para>
+/// <para><strong>第 103 棒：八段"交代分工"的话可以被他自己在界面上改</strong>（用户「可以自由调整AI提示语开放窗口」）。
+/// 所以下面每段固定话都留成 <c>Default*</c> 常量（= 出厂版），发出去的那句一律走
+/// <see cref="PromptTexts.Get"/>；<strong>动态数据（画像、行数、字段清单、他拍过的板）不在可改清单里</strong>
+/// ——那些是事实不是话，让人手改事实比不改还危险。</para>
 /// </summary>
 public static class AiSheetProposalPrompt
 {
-    /// <summary>系统那一句：只要方案，而且要说大白话（看的人是不懂技术的打印店老板）。</summary>
-    public const string SystemText =
+    // ───────────────────────── 出厂版那八段（登记在 PromptCatalog，界面改的就是它们） ─────────────────────────
+
+    /// <summary>系统那句：只要方案，而且要说大白话（看的人是不懂技术的打印店老板）。</summary>
+    public const string DefaultSystem =
         "你是外贸纸箱唛头排版的现场工程师。你看得到整张表（含列名以上的批注、右侧贴的效果图）。" +
         "只输出一个 JSON 对象，不要解释文字、不要 Markdown 围栏。没把握的字段就省略，不要编。" +
         "读你回答的人是不懂电脑的打印店老板：questions 里的问题与 reason 一律用中文大白话，" +
         "不要出现 rows、JSON、字段英文名、毫米坐标这类术语，也不要用技术报告的句式（写成「最后一行像合计，建议不印」而不是「第 N 行为 summary row」）。";
+
+    /// <summary>第一步的任务：只读表、只指出风险，<strong>明确禁止给排版方案</strong>。</summary>
+    public const string DefaultReadTask =
+        "这一步的任务：**只读这张表、只指出风险**。给「每一列是什么字段、这张表该怎么切」，" +
+        "再把所有拿不准、要老板拍一下的事列成问题。\n" +
+        "**这一步不要给排版方案**：不要 rows（标签上印哪几行）、不要纸规名、不要纸张毫米数、" +
+        "不要每页几枚。老板还没拍板，你现在给了软件也不会用——排版本来就是下一步的事，" +
+        "下一步会带着他的答复单独问你。\n\n";
+
+    /// <summary>第一步里"每一列是什么字段"那段：按真实内容判，拿不准宁可少报。</summary>
+    public const string DefaultReadBind =
+        "\n最重要的一件事：**指出每一列是什么字段**（mappings）。\n" +
+        "  列名常常写成「货号 ITEM NO:」「毛重G.W.(kg)」这种中英混排，也可能是纯英文、缩写，或者根本不着调——\n" +
+        "  要按列里的**真实内容**判断它是什么，别只看列名。\n" +
+        "  field 只能从下面「字段清单」里选。拿不准的列**不要硬塞**：软件宁可少一个绑定，也不要错一个——\n" +
+        "  错一列就是数错张数、印错货，老板要按这一列出纸。\n" +
+        "  拿不准就列成问题问他（下面白名单里有这一类），别自己拍。\n";
+
+    /// <summary>
+    /// 第一步的 <c>questions</c> 白名单与问的规矩（第 40 棒：以前它自由发挥，所以「乱提问题」，
+    /// 而软件只接得住几个动作，其余被静默丢掉）。<strong>七个 action 名是软件行为的地基</strong>，
+    /// <see cref="PromptCatalog.Validate"/> 就是按这几个词守门。
+    /// </summary>
+    public const string DefaultReadAsk =
+        "\n**只许问下面这几类**（action 照抄，写别的软件接不住，那条问题会被丢掉）：\n" +
+        "  1. `itemno-tail`——货号里有 `*` 或别的怪尾巴：后面那截要不要印上纸？\n" +
+        "     { \"text\": \"货号里 * 号及后面那一截要不要印\", \"no\": \"不印\", \"yes\": \"原样印\", \"action\": \"itemno-tail\" }\n" +
+        "  2. `qty-column`——出几张纸按哪一列数。表里常常同时有「每箱装几个」与「这票共几箱」两列，\n" +
+        "     数错就是纸张数错。**认准了就不必问**；两列都像、或一列里混了两种数，才问。\n" +
+        "     { \"text\": \"出几张纸是按 B 列（这票共几箱）数吗\", \"no\": \"不是这列\", \"yes\": \"是\", \"action\": \"qty-column\", \"value\": \"B\" }\n" +
+        "  3. `row-keep`——表尾像「合计/TOTAL/小计」的行，或夹在货中间的批注行：要不要当货印？必须带 row。\n" +
+        "     { \"text\": \"最后一行是合计 155，要不要印\", \"no\": \"不印\", \"yes\": \"要印\", \"action\": \"row-keep\", \"row\": 34 }\n" +
+        "  4. `template-source`——标签上的字抄在表里哪一块。找到了一块就不用问；\n" +
+        "     一块都找不到、或者有两块都像，才问。\n" +
+        "     { \"text\": \"表里没找到抄标签的那一块，标签上印什么字你说了算吗\", \"no\": \"我另外给样张\", \"yes\": \"照 F 列那几行\", \"action\": \"template-source\", \"value\": \"F列\" }\n" +
+        "  5. `header-row`——这张表有没有列名行、列名在第几行。第一行就是货的表不少见，判错了整张表少印或多印一张。\n" +
+        "     { \"text\": \"第一行是列名还是第一票货\", \"no\": \"第一行就是货\", \"yes\": \"第一行是列名\", \"action\": \"header-row\" }\n" +
+        "  6. `fixed-value`——标签上某一行是每张都印的死字（如 MADE IN CHINA、J.P），还是跟着货变的那一列的值？\n" +
+        "     { \"text\": \"标签上 J.P 这两个字是每张都印，还是跟着货变\", \"no\": \"跟着货变\", \"yes\": \"每张都印\", \"action\": \"fixed-value\" }\n" +
+        "  7. `column-meaning`——某一列里混了几样东西、列名与内容对不上、或者该有的列没有。\n" +
+        "     { \"text\": \"C 列上半截是箱数下半截是重量，这一列到底按什么算\", \"no\": \"按重量\", \"yes\": \"按箱数\", \"action\": \"column-meaning\" }\n" +
+        "\n问的规矩（第 34 棒定过、这里再说一遍）：\n" +
+        "  · **拿不准就必须问**，别自己拍——尤其上面 1、2、3、5 这四类，判错了是印错货、数错纸。\n" +
+        "  · **确定的事不许拿来问**：你已经在 facts 里说清了的，不要再变成一条问题去烦老板。\n" +
+        "  · 最多 5 条，一条只问一件事，❌/✅ 两个答案都要写成人话（老板扫一眼就知道点哪个）。\n" +
+        "  · 不属于上面七类的事：写进 warnings 或 facts，不要编一个 action。\n" +
+        "\n**哪怕你什么都不改，也必须回 facts**（你从这张表看出来的判断，一条一件，最多 5 条）。" +
+        "表里有毛病（某列混了几样东西、缺列、列名对不上、数字列里有文字）就写成 questions 让老板拍板——" +
+        "**只写在思考过程里等于没给**：软件只把你最终回的那段 JSON 摆给老板看。\n";
+
+    /// <summary>第一步的说话要求（末尾那句"一律用中文"也在里面）。</summary>
+    public const string DefaultReadTone =
+        "说话要求：用中文大白话；不要出现 rows、JSON、字段英文名这些词。" +
+        "facts 一条只说一件事——**不要把几件事挤进一句话**（老板是一行一行扫的，挤成一句他就读不懂了）。\n" +
+        "一律用中文。";
+
+    /// <summary>第二步不提问：排版看得见也退得回，疑点走 warnings。</summary>
+    public const string DefaultLayoutNoAsk =
+        "**这一步不要提问**（不要 questions）：排版是直接落进预览的，老板看得见、也能一键撤回，" +
+        "再拿「要不要重排」「要不要换纸」去问他是白问一遍——他心里有数就会点撤回，或者说一句哪儿不对让你只改这一步。" +
+        "真有疑点（哪一行看不清、没有参照只能猜、这张纸摆不下这么多枚）写进 warnings，" +
+        "软件会把它们摆在落地结果旁边让他核。\n";
+
+    /// <summary>
+    /// 第 39 棒定案：字号/粗细/居中<strong>不问模型</strong>，软件自己去量模板那一列（<c>RowFormatEvidence</c>）。
+    /// 这段就是那句分工交代——把它改软了，模型又开始口算字号，就是用户圈的「AI 排版效果差，差在字体大小」。
+    /// </summary>
+    public const string DefaultLayoutFont =
+        "字多大、要不要粗、居不居中：**你不用管，软件自己会算**——" +
+        "它会去量上面既成事实里说的那一列（模板抄在哪一块）里那几行字的真实字号、粗细、居中，照量到的排，比你填的数准。" +
+        "你要做的只有一件：**认出标签上印哪几行、什么顺序、每行读哪一列**。" +
+        "rows 里的 sizePt / weight / bold / align 写了也不扔（软件量不到时拿它兜底），但别再为它们费心。\n";
+
+    /// <summary>第二步的说话要求。</summary>
+    public const string DefaultLayoutTone =
+        "说话要求：用中文大白话；不要出现 rows、JSON、字段英文名、毫米坐标这些词。一律用中文。";
+
+    /// <summary>系统那句现在实际用的那一版（默认或他改过的）。</summary>
+    public static string SystemText(PromptTexts? prompts = null)
+        => (prompts ?? PromptTexts.Default).Get(PromptKeys.System);
+
+    // ───────────────────────── 第一步：读表理解 ─────────────────────────
 
     /// <summary>
     /// <strong>第一步：读表理解</strong>。只要「每一列是什么、这张表该怎么切、有哪些风险要老板拍板」。
@@ -38,13 +126,16 @@ public static class AiSheetProposalPrompt
     /// <param name="detectedHeaderRow">软件目前猜的表头行（1 起），0 表示还没切过。</param>
     /// <param name="imageCount">这条消息随附几张图（0 时要它老实说没参照，不许凭列名编设计）。</param>
     /// <param name="decisions">老板之前已经拍过板的决定（重跑这一步时带上，免得再问一遍）。</param>
+    /// <param name="prompts">那几段可改的话现在各是哪一版（null = 全用出厂版）。</param>
     public static string BuildRead(
         string portrait,
         int rawRowCount,
         int detectedHeaderRow,
         int imageCount,
-        IReadOnlyList<string>? decisions = null)
+        IReadOnlyList<string>? decisions = null,
+        PromptTexts? prompts = null)
     {
+        var p = prompts ?? PromptTexts.Default;
         var sb = new StringBuilder();
         if (decisions is { Count: > 0 })
         {
@@ -53,11 +144,7 @@ public static class AiSheetProposalPrompt
             sb.Append('\n');
         }
 
-        sb.Append("这一步的任务：**只读这张表、只指出风险**。给「每一列是什么字段、这张表该怎么切」，")
-          .Append("再把所有拿不准、要老板拍一下的事列成问题。\n");
-        sb.Append("**这一步不要给排版方案**：不要 rows（标签上印哪几行）、不要纸规名、不要纸张毫米数、")
-          .Append("不要每页几枚。老板还没拍板，你现在给了软件也不会用——排版本来就是下一步的事，")
-          .Append("下一步会带着他的答复单独问你。\n\n");
+        sb.Append(p.Get(PromptKeys.ReadTask));
 
         sb.Append(portrait).Append('\n');
         sb.Append("\n原表一共 ").Append(rawRowCount).Append(" 行；软件目前把列名猜在第 ")
@@ -70,14 +157,7 @@ public static class AiSheetProposalPrompt
               + "有这一块 → 说清它抄在哪一列（templateSource）就够了，**不要在这一步把 rows 排出来**。\n"
               + "表里确实没有这一块、也没附图 → 就老实说没参照，并把这件事列成一条问题问老板。\n");
 
-        // 第 30 棒：AI 模式下"由 AI 绑定"是**主动作**（用户的原话：导入后不该先绑定，先让 AI 理解再绑），
-        // 所以这一段要写得硬：按列里的真实内容判，拿不准宁可少报。
-        sb.Append("\n最重要的一件事：**指出每一列是什么字段**（mappings）。\n")
-          .Append("  列名常常写成「货号 ITEM NO:」「毛重G.W.(kg)」这种中英混排，也可能是纯英文、缩写，或者根本不着调——\n")
-          .Append("  要按列里的**真实内容**判断它是什么，别只看列名。\n")
-          .Append("  field 只能从下面「字段清单」里选。拿不准的列**不要硬塞**：软件宁可少一个绑定，也不要错一个——\n")
-          .Append("  错一列就是数错张数、印错货，老板要按这一列出纸。\n")
-          .Append("  拿不准就列成问题问他（下面白名单里有这一类），别自己拍。\n");
+        sb.Append(p.Get(PromptKeys.ReadBind));
 
         sb.Append("\n只回这样一个 JSON 对象（字段可省略，行号一律用**原表行号、从 1 起**，与人看 Excel 的口径一致）：\n");
         sb.Append("{\n");
@@ -99,48 +179,18 @@ public static class AiSheetProposalPrompt
         sb.Append("  \"reason\": \"为什么这么判（可省：facts 已经说清了就别再说一遍）\"\n");
         sb.Append("}\n");
 
-        // ── 第 40 棒：questions 白名单。以前是模型自由发挥，所以它爱问什么问什么（用户评语「乱提问题」）；
-        // 更坏的是软件只接得住四个动作，它问的其余那些会被静默丢掉——他想问的「x列是纸张张数列吗」
-        // 那时根本没有对应动作，问了也白问。现在七类都有动作，也都给了「什么时候该问」的判据。
-        sb.Append("\n**只许问下面这几类**（action 照抄，写别的软件接不住，那条问题会被丢掉）：\n");
-        sb.Append("  1. `itemno-tail`——货号里有 `*` 或别的怪尾巴：后面那截要不要印上纸？\n");
-        sb.Append("     { \"text\": \"货号里 * 号及后面那一截要不要印\", \"no\": \"不印\", \"yes\": \"原样印\", \"action\": \"itemno-tail\" }\n");
-        sb.Append("  2. `qty-column`——出几张纸按哪一列数。表里常常同时有「每箱装几个」与「这票共几箱」两列，\n");
-        sb.Append("     数错就是纸张数错。**认准了就不必问**；两列都像、或一列里混了两种数，才问。\n");
-        sb.Append("     { \"text\": \"出几张纸是按 B 列（这票共几箱）数吗\", \"no\": \"不是这列\", \"yes\": \"是\", \"action\": \"qty-column\", \"value\": \"B\" }\n");
-        sb.Append("  3. `row-keep`——表尾像「合计/TOTAL/小计」的行，或夹在货中间的批注行：要不要当货印？必须带 row。\n");
-        sb.Append("     { \"text\": \"最后一行是合计 155，要不要印\", \"no\": \"不印\", \"yes\": \"要印\", \"action\": \"row-keep\", \"row\": 34 }\n");
-        sb.Append("  4. `template-source`——标签上的字抄在表里哪一块。找到了一块就不用问；\n");
-        sb.Append("     一块都找不到、或者有两块都像，才问。\n");
-        sb.Append("     { \"text\": \"表里没找到抄标签的那一块，标签上印什么字你说了算吗\", \"no\": \"我另外给样张\", \"yes\": \"照 F 列那几行\", \"action\": \"template-source\", \"value\": \"F列\" }\n");
-        sb.Append("  5. `header-row`——这张表有没有列名行、列名在第几行。第一行就是货的表不少见，判错了整张表少印或多印一张。\n");
-        sb.Append("     { \"text\": \"第一行是列名还是第一票货\", \"no\": \"第一行就是货\", \"yes\": \"第一行是列名\", \"action\": \"header-row\" }\n");
-        sb.Append("  6. `fixed-value`——标签上某一行是每张都印的死字（如 MADE IN CHINA、J.P），还是跟着货变的那一列的值？\n");
-        sb.Append("     { \"text\": \"标签上 J.P 这两个字是每张都印，还是跟着货变\", \"no\": \"跟着货变\", \"yes\": \"每张都印\", \"action\": \"fixed-value\" }\n");
-        sb.Append("  7. `column-meaning`——某一列里混了几样东西、列名与内容对不上、或者该有的列没有。\n");
-        sb.Append("     { \"text\": \"C 列上半截是箱数下半截是重量，这一列到底按什么算\", \"no\": \"按重量\", \"yes\": \"按箱数\", \"action\": \"column-meaning\" }\n");
-        sb.Append("\n问的规矩（第 34 棒定过、这里再说一遍）：\n")
-          .Append("  · **拿不准就必须问**，别自己拍——尤其上面 1、2、3、5 这四类，判错了是印错货、数错纸。\n")
-          .Append("  · **确定的事不许拿来问**：你已经在 facts 里说清了的，不要再变成一条问题去烦老板。\n")
-          .Append("  · 最多 5 条，一条只问一件事，❌/✅ 两个答案都要写成人话（老板扫一眼就知道点哪个）。\n")
-          .Append("  · 不属于上面七类的事：写进 warnings 或 facts，不要编一个 action。\n");
-
-        // 第 34 棒：用户 2026-09-10 的抱怨是「思考完回答啥也没做」——后台它想了一大段（表格里某一列混了几样东西），
-        // 但最终回的那段 JSON 里 facts 与 questions 都是空的，软件就没有任何东西摆给他看。
-        sb.Append("\n**哪怕你什么都不改，也必须回 facts**（你从这张表看出来的判断，一条一件，最多 5 条）。")
-          .Append("表里有毛病（某列混了几样东西、缺列、列名对不上、数字列里有文字）就写成 questions 让老板拍板——")
-          .Append("**只写在思考过程里等于没给**：软件只把你最终回的那段 JSON 摆给老板看。\n");
+        sb.Append(p.Get(PromptKeys.ReadAsk));
 
         sb.Append("\n字段清单（mappings 的 field 只能用这些）：\n  ");
         sb.Append(string.Join(" ", MarkFieldCatalog.Mappable.Select(d => d.Key + "(" + d.ChineseName + ")"))).Append('\n');
         sb.Append("硬性约束：行号必须在 1~").Append(rawRowCount).Append(" 之间；列名那一行不能同时被列进 totalRows；")
           .Append("不要输出毫米坐标、不要输出纸张尺寸、不要点名用哪张纸（那是下一步的事）；")
           .Append("看不清就说看不清，宁可省略字段。\n");
-        sb.Append("说话要求：用中文大白话；不要出现 rows、JSON、字段英文名这些词。")
-          .Append("facts 一条只说一件事——**不要把几件事挤进一句话**（老板是一行一行扫的，挤成一句他就读不懂了）。\n");
-        sb.Append("一律用中文。");
+        sb.Append(p.Get(PromptKeys.ReadTone));
         return sb.ToString();
     }
+
+    // ───────────────────────── 第二步：自动排版 ─────────────────────────
 
     /// <summary>
     /// <strong>第二步：自动排版</strong>。老板把风险问题都拍完了，这一步只要「标签上印哪几行、这张纸怎么摆」。
@@ -153,14 +203,17 @@ public static class AiSheetProposalPrompt
     /// <param name="read">读表阶段那份提案（含老板拍过的板）。</param>
     /// <param name="currentLabelSizeText">当前模板尺寸那句人话（如「140×100 mm」），让模型知道改的是什么。</param>
     /// <param name="imageCount">这条消息随附几张图。</param>
+    /// <param name="prompts">那几段可改的话现在各是哪一版（null = 全用出厂版）。</param>
     public static string BuildLayout(
         string portrait,
         IReadOnlyList<string> sheetSpecNames,
         int rawRowCount,
         AiSheetProposal read,
         string currentLabelSizeText,
-        int imageCount)
+        int imageCount,
+        PromptTexts? prompts = null)
     {
+        var p = prompts ?? PromptTexts.Default;
         var sb = new StringBuilder();
         sb.Append("这一步的任务：**只给排版**——标签上印哪几行、这张纸怎么摆。\n");
         sb.Append("上一步已经读过这张表了，下面这些是**既成事实**，不要再问一遍，也不要推翻：\n");
@@ -200,10 +253,7 @@ public static class AiSheetProposalPrompt
         sb.Append("  \"warnings\": [ \"…\" ],                // 这一版有什么要老板核的（无参照猜测版必须自报）\n");
         sb.Append("  \"reason\": \"为什么这么排（可省）\"\n");
         sb.Append("}\n");
-        sb.Append("**这一步不要提问**（不要 questions）：排版是直接落进预览的，老板看得见、也能一键撤回，")
-          .Append("再拿「要不要重排」「要不要换纸」去问他是白问一遍——他心里有数就会点撤回，或者说一句哪儿不对让你只改这一步。")
-          .Append("真有疑点（哪一行看不清、没有参照只能猜、这张纸摆不下这么多枚）写进 warnings，")
-          .Append("软件会把它们摆在落地结果旁边让他核。\n");
+        sb.Append(p.Get(PromptKeys.LayoutNoAsk));
 
         if (sheetSpecNames.Count > 0)
         {
@@ -214,15 +264,8 @@ public static class AiSheetProposalPrompt
         sb.Append(string.Join(" ", MarkFieldCatalog.Mappable.Select(d => d.Key + "(" + d.ChineseName + ")"))).Append('\n');
         sb.Append("硬性约束：不要输出毫米坐标、不要改纸张几何（只点名用哪张纸）；")
           .Append("行数只由「标签上真印了哪几行」决定，**不要为了字号大小去增删行数**；看不清就说看不清。\n");
-        // 第 39 棒：字号/粗细/居中**不问模型**。第 31 棒把格式读出来了，却把量到的数字压成散文、
-        // 再教模型「照它的大小关系排」——等于请一个概率模型口算回填软件手里的量测，
-        // 这就是用户 2026-09-10 圈的「AI 排版效果差，差在字体大小」的来路（每轮还都不一样）。
-        // 现在软件自己去量 templateSource 那一列（RowFormatEvidence），所以这里只交代分工。
-        sb.Append("字多大、要不要粗、居不居中：**你不用管，软件自己会算**——")
-          .Append("它会去量上面既成事实里说的那一列（模板抄在哪一块）里那几行字的真实字号、粗细、居中，照量到的排，比你填的数准。")
-          .Append("你要做的只有一件：**认出标签上印哪几行、什么顺序、每行读哪一列**。")
-          .Append("rows 里的 sizePt / weight / bold / align 写了也不扔（软件量不到时拿它兜底），但别再为它们费心。\n");
-        sb.Append("说话要求：用中文大白话；不要出现 rows、JSON、字段英文名、毫米坐标这些词。一律用中文。");
+        sb.Append(p.Get(PromptKeys.LayoutFont));
+        sb.Append(p.Get(PromptKeys.LayoutTone));
         return sb.ToString();
     }
 }

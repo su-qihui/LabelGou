@@ -45,6 +45,11 @@ public sealed record AiLayoutContext(
     int CurrentHeaderRow = 0,
     IReadOnlyList<CellFormat>? CellFormats = null)
 {
+    /// <summary>
+    /// 那几段"交代分工"的提示词现在各是哪一版（第 103 棒：他能自己在设置里改）。
+    /// null = 全用出厂版。<strong>只影响发出去的话，不影响上面任何一份数据</strong>。
+    /// </summary>
+    public LabelGou.Core.Recognition.PromptTexts? Prompts { get; init; }
     /// <summary>能问的东西有没有：已连字段与整表画像一个都没才算真的没得可给（第 15 棒：不能再把「没连上字段」当门槛）。</summary>
     public bool HasAnythingToAsk => (Fields is { Count: > 0 }) || !string.IsNullOrWhiteSpace(Portrait);
 
@@ -1044,10 +1049,10 @@ public sealed partial class AiChatPanel : UserControl
         // 用户的红线是「指出表格存在的问题……这层先不要对预览纸张进行调整」。
         var prompt = AiSheetProposalPrompt.BuildRead(
             FenceForTransport(ctx.Portrait ?? "（没拿到整张表画像，只有已连字段）"),
-            ctx.RawRowCount, ctx.CurrentHeaderRow, images.Count, _decisions);
+            ctx.RawRowCount, ctx.CurrentHeaderRow, images.Count, _decisions, ctx.Prompts);
         var payload = new List<AiChatTurn>
         {
-            new(AiChatTurn.System, AiSheetProposalPrompt.SystemText),
+            new(AiChatTurn.System, AiSheetProposalPrompt.SystemText(ctx.Prompts)),
             new(AiChatTurn.User, prompt),
         };
         Append($"第一步 · 读这张表：表里 {_lastRawRowCount} 行"
@@ -1209,13 +1214,13 @@ public sealed partial class AiChatPanel : UserControl
         var prompt = AiSheetProposalPrompt.BuildLayout(
             ctx.Portrait ?? "（没拿到整张表画像，只有已连字段）",
             _lastSpecNames, ctx.RawRowCount, read,
-            $"{ctx.WidthMm:0.#}×{ctx.HeightMm:0.#} mm", images.Count);
+            $"{ctx.WidthMm:0.#}×{ctx.HeightMm:0.#} mm", images.Count, ctx.Prompts);
         if (!string.IsNullOrWhiteSpace(complaint))
             prompt += "\n**老板看了上一版，说这里不对（只改这一步，上面那些既成事实不要推翻）：**\n  - "
                     + complaint.Trim() + "\n";
         var payload = new List<AiChatTurn>
         {
-            new(AiChatTurn.System, AiSheetProposalPrompt.SystemText),
+            new(AiChatTurn.System, AiSheetProposalPrompt.SystemText(ctx.Prompts)),
             new(AiChatTurn.User, prompt),
         };
         Append($"第二步 · 自动排版：这台机器上有 {_lastSpecNames.Count} 张纸可选，"

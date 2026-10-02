@@ -758,7 +758,11 @@ public partial class MainWindow : Window
                 _viewModel.SheetSpecNames, _viewModel.RawRowCount, _viewModel.DetectedHeaderRow,
                 // 第 39 棒：逐格量到的字号/粗体/居中。这一份**不发出去**，是软件自己留着算标签字号的
                 // （模型回提案时由 RowFormatEvidence 照它改 spec），所以它不在提示词里出现。
-                portrait?.CellFormats);
+                portrait?.CellFormats)
+            {
+                // 第 103 棒：他自己改过的那几段提示词，每次请求现取一次（改完下一条就用上新版，不用重开软件）
+                Prompts = _viewModel.CurrentPrompts,
+            };
         };
         panel.ApplyLayout = ApplyAiLayout;
         panel.ApplyProposal = ApplyAiProposal;

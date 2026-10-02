@@ -44,6 +44,7 @@ public partial class SimpleSettingsWindow : Window
         PosterCardWidth = _vm.LoadPosterCardWidth();
         DarkCheck.IsChecked = dark;        // 先落状态（Changed 里那句 ApplyInto 是幂等的）
         PushToControls();
+        RefreshPromptState();
 
         // 示意纸：选中那份模板排出来的真版面（海报墙用的就是它），没选中就退到第一张
         var card = _vm.PosterCards.FirstOrDefault(c => c.IsSelected) ?? _vm.PosterCards.FirstOrDefault();
@@ -107,6 +108,23 @@ public partial class SimpleSettingsWindow : Window
     /// <summary>这一页只换自己这身皮给预览看；整壳窗那身仍由顶栏那颗钮管（一处开关，不两处）。</summary>
     private void OnDarkChanged(object sender, RoutedEventArgs e)
         => SimpleTheme.ApplyInto(this, DarkCheck.IsChecked == true);
+
+    /// <summary>
+    /// 「AI 提示语…」（第 103 棒）：开那扇能看能改的窗。它自己存自己落日志（不等这一页的「好」），
+    /// 因为提示词是"下一条请求就用上"的东西，混在这页的取消语义里反而容易误解。
+    /// </summary>
+    private void OnOpenPromptsClick(object sender, RoutedEventArgs e)
+    {
+        var dlg = new AiPromptWindow(_vm, DarkCheck.IsChecked == true) { Owner = this };
+        dlg.ShowDialog();
+        RefreshPromptState();
+    }
+
+    private void RefreshPromptState()
+    {
+        var n = _vm.PromptOverrides.OverriddenKeys().Count;
+        PromptStateText.Text = n == 0 ? "发给 AI 的八段话：现在全是出厂默认" : $"发给 AI 的八段话：已自定义 {n} 段";
+    }
 
     private void OnResetClick(object sender, RoutedEventArgs e)
     {

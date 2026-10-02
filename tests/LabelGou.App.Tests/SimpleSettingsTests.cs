@@ -74,4 +74,28 @@ public class SimpleSettingsTests
             Assert.Equal(200, second.PosterCardWidth);
             return 0;
         });
+
+    /// <summary>
+    /// 第 103 棒：「AI 提示语」那扇窗造得出来，并且把<strong>当前实际在用的那一版</strong>摆在编辑框里
+    /// （不是永远摆出厂版——那样他改完重开一看还是老话，就会以为没存上）。
+    /// </summary>
+    [Fact]
+    public void 提示语窗造得出来并显示正在用的那一版()
+        => OnSta(() =>
+        {
+            var vm = new MainViewModel(TestEnvironment.NewTempUiStateStore());
+            var first = new AiPromptWindow(vm, dark: false);
+            Assert.False(first.Changed);                       // 没动过就不许自认"改过了"
+            Assert.Equal(8, first.SectionCount);               // 八段全在清单上，一段不少
+
+            var section = LabelGou.Core.Recognition.PromptCatalog.All[3];
+            var mine = "我自己写的那段：itemno-tail、qty-column、row-keep、template-source、header-row、fixed-value、column-meaning";
+            vm.PromptOverrides.Save(section.Key, mine);
+            var second = new AiPromptWindow(vm, dark: true);
+            Assert.Equal(mine, second.TextOf(section.Key));
+            // 没改过的那段照旧是出厂版（一段被改不该把别段也带走）
+            Assert.Equal(LabelGou.Core.Recognition.PromptCatalog.DefaultOf(
+                LabelGou.Core.Recognition.PromptKeys.System), second.TextOf(LabelGou.Core.Recognition.PromptKeys.System));
+            return 0;
+        });
 }

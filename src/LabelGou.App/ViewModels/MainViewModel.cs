@@ -1112,7 +1112,6 @@ public sealed partial class MainViewModel : ObservableObject, ILabelSource
 
     /// <summary>设置页那两档（第 102 棒）：读出来就已经过 <see cref="SimpleShellFlow"/> 的夹取，调用方不必再判 0。</summary>
     internal double LoadPaperMargin() => SimpleShellFlow.PaperMargin(_uiState.Load().PaperMarginPx);
-
     internal double LoadPosterCardWidth() => SimpleShellFlow.PosterCardWidth(_uiState.Load().PosterCardWidthPx);
 
     /// <summary>设置窗关掉那一次一起落盘（两档一起写，省得半套新半套旧）。</summary>
@@ -1124,6 +1123,15 @@ public sealed partial class MainViewModel : ObservableObject, ILabelSource
         state.PosterCardWidthPx = posterCardWidth;
         _uiState.Save(state);
     }
+
+    // ───────────────────────── AI 提示词（第 103 棒：开放给他自己调） ─────────────────────────
+
+    /// <summary>他自己改过的那几段提示词落在 <c>%APPDATA%\LabelGou\prompts\</c>（一段一个 txt，能直接用记事本看）。</summary>
+    internal LabelGou.Core.Recognition.PromptOverrideStore PromptOverrides { get; } = new();
+
+    /// <summary>每次请求现取一次：改完下一条就用上新版，不用重开软件。</summary>
+    internal LabelGou.Core.Recognition.PromptTexts CurrentPrompts
+        => new(PromptOverrides.Snapshot());
 
     // ───────────────────────── 运行模式（第 30 棒） ─────────────────────────
 
