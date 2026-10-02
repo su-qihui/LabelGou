@@ -1110,6 +1110,21 @@ public sealed partial class MainViewModel : ObservableObject, ILabelSource
         _uiState.Save(state);
     }
 
+    /// <summary>设置页那两档（第 102 棒）：读出来就已经过 <see cref="SimpleShellFlow"/> 的夹取，调用方不必再判 0。</summary>
+    internal double LoadPaperMargin() => SimpleShellFlow.PaperMargin(_uiState.Load().PaperMarginPx);
+
+    internal double LoadPosterCardWidth() => SimpleShellFlow.PosterCardWidth(_uiState.Load().PosterCardWidthPx);
+
+    /// <summary>设置窗关掉那一次一起落盘（两档一起写，省得半套新半套旧）。</summary>
+    internal void SaveShellTweaks(double paperMargin, double posterCardWidth)
+    {
+        var state = _uiState.Load();
+        if (Math.Abs(state.PaperMarginPx - paperMargin) < 0.5 && Math.Abs(state.PosterCardWidthPx - posterCardWidth) < 0.5) return;
+        state.PaperMarginPx = paperMargin;
+        state.PosterCardWidthPx = posterCardWidth;
+        _uiState.Save(state);
+    }
+
     // ───────────────────────── 运行模式（第 30 棒） ─────────────────────────
 
     private RunMode _mode = RunMode.Ai;

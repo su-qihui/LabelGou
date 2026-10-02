@@ -105,6 +105,15 @@ public sealed class UiState
     /// <see cref="RunMode"/> 那一格的处理法）。</para>
     /// </summary>
     public bool? DarkMode { get; set; }
+
+    /// <summary>
+    /// 简洁版中间那格"纸自动显示全"之外再多留的那圈边（第 102 棒收进设置页；原来是写死的 56）。
+    /// <para><strong>0 = 没记过 = 用默认 56</strong>，旧状态文件缺这一格行为零变化。</para>
+    /// </summary>
+    public double PaperMarginPx { get; set; }
+
+    /// <summary>首页海报墙一张卡多宽（第 102 棒；原来写死 248，窄窗口只排一列那条老账）。<strong>0 = 没记过 = 248</strong>。</summary>
+    public double PosterCardWidthPx { get; set; }
 }
 
 /// <summary>

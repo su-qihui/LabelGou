@@ -85,6 +85,8 @@
                             ToolTip="回首页：拖文件进来 + 模板海报墙（还没导数据时它本来就在中间）"/>
                     <Button x:Name="EditTemplateBtn" Content="编辑模板…" Style="{StaticResource GhostButton}" Margin="0,0,8,0"
                             ToolTip="打开模板编辑器改眼前这份模板（第 100 棒，A 案：仍是独立一扇窗，穿新版这身皮）。内置模板会先自动存一份副本再编，不动原版。"/>
+                    <Button x:Name="SettingsBtn" Content="设置…" Style="{StaticResource GhostButton}" Margin="0,0,8,0"
+                            ToolTip="把散在代码里的几颗小调优放到明面上：纸张留白、海报墙卡片宽、深浅色。右边摆一份示意模板当场反映，不用先导表才能调（第 102 棒）"/>
                     <Button x:Name="PrintAskBtn" Content="打印整版" Style="{StaticResource PrimaryButton}"/>
                     <Button x:Name="BackToProBtn" Content="回专业版" Style="{StaticResource GhostButton}" Margin="8,0,0,0"
                             ToolTip="回到一代全功能界面：同一份数据、同一个 AI 会话搬回去，两边随时可切"/>
@@ -228,7 +230,7 @@
                                 </ItemsControl.ItemsPanel>
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
-                                        <Border Width="248" Margin="0,0,12,12" Padding="10" CornerRadius="12" Cursor="Hand"
+                                        <Border Width="{DynamicResource PosterCardWidthKey}" Margin="0,0,12,12" Padding="10" CornerRadius="12" Cursor="Hand"
                                                 Background="{DynamicResource CardBrush}" Tag="{Binding}"
                                                 MouseLeftButtonUp="OnPosterCardClick">
                                             <Border.Style>

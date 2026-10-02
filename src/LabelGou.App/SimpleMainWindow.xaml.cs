@@ -76,6 +76,10 @@ public partial class SimpleMainWindow : Window
         _rightWidth = SimpleShellFlow.ClampRightPaneWidth(rightW > 0 ? rightW : SimpleShellFlow.RightPaneDefaultWidth);
         _leftOpen = leftOpen ?? false;
         _rightOpen = rightOpen ?? true;
+        // 第 102 棒：那两档小调优从设置里读回来（没记过 = 56 / 248，界面上一个像素都不变）。
+        // 卡片宽走一份窗级资源：海报墙那个 DataTemplate 吃 DynamicResource，设置关掉时改一次值就全墙跟。
+        _paperMargin = _vm.LoadPaperMargin();
+        Resources["PosterCardWidthKey"] = _vm.LoadPosterCardWidth();
         ApplyPaneLayout();
         // 整版控件靠回调取标签版面（Func 没法在 XAML 里绑）——与主窗同一句接线，不开第二套取数
         ShellSheetView.LayoutProvider = index => _vm.Sheet.LayoutFor(index);
@@ -91,6 +95,7 @@ public partial class SimpleMainWindow : Window
         ThemeToggleBtn.Click += (_, _) => SetDarkMode(!_dark);
         EditTemplateBtn.Click += (_, _) => _editTemplate?.Invoke(this);
         EditTemplateBtn.IsEnabled = _editTemplate is not null;   // 没人接就别摆一颗点了没反应的钮（§五-80 那一族）
+        SettingsBtn.Click += (_, _) => OpenSettings();
         LeftSplitThumb.DragStarted += (_, _) => _leftGrab = (LeftPane.Width, Mouse.GetPosition(Stage).X);
         LeftSplitThumb.DragDelta += (_, _) =>
         {
@@ -208,6 +213,21 @@ public partial class SimpleMainWindow : Window
     {
         ThemeToggleBtn.Content = _dark ? MoonGlyph : SunGlyph;
         ThemeToggleBtn.ToolTip = _dark ? "当前深色 · 点一下换回浅色" : "当前浅色 · 点一下换深色";
+    }
+
+    /// <summary>
+    /// 「设置…」（第 102 棒）：模态开一扇，关掉那一刻一次性落回——留白改了就重新自适应一次，
+    /// 卡片宽改了就换那份窗级资源让整面海报墙跟着走。取消什么都不动。
+    /// </summary>
+    private void OpenSettings()
+    {
+        var dlg = new SimpleSettingsWindow(_vm, _dark) { Owner = this };
+        if (dlg.ShowDialog() != true) return;
+        _paperMargin = dlg.PaperMargin;
+        Resources["PosterCardWidthKey"] = dlg.PosterCardWidth;
+        _vm.SaveShellTweaks(dlg.PaperMargin, dlg.PosterCardWidth);
+        if (_autoFit) FitNow();
+        AppLog.Info($"设置已更新：纸张留白 {dlg.PaperMargin:0}px、海报墙卡片宽 {dlg.PosterCardWidth:0}px");
     }
 
     private void OnDropZoneClick(object sender, RoutedEventArgs e) => _vm.OpenFileCommand.Execute(null);
@@ -336,9 +356,14 @@ public partial class SimpleMainWindow : Window
         if (_autoFit) FitNow();
     }
 
-    /// <summary>纸要"看得全也看得出台面"：`FitTo` 自己只留 24 像素，用户 2026-09-21 说再小一点点、
-    /// 纸张边框要多看见一些——这里替壳窗多要一份边（专业版那条 24 一个字不动，两版各有各的口味）。</summary>
-    private const double PaperFitMargin = 56;
+    /// <summary>
+    /// 纸要"看得全也看得出台面"：`FitTo` 自己只留 24 像素，用户 2026-09-21 说再小一点点、
+    /// 纸张边框要多看见一些——这里替壳窗多要一份边（专业版那条 24 一个字不动，两版各有各的口味）。
+    /// 第 102 棒起这一档可以在「设置…」里调，默认仍是 56。
+    /// </summary>
+    private double PaperFitMargin => _paperMargin;
+
+    private double _paperMargin = SimpleShellFlow.PaperMarginDefault;
 
     private void FitNow()
         => _vm.FitTo(PreviewHost.ActualWidth - PaperFitMargin, PreviewHost.ActualHeight - PaperFitMargin);

@@ -108,6 +108,23 @@ public static class SimpleShellFlow
     public static bool DarkModeRequested(bool? storedDarkMode) => storedDarkMode ?? false;
 
     /// <summary>
+    /// 设置页那两档可调数（第 102 棒）。<strong>0 = 没记过 = 默认</strong>，坏数（NaN/∞）也退回默认（§五-183）——
+    /// 所以旧状态文件缺这两格时界面上一个像素都不变。上限不是拍脑袋：留白超过 120 就把纸缩到看不清字，
+    /// 卡片超过 320 首页一屏只剩两张，那不如不换。
+    /// </summary>
+    public const double PaperMarginDefault = 56, PaperMarginMin = 24, PaperMarginMax = 120;
+    public const double PosterCardWidthDefault = 248, PosterCardWidthMin = 180, PosterCardWidthMax = 320;
+
+    public static double PaperMargin(double storedPx)
+        => ClampStored(storedPx, PaperMarginMin, PaperMarginMax, PaperMarginDefault);
+
+    public static double PosterCardWidth(double storedPx)
+        => ClampStored(storedPx, PosterCardWidthMin, PosterCardWidthMax, PosterCardWidthDefault);
+
+    private static double ClampStored(double stored, double min, double max, double fallback)
+        => !double.IsFinite(stored) || stored <= 0 ? fallback : Math.Clamp(stored, min, max);
+
+    /// <summary>
     /// 答完第 answeredIndex 条问题后，该把哪一条滚进视野（用户 2026-09-21 实测②：答完一条视图弹回顶部，
     /// 要往下滚回来才能选下一条）。还有下一条就指它（返回下标）；全答完返回 -1——那时进第二步，
     /// 新内容在对话区，照常滚对话区底部，这里不再抢方向盘。
